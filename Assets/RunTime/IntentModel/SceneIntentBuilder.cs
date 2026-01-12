@@ -6,7 +6,10 @@ public static class SceneIntentBuilder
     {
         SceneIntent intent = new SceneIntent();
 
-        SpatialProxy[] proxies = Object.FindObjectsOfType<SpatialProxy>();
+        SpatialProxy[] proxies = Object.FindObjectsByType<SpatialProxy>(
+            FindObjectsSortMode.None
+        );
+
         foreach (var proxy in proxies)
         {
             intent.spatialProxies.Add(new SpatialProxyIntent
