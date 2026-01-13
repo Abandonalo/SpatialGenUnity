@@ -6,16 +6,17 @@ public static class SceneIntentBuilder
     {
         SceneIntent intent = new SceneIntent();
 
-        SpatialProxy[] proxies = Object.FindObjectsByType<SpatialProxy>(
-            FindObjectsSortMode.None
-        );
+        SpatialProxy[] proxies = Object.FindObjectsByType<SpatialProxy>(FindObjectsSortMode.None);
 
         foreach (var proxy in proxies)
         {
+            // Bake transform scale into size so proxy & generated match visually
+            Vector3 worldSize = Vector3.Scale(proxy.size, proxy.transform.lossyScale);
+
             intent.spatialProxies.Add(new SpatialProxyIntent
             {
                 position = proxy.transform.position,
-                size = proxy.size,
+                size = worldSize,
                 role = proxy.role
             });
         }

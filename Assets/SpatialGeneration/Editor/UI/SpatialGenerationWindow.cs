@@ -23,5 +23,12 @@ public class SpatialGenerationWindow : EditorWindow
             SceneIntent intent = SceneIntentBuilder.Build();
             Debug.Log(intent.ToJson());
         }
+
+        if (GUILayout.Button("Generate (Mock)"))
+        {
+            SceneIntent intent = SceneIntentBuilder.Build();
+            GenerationPipeline.Run(intent);
+        }
+
     }
 }
