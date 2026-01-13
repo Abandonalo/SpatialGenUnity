@@ -24,11 +24,17 @@ public class SpatialGenerationWindow : EditorWindow
             Debug.Log(intent.ToJson());
         }
 
-        if (GUILayout.Button("Generate (Mock)"))
+        if (GUILayout.Button("Generate (Mock, Undoable)"))
         {
             SceneIntent intent = SceneIntentBuilder.Build();
-            GenerationPipeline.Run(intent);
+            GenerationControllerEditor.RegenerateFromIntent(intent);
         }
+
+        if (GUILayout.Button("Cleanup GeneratedContent"))
+        {
+            GenerationControllerEditor.CleanupGeneratedContent();
+        }
+
 
     }
 }

@@ -10,7 +10,6 @@ public static class SceneIntentBuilder
 
         foreach (var proxy in proxies)
         {
-            // Bake transform scale into size so proxy & generated match visually
             Vector3 worldSize = Vector3.Scale(proxy.size, proxy.transform.lossyScale);
 
             intent.spatialProxies.Add(new SpatialProxyIntent
@@ -19,6 +18,7 @@ public static class SceneIntentBuilder
                 size = worldSize,
                 role = proxy.role
             });
+
         }
 
         return intent;
