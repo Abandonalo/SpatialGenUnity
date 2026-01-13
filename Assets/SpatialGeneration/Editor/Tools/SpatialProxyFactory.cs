@@ -4,13 +4,22 @@ using UnityEngine;
 public static class SpatialProxyFactory
 {
     public static void CreateProxy()
-{
-    GameObject go = new GameObject("Spatial Proxy");
-    go.transform.localScale = Vector3.one; 
+    {
+        GameObject go = new GameObject("Spatial Proxy");
+        go.transform.localScale = Vector3.one;
 
-    go.AddComponent<SpatialProxy>();
-    Undo.RegisterCreatedObjectUndo(go, "Create Spatial Proxy");
-    Selection.activeGameObject = go;
-}
+        SpatialProxy proxy = go.AddComponent<SpatialProxy>();
 
+        Undo.RegisterCreatedObjectUndo(go, "Create Spatial Proxy");
+        Selection.activeGameObject = go;
+
+        InteractionLogger.Log(new InteractionEvent
+        {
+            type = "proxy_create",
+            proxy_id = proxy.ProxyId,
+            position = go.transform.position,
+            size = proxy.size,
+            role = proxy.role.ToString()
+        });
+    }
 }

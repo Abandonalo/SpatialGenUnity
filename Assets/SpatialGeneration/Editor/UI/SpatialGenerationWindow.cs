@@ -26,12 +26,26 @@ public class SpatialGenerationWindow : EditorWindow
 
         if (GUILayout.Button("Generate (Mock, Undoable)"))
         {
+            InteractionLogger.Log(new InteractionEvent
+            {
+                type = "generate",
+                proxy_id = "",
+                extra = $"proxies={SceneIntentBuilder.Build().spatialProxies.Count}"
+            });
+
             SceneIntent intent = SceneIntentBuilder.Build();
             GenerationControllerEditor.RegenerateFromIntent(intent);
         }
 
         if (GUILayout.Button("Cleanup GeneratedContent"))
         {
+            InteractionLogger.Log(new InteractionEvent
+            {
+                type = "cleanup",
+                proxy_id = "",
+                extra = $"proxies={SceneIntentBuilder.Build().spatialProxies.Count}"
+            });
+
             GenerationControllerEditor.CleanupGeneratedContent();
         }
 

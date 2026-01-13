@@ -28,6 +28,53 @@ public class SpatialProxyEditor : Editor
         }
     }
 
+    public override void OnInspectorGUI()
+    {
+        SpatialProxy proxy = (SpatialProxy)target;
+
+        EditorGUI.BeginChangeCheck();
+
+        var newRole = (SpatialProxyRole)EditorGUILayout.EnumPopup("Role", proxy.role);
+        var newSize = EditorGUILayout.Vector3Field("Size", proxy.size);
+
+        if (EditorGUI.EndChangeCheck())
+        {
+            Undo.RecordObject(proxy, "Edit Spatial Proxy");
+
+            bool roleChanged = newRole != proxy.role;
+            bool sizeChanged = newSize != proxy.size;
+
+            proxy.role = newRole;
+            proxy.size = newSize;
+            EditorUtility.SetDirty(proxy);
+
+            if (roleChanged)
+            {
+                InteractionLogger.Log(new InteractionEvent
+                {
+                    type = "proxy_role_change",
+                    proxy_id = proxy.ProxyId,
+                    position = proxy.transform.position,
+                    size = proxy.size,
+                    role = proxy.role.ToString()
+                });
+            }
+
+            if (sizeChanged)
+            {
+                InteractionLogger.Log(new InteractionEvent
+                {
+                    type = "proxy_resize",
+                    proxy_id = proxy.ProxyId,
+                    position = proxy.transform.position,
+                    size = proxy.size,
+                    role = proxy.role.ToString(),
+                    extra = "via_inspector"
+                });
+            }
+        }
+    }
+
     // --------- DRAWING ---------
 
     private void DrawBox(SpatialProxy proxy)
@@ -52,8 +99,6 @@ public class SpatialProxyEditor : Editor
 
     private void DrawCylinder(SpatialProxy proxy)
     {
-        // Interpret size as cylinder bounds:
-        // x = diameterX, y = height, z = diameterZ (we'll keep XZ symmetric in handle)
         float radiusX = proxy.size.x * 0.5f;
         float radiusZ = proxy.size.z * 0.5f;
         float radius = Mathf.Max(radiusX, radiusZ);
@@ -61,11 +106,9 @@ public class SpatialProxyEditor : Editor
 
         using (new Handles.DrawingScope(new Color(0.2f, 0.5f, 1f, 0.9f), proxy.transform.localToWorldMatrix))
         {
-            // top & bottom
             Handles.DrawWireDisc(new Vector3(0, +halfH, 0), Vector3.up, radius);
             Handles.DrawWireDisc(new Vector3(0, -halfH, 0), Vector3.up, radius);
 
-            // verticals (cardinal)
             Handles.DrawLine(new Vector3(+radius, -halfH, 0), new Vector3(+radius, +halfH, 0));
             Handles.DrawLine(new Vector3(-radius, -halfH, 0), new Vector3(-radius, +halfH, 0));
             Handles.DrawLine(new Vector3(0, -halfH, +radius), new Vector3(0, +halfH, +radius));
@@ -94,6 +137,16 @@ public class SpatialProxyEditor : Editor
             Undo.RecordObject(proxy, "Resize Box Proxy");
             proxy.size = newSize;
             EditorUtility.SetDirty(proxy);
+
+            InteractionLogger.Log(new InteractionEvent
+            {
+                type = "proxy_resize",
+                proxy_id = proxy.ProxyId,
+                position = proxy.transform.position,
+                size = proxy.size,
+                role = proxy.role.ToString(),
+                extra = "box"
+            });
         }
     }
 
@@ -105,59 +158,73 @@ public class SpatialProxyEditor : Editor
 
         Handles.color = new Color(1f, 0.3f, 0.3f, 0.9f);
         float newRadius = Handles.RadiusHandle(proxy.transform.rotation, proxy.transform.position, radius);
-
         newRadius = Mathf.Max(0.01f, newRadius);
 
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(proxy, "Resize Sphere Proxy");
+
             float d = newRadius * 2f;
-            proxy.size = new Vector3(d, d, d); // keep uniform
+            proxy.size = new Vector3(d, d, d);
             EditorUtility.SetDirty(proxy);
+
+            InteractionLogger.Log(new InteractionEvent
+            {
+                type = "proxy_resize",
+                proxy_id = proxy.ProxyId,
+                position = proxy.transform.position,
+                size = proxy.size,
+                role = proxy.role.ToString(),
+                extra = "sphere"
+            });
         }
     }
 
-   private void HandleCylinderResize(SpatialProxy proxy)
-{
-    // size: x = diameter, y = height, z = diameter (we keep XZ symmetric)
-    float radius = 0.5f * Mathf.Max(proxy.size.x, proxy.size.z);
-    float halfH = proxy.size.y * 0.5f;
-
-    // --- Radius handle (XZ) ---
-    EditorGUI.BeginChangeCheck();
-    Handles.color = new Color(0.2f, 0.5f, 1f, 0.9f);
-
-    float newRadius = Handles.RadiusHandle(
-        proxy.transform.rotation,
-        proxy.transform.position,
-        radius
-    );
-    newRadius = Mathf.Max(0.01f, newRadius);
-
-    // --- Height handles (top/bottom sliders) ---
-    Vector3 axis = proxy.transform.up;
-
-    Vector3 topWorld = proxy.transform.position + axis * halfH;
-    Vector3 bottomWorld = proxy.transform.position - axis * halfH;
-
-    float handleSizeTop = HandleUtility.GetHandleSize(topWorld) * 0.2f;
-    float handleSizeBottom = HandleUtility.GetHandleSize(bottomWorld) * 0.2f;
-
-    Vector3 newTopWorld = Handles.Slider(topWorld, axis, handleSizeTop, Handles.ConeHandleCap, 0f);
-    Vector3 newBottomWorld = Handles.Slider(bottomWorld, -axis, handleSizeBottom, Handles.ConeHandleCap, 0f);
-
-    if (EditorGUI.EndChangeCheck())
+    private void HandleCylinderResize(SpatialProxy proxy)
     {
-        Undo.RecordObject(proxy, "Resize Cylinder Proxy");
+        float radius = 0.5f * Mathf.Max(proxy.size.x, proxy.size.z);
+        float halfH = proxy.size.y * 0.5f;
 
-        float newHeight = Vector3.Distance(newTopWorld, newBottomWorld);
-        newHeight = Mathf.Max(0.02f, newHeight);
+        EditorGUI.BeginChangeCheck();
 
-        proxy.size = new Vector3(newRadius * 2f, newHeight, newRadius * 2f);
-        EditorUtility.SetDirty(proxy);
+        // Radius handle (XZ)
+        Handles.color = new Color(0.2f, 0.5f, 1f, 0.9f);
+        float newRadius = Handles.RadiusHandle(proxy.transform.rotation, proxy.transform.position, radius);
+        newRadius = Mathf.Max(0.01f, newRadius);
+
+        // Height sliders (top/bottom)
+        Vector3 axis = proxy.transform.up;
+
+        Vector3 topWorld = proxy.transform.position + axis * halfH;
+        Vector3 bottomWorld = proxy.transform.position - axis * halfH;
+
+        float handleSizeTop = HandleUtility.GetHandleSize(topWorld) * 0.2f;
+        float handleSizeBottom = HandleUtility.GetHandleSize(bottomWorld) * 0.2f;
+
+        Vector3 newTopWorld = Handles.Slider(topWorld, axis, handleSizeTop, Handles.ConeHandleCap, 0f);
+        Vector3 newBottomWorld = Handles.Slider(bottomWorld, -axis, handleSizeBottom, Handles.ConeHandleCap, 0f);
+
+        if (EditorGUI.EndChangeCheck())
+        {
+            Undo.RecordObject(proxy, "Resize Cylinder Proxy");
+
+            float newHeight = Vector3.Distance(newTopWorld, newBottomWorld);
+            newHeight = Mathf.Max(0.02f, newHeight);
+
+            proxy.size = new Vector3(newRadius * 2f, newHeight, newRadius * 2f);
+            EditorUtility.SetDirty(proxy);
+
+            InteractionLogger.Log(new InteractionEvent
+            {
+                type = "proxy_resize",
+                proxy_id = proxy.ProxyId,
+                position = proxy.transform.position,
+                size = proxy.size,
+                role = proxy.role.ToString(),
+                extra = "cylinder"
+            });
+        }
     }
-}
-
 
     private Vector3 ClampMinSize(Vector3 v)
     {
