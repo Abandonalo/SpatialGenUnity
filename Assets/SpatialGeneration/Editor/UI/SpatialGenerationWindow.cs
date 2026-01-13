@@ -6,7 +6,9 @@ public class SpatialGenerationWindow : EditorWindow
     [MenuItem("Tools/Spatial Generation")]
     public static void Open()
     {
-        GetWindow<SpatialGenerationWindow>("Spatial Generation");
+        var window = GetWindow<SpatialGenerationWindow>();
+        window.titleContent = new GUIContent("Spatial Generation");
+        window.Show();
     }
 
     private void OnGUI()
@@ -18,37 +20,37 @@ public class SpatialGenerationWindow : EditorWindow
             SpatialProxyFactory.CreateProxy();
         }
 
-        if (GUILayout.Button("Log Scene Intent"))
-        {
-            SceneIntent intent = SceneIntentBuilder.Build();
-            Debug.Log(intent.ToJson());
-        }
-
         if (GUILayout.Button("Generate (Mock, Undoable)"))
         {
+            var intent = SceneIntentBuilder.Build();
+
+            // If you're using the Undoable controller:
+            GenerationControllerEditor.RegenerateFromIntent(intent);
+
+            // Also log a clean generate event (optional)
             InteractionLogger.Log(new InteractionEvent
             {
                 type = "generate",
-                proxy_id = "",
-                extra = $"proxies={SceneIntentBuilder.Build().spatialProxies.Count}"
+                extra = $"proxies={intent.spatialProxies.Count}"
             });
-
-            SceneIntent intent = SceneIntentBuilder.Build();
-            GenerationControllerEditor.RegenerateFromIntent(intent);
         }
 
         if (GUILayout.Button("Cleanup GeneratedContent"))
         {
+            GenerationControllerEditor.CleanupGeneratedContent();
+
             InteractionLogger.Log(new InteractionEvent
             {
-                type = "cleanup",
-                proxy_id = "",
-                extra = $"proxies={SceneIntentBuilder.Build().spatialProxies.Count}"
+                type = "cleanup"
             });
-
-            GenerationControllerEditor.CleanupGeneratedContent();
         }
 
+        GUILayout.Space(8);
 
+        if (GUILayout.Button("Open Interaction Log Folder"))
+        {
+            // calls the menu method inside the logger
+            InteractionLogger.RevealLogFolder();
+        }
     }
 }

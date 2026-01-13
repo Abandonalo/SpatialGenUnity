@@ -4,11 +4,13 @@ using UnityEngine;
 [CustomEditor(typeof(SpatialProxy))]
 public class SpatialProxyEditor : Editor
 {
+    private double _lastResizeLogTime = -999;
+    private const double ResizeLogInterval = 0.10; // seconds (10 logs/sec max)
+
     private void OnSceneGUI()
     {
         SpatialProxy proxy = (SpatialProxy)target;
 
-        // Draw shape + handles
         switch (proxy.role)
         {
             case SpatialProxyRole.Occupy:
@@ -50,6 +52,7 @@ public class SpatialProxyEditor : Editor
 
             if (roleChanged)
             {
+                // role changes are rare; no need to throttle, but fine if you want
                 InteractionLogger.Log(new InteractionEvent
                 {
                     type = "proxy_role_change",
@@ -62,6 +65,7 @@ public class SpatialProxyEditor : Editor
 
             if (sizeChanged)
             {
+                // inspector size changes are discrete; no need to throttle, but fine if you want
                 InteractionLogger.Log(new InteractionEvent
                 {
                     type = "proxy_resize",
@@ -138,15 +142,7 @@ public class SpatialProxyEditor : Editor
             proxy.size = newSize;
             EditorUtility.SetDirty(proxy);
 
-            InteractionLogger.Log(new InteractionEvent
-            {
-                type = "proxy_resize",
-                proxy_id = proxy.ProxyId,
-                position = proxy.transform.position,
-                size = proxy.size,
-                role = proxy.role.ToString(),
-                extra = "box"
-            });
+            ThrottledResizeLog(proxy, "box");
         }
     }
 
@@ -168,15 +164,7 @@ public class SpatialProxyEditor : Editor
             proxy.size = new Vector3(d, d, d);
             EditorUtility.SetDirty(proxy);
 
-            InteractionLogger.Log(new InteractionEvent
-            {
-                type = "proxy_resize",
-                proxy_id = proxy.ProxyId,
-                position = proxy.transform.position,
-                size = proxy.size,
-                role = proxy.role.ToString(),
-                extra = "sphere"
-            });
+            ThrottledResizeLog(proxy, "sphere");
         }
     }
 
@@ -214,6 +202,17 @@ public class SpatialProxyEditor : Editor
             proxy.size = new Vector3(newRadius * 2f, newHeight, newRadius * 2f);
             EditorUtility.SetDirty(proxy);
 
+            ThrottledResizeLog(proxy, "cylinder");
+        }
+    }
+
+    private void ThrottledResizeLog(SpatialProxy proxy, string shapeTag)
+    {
+        double now = EditorApplication.timeSinceStartup;
+        if (now - _lastResizeLogTime > ResizeLogInterval)
+        {
+            _lastResizeLogTime = now;
+
             InteractionLogger.Log(new InteractionEvent
             {
                 type = "proxy_resize",
@@ -221,7 +220,7 @@ public class SpatialProxyEditor : Editor
                 position = proxy.transform.position,
                 size = proxy.size,
                 role = proxy.role.ToString(),
-                extra = "cylinder"
+                extra = shapeTag
             });
         }
     }
