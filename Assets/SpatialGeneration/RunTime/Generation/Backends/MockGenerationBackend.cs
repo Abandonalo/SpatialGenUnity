@@ -1,33 +1,34 @@
+using System.Threading.Tasks;
 using UnityEngine;
 
 public class MockGenerationBackend : IGenerationBackend
 {
-    public GenerationResult Generate(SceneIntent intent)
-    {
-        GenerationResult result = new GenerationResult();
+    public string Name => "Mock";
 
-        foreach (var proxy in intent.spatialProxies)
+    public Task<GenerationResult> GenerateAsync(BackendRequest request)
+    {
+        var result = new GenerationResult();
+
+        if (request?.constraints == null)
+            return Task.FromResult(result);
+
+        foreach (var c in request.constraints)
         {
+            PrimitiveType type = (c.shape ?? "").ToLowerInvariant() switch
+            {
+                "sphere" => PrimitiveType.Sphere,
+                "cylinder" => PrimitiveType.Cylinder,
+                _ => PrimitiveType.Cube
+            };
+
             result.objects.Add(new GeneratedObject
             {
-                position = proxy.position,
-                size = proxy.size,
-                primitiveType = MapRoleToPrimitive(proxy.role)
+                primitiveType = type,
+                position = c.position,
+                size = c.size
             });
         }
 
-        return result;
-    }
-
-    private PrimitiveType MapRoleToPrimitive(SpatialProxyRole role)
-    {
-        return role switch
-        {
-            SpatialProxyRole.Occupy => PrimitiveType.Cube,
-            SpatialProxyRole.Avoid => PrimitiveType.Sphere,
-            SpatialProxyRole.Attract => PrimitiveType.Cylinder,
-            _ => PrimitiveType.Cube
-        };
+        return Task.FromResult(result);
     }
 }
-

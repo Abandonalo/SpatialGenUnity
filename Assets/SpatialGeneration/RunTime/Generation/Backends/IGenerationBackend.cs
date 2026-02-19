@@ -1,5 +1,7 @@
+using System.Threading.Tasks;
+
 public interface IGenerationBackend
 {
-    GenerationResult Generate(SceneIntent intent);
+    string Name { get; }
+    Task<GenerationResult> GenerateAsync(BackendRequest request);
 }
-

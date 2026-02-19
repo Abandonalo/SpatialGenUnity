@@ -1,0 +1,27 @@
+{
+    "request_id": "260bd5354ec842dabbd8f28fff23b34a",
+    "constraints": [
+        {
+            "id": "25740581b627497f81f3dee4df08d002",
+            "proxy_id": "d1ba36cc703a46cd9c7741b75b2071dc",
+            "type": "occupy",
+            "shape": "box",
+            "position": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "rotation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+            },
+            "size": {
+                "x": 5.0,
+                "y": 5.0,
+                "z": 5.0
+            }
+        }
+    ]
+}

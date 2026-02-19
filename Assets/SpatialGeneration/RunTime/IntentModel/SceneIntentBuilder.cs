@@ -13,11 +13,14 @@ public static class SceneIntentBuilder
             Vector3 worldSize = Vector3.Scale(proxy.size, proxy.transform.lossyScale);
 
             intent.spatialProxies.Add(new SpatialProxyIntent
-            {
-                position = proxy.transform.position,
-                size = worldSize,
-                role = proxy.role
-            });
+{
+    proxy_id = proxy.ProxyId,
+    position = proxy.transform.position,
+    rotation = proxy.transform.rotation,
+    size = Vector3.Scale(proxy.size, proxy.transform.lossyScale),
+    role = proxy.role
+});
+
 
         }
 

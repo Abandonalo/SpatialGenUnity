@@ -1,5 +1,6 @@
 using UnityEditor;
 using UnityEngine;
+using System.IO;
 
 public class SpatialGenerationWindow : EditorWindow
 {
@@ -20,7 +21,7 @@ public class SpatialGenerationWindow : EditorWindow
             SpatialProxyFactory.CreateProxy();
         }
 
-        if (GUILayout.Button("Generate (Mock, Undoable)"))
+        if (GUILayout.Button("Generate"))
         {
             var intent = SceneIntentBuilder.Build();
 

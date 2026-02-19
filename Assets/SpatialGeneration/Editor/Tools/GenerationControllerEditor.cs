@@ -1,15 +1,81 @@
+using System;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 
 public static class GenerationControllerEditor
 {
     private const string GeneratedRootName = "GeneratedContent";
+    private static bool _isGenerating;
 
+    /// <summary>
+    /// Keeps the same signature your UI already calls.
+    /// Internally runs async and applies result on the main thread with Undo.
+    /// </summary>
     public static void RegenerateFromIntent(SceneIntent intent)
+    {
+        _ = RegenerateFromIntentAsync(intent);
+    }
+
+    private static async Task RegenerateFromIntentAsync(SceneIntent intent)
+    {
+        if (_isGenerating)
+        {
+            Debug.LogWarning("Spatial Generation: A generation is already running.");
+            return;
+        }
+
+        _isGenerating = true;
+
+        try
+        {
+            // 1) Translate intent -> backend request (Part 3 seam)
+            BackendRequest request = ConstraintTranslator.Build(intent);
+
+            // 2) Pick backend (Mock / LocalFile / Remote later) with zero UI changes
+            IGenerationBackend backend = BackendRegistry.Current;
+
+            // Optional: log start
+            InteractionLogger.Log(new InteractionEvent
+            {
+                type = "generate",
+                extra = $"backend={backend.Name}, proxies={intent.spatialProxies.Count}"
+            });
+
+            EditorUtility.DisplayProgressBar("Spatial Generation", $"Generating via {backend.Name}…", 0.3f);
+
+            // 3) Run backend (LocalFile will block/poll, Remote will HTTP, etc.)
+            GenerationResult result = await backend.GenerateAsync(request);
+
+            // 4) Apply result on main thread with Undo
+            EditorUtility.DisplayProgressBar("Spatial Generation", "Applying result…", 0.9f);
+
+            EditorApplication.delayCall += () =>
+            {
+                try
+                {
+                    ApplyResultUndoable(result, backend.Name);
+                }
+                finally
+                {
+                    EditorUtility.ClearProgressBar();
+                    _isGenerating = false;
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            EditorUtility.ClearProgressBar();
+            _isGenerating = false;
+            Debug.LogError($"Spatial Generation failed: {ex.Message}\n{ex.StackTrace}");
+        }
+    }
+
+    private static void ApplyResultUndoable(GenerationResult result, string backendName)
     {
         Undo.IncrementCurrentGroup();
         int group = Undo.GetCurrentGroup();
-        Undo.SetCurrentGroupName("Regenerate (Mock)");
+        Undo.SetCurrentGroupName($"Regenerate ({backendName})");
 
         // Ensure root exists (Undo-aware)
         GameObject root = GameObject.Find(GeneratedRootName);
@@ -22,10 +88,7 @@ public static class GenerationControllerEditor
         // Cleanup previous generated children (Undo-aware)
         ClearChildrenUndo(root);
 
-        // Generate and apply (Undo-aware)
-        var backend = new MockGenerationBackend();
-        GenerationResult result = backend.Generate(intent);
-
+        // Spawn new result (Undo-aware)
         foreach (var obj in result.objects)
         {
             GameObject go = GameObject.CreatePrimitive(obj.primitiveType);
@@ -49,13 +112,11 @@ public static class GenerationControllerEditor
         int group = Undo.GetCurrentGroup();
         Undo.SetCurrentGroupName("Cleanup GeneratedContent");
 
-        // Option A: remove children only (keep root)
         ClearChildrenUndo(root);
 
-        // Option B (optional): delete root too
-        // Undo.DestroyObjectImmediate(root);
-
         Undo.CollapseUndoOperations(group);
+
+        InteractionLogger.Log(new InteractionEvent { type = "cleanup" });
     }
 
     private static void ClearChildrenUndo(GameObject root)
@@ -69,7 +130,7 @@ public static class GenerationControllerEditor
 
     private static Vector3 AdjustScaleForPrimitive(PrimitiveType type, Vector3 desiredBounds)
     {
-        // Unity cylinder is 2 units tall in local space, so halve Y to match desired height
+        // Unity cylinder mesh is 2 units tall in local space, so halve Y to match desired height
         return type == PrimitiveType.Cylinder
             ? new Vector3(desiredBounds.x, desiredBounds.y * 0.5f, desiredBounds.z)
             : desiredBounds;

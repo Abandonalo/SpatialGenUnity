@@ -16,7 +16,9 @@ public class SceneIntent
 [Serializable]
 public class SpatialProxyIntent
 {
+    public string proxy_id;        
     public Vector3 position;
+    public Quaternion rotation;     
     public Vector3 size;
     public SpatialProxyRole role;
 }
