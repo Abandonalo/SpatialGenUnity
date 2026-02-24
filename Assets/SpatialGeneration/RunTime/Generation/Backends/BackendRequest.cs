@@ -6,6 +6,9 @@ public class BackendRequest
 {
     public string request_id;
     public Constraint[] constraints;
+    public string depthImagePath;
+    public string cannyImagePath;
+    public string[] maskImagePaths;
 }
 
 [Serializable]

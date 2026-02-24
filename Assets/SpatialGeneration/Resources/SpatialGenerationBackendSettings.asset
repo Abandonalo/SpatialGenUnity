@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cc28637a099294207af4ee0eabde0647, type: 3}
   m_Name: SpatialGenerationBackendSettings
   m_EditorClassIdentifier: Assembly-CSharp::BackendSettings
-  backendKind: 1
+  backendKind: 2
   handoffFolder: SpatialGenHandoff
   requestFileName: request.json
   responseFileName: response.json
@@ -20,3 +20,15 @@ MonoBehaviour:
   maxWaitSeconds: 120
   remoteUrl: http://127.0.0.1:8000/generate
   remoteTimeoutSeconds: 60
+  comfyAutoStart: 1
+  comfyBaseUrl: http://127.0.0.1:8000
+  comfyWsUrl: ws://127.0.0.1:8000/ws
+  comfyClientId: spatialgen-unity-client
+  comfyWorkflowTemplatePath: SpatialGenHandoff/comfy_workflow_api.json
+  comfyInputFolder: SpatialGenHandoff/comfy_inputs
+  comfyOutputAssetFolder: Assets/SpatialGeneration/GeneratedAssets
+  comfyLaunchCommand: /Applications/ComfyUI.app/Contents/MacOS/ComfyUI
+  comfyLaunchArguments: 
+  comfyWorkingDirectory: /Applications/ComfyUI.app/Contents/MacOS
+  comfyBootTimeoutSeconds: 25
+  comfyExecutionTimeoutSeconds: 180
