@@ -8,6 +8,10 @@ public class InteractionEvent
     public string session_id;      // set automatically by logger
     public double t;              // EditorApplication.timeSinceStartup (set by logger)
     public string proxy_id;        // stable per proxy
+    public string shape;
+    public string label;
+    public float strength;
+    public int priority;
     public Vector3 position;
     public Vector3 size;
     public string role;

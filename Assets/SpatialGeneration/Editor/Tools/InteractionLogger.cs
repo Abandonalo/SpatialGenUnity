@@ -36,7 +36,7 @@ public static class InteractionLogger
         if (!File.Exists(_csvPath))
         {
             File.AppendAllText(_csvPath,
-                "t,type,proxy_id,role,pos_x,pos_y,pos_z,size_x,size_y,size_z,extra\n");
+                "t,type,proxy_id,role,shape,label,strength,priority,pos_x,pos_y,pos_z,size_x,size_y,size_z,extra\n");
         }
 
         // session_start event (write directly, no recursion)
@@ -89,6 +89,10 @@ public static class InteractionLogger
                 $"{Safe(e.type)}," +
                 $"{Safe(e.proxy_id)}," +
                 $"{Safe(e.role)}," +
+                $"{Safe(e.shape)}," +
+                $"{Safe(e.label)}," +
+                $"{e.strength.ToString("0.###", CI)}," +
+                $"{e.priority}," +
                 $"{e.position.x.ToString("0.###", CI)}," +
                 $"{e.position.y.ToString("0.###", CI)}," +
                 $"{e.position.z.ToString("0.###", CI)}," +

@@ -10,18 +10,18 @@ public static class SceneIntentBuilder
 
         foreach (var proxy in proxies)
         {
-            Vector3 worldSize = Vector3.Scale(proxy.size, proxy.transform.lossyScale);
-
             intent.spatialProxies.Add(new SpatialProxyIntent
-{
-    proxy_id = proxy.ProxyId,
-    position = proxy.transform.position,
-    rotation = proxy.transform.rotation,
-    size = Vector3.Scale(proxy.size, proxy.transform.lossyScale),
-    role = proxy.role
-});
-
-
+            {
+                proxy_id = proxy.ProxyId,
+                position = proxy.transform.position,
+                rotation = proxy.transform.rotation,
+                size = Vector3.Scale(proxy.size, proxy.transform.lossyScale),
+                role = proxy.role,
+                shape = proxy.Shape,
+                label = proxy.label,
+                strength = proxy.strength,
+                priority = proxy.priority
+            });
         }
 
         return intent;

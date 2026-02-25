@@ -19,7 +19,11 @@ public static class SpatialProxyFactory
             proxy_id = proxy.ProxyId,
             position = go.transform.position,
             size = proxy.size,
-            role = proxy.role.ToString()
+            role = proxy.role.ToString(),
+            shape = proxy.Shape.ToString(),
+            label = proxy.label,
+            strength = proxy.strength,
+            priority = proxy.priority
         });
     }
 }

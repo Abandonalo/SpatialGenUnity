@@ -37,44 +37,57 @@ public class SpatialProxyEditor : Editor
         EditorGUI.BeginChangeCheck();
 
         var newRole = (SpatialProxyRole)EditorGUILayout.EnumPopup("Role", proxy.role);
+        var newLabel = EditorGUILayout.TextField("Label", proxy.label);
+        var newStrength = EditorGUILayout.Slider("Strength", proxy.strength, 0f, 1f);
+        var newPriority = EditorGUILayout.IntField("Priority", proxy.priority);
         var newSize = EditorGUILayout.Vector3Field("Size", proxy.size);
+
+        using (new EditorGUI.DisabledScope(true))
+        {
+            EditorGUILayout.TextField("Proxy ID", proxy.ProxyId);
+            EditorGUILayout.TextField("Shape", proxy.Shape.ToString());
+        }
 
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(proxy, "Edit Spatial Proxy");
 
             bool roleChanged = newRole != proxy.role;
+            bool labelChanged = newLabel != proxy.label;
+            bool strengthChanged = !Mathf.Approximately(newStrength, proxy.strength);
+            bool priorityChanged = newPriority != proxy.priority;
             bool sizeChanged = newSize != proxy.size;
 
             proxy.role = newRole;
+            proxy.label = newLabel;
+            proxy.strength = Mathf.Clamp01(newStrength);
+            proxy.priority = newPriority;
             proxy.size = newSize;
             EditorUtility.SetDirty(proxy);
 
             if (roleChanged)
             {
-                // role changes are rare; no need to throttle, but fine if you want
-                InteractionLogger.Log(new InteractionEvent
-                {
-                    type = "proxy_role_change",
-                    proxy_id = proxy.ProxyId,
-                    position = proxy.transform.position,
-                    size = proxy.size,
-                    role = proxy.role.ToString()
-                });
+                InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_role_change"));
+            }
+
+            if (labelChanged)
+            {
+                InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_label_change"));
+            }
+
+            if (strengthChanged)
+            {
+                InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_strength_change"));
+            }
+
+            if (priorityChanged)
+            {
+                InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_priority_change"));
             }
 
             if (sizeChanged)
             {
-                // inspector size changes are discrete; no need to throttle, but fine if you want
-                InteractionLogger.Log(new InteractionEvent
-                {
-                    type = "proxy_resize",
-                    proxy_id = proxy.ProxyId,
-                    position = proxy.transform.position,
-                    size = proxy.size,
-                    role = proxy.role.ToString(),
-                    extra = "via_inspector"
-                });
+                InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_resize", "via_inspector"));
             }
         }
     }
@@ -212,17 +225,25 @@ public class SpatialProxyEditor : Editor
         if (now - _lastResizeLogTime > ResizeLogInterval)
         {
             _lastResizeLogTime = now;
-
-            InteractionLogger.Log(new InteractionEvent
-            {
-                type = "proxy_resize",
-                proxy_id = proxy.ProxyId,
-                position = proxy.transform.position,
-                size = proxy.size,
-                role = proxy.role.ToString(),
-                extra = shapeTag
-            });
+            InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_resize", shapeTag));
         }
+    }
+
+    private static InteractionEvent CreateProxyEvent(SpatialProxy proxy, string type, string extra = null)
+    {
+        return new InteractionEvent
+        {
+            type = type,
+            proxy_id = proxy.ProxyId,
+            role = proxy.role.ToString(),
+            shape = proxy.Shape.ToString(),
+            label = proxy.label,
+            strength = proxy.strength,
+            priority = proxy.priority,
+            position = proxy.transform.position,
+            size = proxy.size,
+            extra = extra
+        };
     }
 
     private Vector3 ClampMinSize(Vector3 v)

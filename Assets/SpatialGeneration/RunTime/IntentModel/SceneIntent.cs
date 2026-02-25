@@ -21,4 +21,8 @@ public class SpatialProxyIntent
     public Quaternion rotation;     
     public Vector3 size;
     public SpatialProxyRole role;
+    public SpatialProxyShape shape;
+    public string label;
+    public float strength;
+    public int priority;
 }
