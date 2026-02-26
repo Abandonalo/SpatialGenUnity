@@ -41,6 +41,8 @@ namespace SpatialGeneration.Generation.Intent
 
         public float Cfg = 7.0f;
 
+        public string Sampler = "euler";
+
         public int Width = 1024;
 
         public int Height = 1024;

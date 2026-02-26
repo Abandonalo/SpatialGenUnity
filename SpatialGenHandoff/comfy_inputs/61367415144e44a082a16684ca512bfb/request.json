@@ -1,0 +1,65 @@
+{
+    "request_id": "61367415144e44a082a16684ca512bfb",
+    "constraints": [
+        {
+            "id": "5c8ddc036ca948c3a54f5b0227071fd1",
+            "proxy_id": "4783940c28fe476383b9ffcc94239a8b",
+            "type": "attract",
+            "shape": "cylinder",
+            "position": {
+                "x": 0.0,
+                "y": 2.759999990463257,
+                "z": 0.0
+            },
+            "rotation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+            },
+            "size": {
+                "x": 1.0,
+                "y": 2.1270999908447267,
+                "z": 2.2392001152038576
+            }
+        },
+        {
+            "id": "04c39f46f2bc436884892220eadec178",
+            "proxy_id": "f5c84558edfe4af4b0c26f01d76dbb2b",
+            "type": "occupy",
+            "shape": "box",
+            "position": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 1.2300000190734864
+            },
+            "rotation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+            },
+            "size": {
+                "x": 1.0,
+                "y": 1.0,
+                "z": 2.7633490562438967
+            }
+        }
+    ],
+    "prompt": "high quality 3d scene",
+    "negativePrompt": "low quality, blurry, artifacts",
+    "constraintSetJson": "{\n    \"Constraints\": [\n        {\n            \"Type\": 2,\n            \"ProxyId\": \"4783940c28fe476383b9ffcc94239a8b\",\n            \"TargetLabel\": \"\",\n            \"Mode\": \"attention\",\n            \"AxisHint\": {\n                \"X\": 0.0,\n                \"Y\": 1.0,\n                \"Z\": 0.0\n            },\n            \"Weight\": 1.0,\n            \"Priority\": 0\n        },\n        {\n            \"Type\": 0,\n            \"ProxyId\": \"f5c84558edfe4af4b0c26f01d76dbb2b\",\n            \"TargetLabel\": \"\",\n            \"Mode\": \"attention\",\n            \"AxisHint\": {\n                \"X\": 0.0,\n                \"Y\": 0.0,\n                \"Z\": 0.0\n            },\n            \"Weight\": 1.0,\n            \"Priority\": 0\n        }\n    ],\n    \"ConflictPolicy\": \"avoid_wins\"\n}",
+    "depthImagePath": "/Users/alo/SpatialGenUnity/Logs/20260226_180413_68ce1c7f/20260226_180413_759/depth.png",
+    "cannyImagePath": "/Users/alo/SpatialGenUnity/Logs/20260226_180413_68ce1c7f/20260226_180413_759/edges.png",
+    "maskImagePaths": [
+        "/Users/alo/SpatialGenUnity/Logs/20260226_180413_68ce1c7f/20260226_180413_759/mask_occupy.png",
+        "/Users/alo/SpatialGenUnity/Logs/20260226_180413_68ce1c7f/20260226_180413_759/mask_avoid.png",
+        "/Users/alo/SpatialGenUnity/Logs/20260226_180413_68ce1c7f/20260226_180413_759/mask_focus.png"
+    ],
+    "maskOccupyImagePath": "/Users/alo/SpatialGenUnity/Logs/20260226_180413_68ce1c7f/20260226_180413_759/mask_occupy.png",
+    "maskAvoidImagePath": "/Users/alo/SpatialGenUnity/Logs/20260226_180413_68ce1c7f/20260226_180413_759/mask_avoid.png",
+    "maskFocusImagePath": "/Users/alo/SpatialGenUnity/Logs/20260226_180413_68ce1c7f/20260226_180413_759/mask_focus.png",
+    "maskOccupyWeight": 1.0,
+    "maskAvoidWeight": 1.0,
+    "maskFocusWeight": 1.0
+}

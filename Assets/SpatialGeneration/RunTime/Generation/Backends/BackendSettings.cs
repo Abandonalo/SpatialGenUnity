@@ -31,4 +31,15 @@ public class BackendSettings : ScriptableObject
     public string comfyWorkingDirectory = "";
     public int comfyBootTimeoutSeconds = 25;
     public int comfyExecutionTimeoutSeconds = 180;
+
+    [Header("Generation Defaults")]
+    public string prompt = "high quality 3d scene";
+    public string negativePrompt = "low quality, blurry, artifacts";
+    public int seed = -1;
+    public int steps = 30;
+    public float cfg = 7.0f;
+    public string sampler = "euler";
+    public int captureWidth = 512;
+    public int captureHeight = 512;
+    public bool blockOnValidationErrors = true;
 }

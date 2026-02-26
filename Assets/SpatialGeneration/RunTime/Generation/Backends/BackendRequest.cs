@@ -6,9 +6,18 @@ public class BackendRequest
 {
     public string request_id;
     public Constraint[] constraints;
+    public string prompt;
+    public string negativePrompt;
+    public string constraintSetJson;
     public string depthImagePath;
     public string cannyImagePath;
     public string[] maskImagePaths;
+    public string maskOccupyImagePath;
+    public string maskAvoidImagePath;
+    public string maskFocusImagePath;
+    public float maskOccupyWeight = 1f;
+    public float maskAvoidWeight = 1f;
+    public float maskFocusWeight = 1f;
 }
 
 [Serializable]

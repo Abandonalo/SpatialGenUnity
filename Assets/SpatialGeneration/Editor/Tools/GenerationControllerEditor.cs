@@ -29,10 +29,11 @@ public static class GenerationControllerEditor
 
         try
         {
-            // 1) Translate intent -> backend request (Part 3 seam)
-            BackendRequest request = ConstraintTranslator.Build(intent);
+            BackendSettings settings = BackendRegistry.Settings;
+            Camera captureCamera = ResolveCaptureCamera();
+            if (captureCamera == null)
+                throw new Exception("No capture camera found. Add a camera to the scene or tag one as MainCamera.");
 
-            // 2) Pick backend (Mock / LocalFile / Remote later) with zero UI changes
             IGenerationBackend backend = BackendRegistry.Current;
 
             // Optional: log start
@@ -44,8 +45,17 @@ public static class GenerationControllerEditor
 
             EditorUtility.DisplayProgressBar("Spatial Generation", $"Generating via {backend.Name}…", 0.3f);
 
-            // 3) Run backend (LocalFile will block/poll, Remote will HTTP, etc.)
-            GenerationResult result = await backend.GenerateAsync(request);
+            GenerationResult result = await GenerationPipeline.GenerateAsync(
+                captureCamera,
+                settings.captureWidth,
+                settings.captureHeight,
+                settings.prompt,
+                settings.negativePrompt,
+                settings.seed,
+                settings.steps,
+                settings.cfg,
+                settings.sampler,
+                SpatialGeneration.Generation.Intent.SceneStage.Creation);
 
             // 4) Apply result on main thread with Undo
             EditorUtility.DisplayProgressBar("Spatial Generation", "Applying result…", 0.9f);
@@ -69,6 +79,18 @@ public static class GenerationControllerEditor
             _isGenerating = false;
             Debug.LogError($"Spatial Generation failed: {ex.Message}\n{ex.StackTrace}");
         }
+    }
+
+    private static Camera ResolveCaptureCamera()
+    {
+        if (Camera.main != null)
+            return Camera.main;
+
+        Camera[] cameras = UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsSortMode.None);
+        if (cameras != null && cameras.Length > 0)
+            return cameras[0];
+
+        return null;
     }
 
     private static void ApplyResultUndoable(GenerationResult result, string backendName)

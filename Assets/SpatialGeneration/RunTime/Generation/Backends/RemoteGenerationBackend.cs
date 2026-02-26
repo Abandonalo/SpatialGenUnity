@@ -49,14 +49,77 @@ public class RemoteGenerationBackend : IGenerationBackend
         string depthStagedPath = StageInputFile(request.depthImagePath, runInputDir, "depth");
         string cannyStagedPath = StageInputFile(request.cannyImagePath, runInputDir, "canny");
         List<string> maskStagedPaths = StageMaskFiles(request.maskImagePaths, runInputDir);
+        string maskOccupyStagedPath = StageInputFile(request.maskOccupyImagePath, runInputDir, "mask_occupy");
+        string maskAvoidStagedPath = StageInputFile(request.maskAvoidImagePath, runInputDir, "mask_avoid");
+        string maskFocusStagedPath = StageInputFile(request.maskFocusImagePath, runInputDir, "mask_focus");
 
         await EnsureComfyRunningAsync();
 
         string depthName = await UploadImageIfPresentAsync(depthStagedPath, "/upload/image");
         string cannyName = await UploadImageIfPresentAsync(cannyStagedPath, "/upload/image");
         List<string> maskNames = await UploadMaskImagesAsync(maskStagedPaths);
+        string maskOccupyName = await UploadMaskIfPresentAsync(maskOccupyStagedPath);
+        string maskAvoidName = await UploadMaskIfPresentAsync(maskAvoidStagedPath);
+        string maskFocusName = await UploadMaskIfPresentAsync(maskFocusStagedPath);
 
-        if (!CanRunWorkflowWithProvidedInputs(projectRoot, depthName, cannyName, maskNames, out string missingReason))
+        // Backward compatibility: if named mask paths are not set, fall back to generic mask array order.
+        if (string.IsNullOrWhiteSpace(maskOccupyName) && maskNames.Count > 0) maskOccupyName = maskNames[0];
+        if (string.IsNullOrWhiteSpace(maskAvoidName) && maskNames.Count > 1) maskAvoidName = maskNames[1];
+        if (string.IsNullOrWhiteSpace(maskFocusName) && maskNames.Count > 2) maskFocusName = maskNames[2];
+
+        // Temporary adapter fallback: legacy generation path may not provide depth/canny images yet.
+        if (string.IsNullOrWhiteSpace(depthName))
+        {
+            depthName = FirstNonEmpty(maskFocusName, maskOccupyName, maskAvoidName);
+            if (!string.IsNullOrWhiteSpace(depthName))
+                Debug.LogWarning($"ComfyUI depth image missing for request {requestId}; falling back to '{depthName}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(cannyName))
+        {
+            cannyName = FirstNonEmpty(maskAvoidName, maskOccupyName, maskFocusName, depthName);
+            if (!string.IsNullOrWhiteSpace(cannyName))
+                Debug.LogWarning($"ComfyUI canny image missing for request {requestId}; falling back to '{cannyName}'.");
+        }
+
+        // If depth/canny are still missing, synthesize neutral fallback images so template placeholders are satisfied.
+        if (string.IsNullOrWhiteSpace(depthName))
+        {
+            string fallbackDepthPath = CreateFallbackImage(runInputDir, "depth_fallback.png", 512, 512, new Color(0.5f, 0.5f, 0.5f, 1f));
+            depthName = await UploadImageIfPresentAsync(fallbackDepthPath, "/upload/image");
+            Debug.LogWarning($"ComfyUI depth image missing for request {requestId}; uploaded generated fallback '{depthName}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(cannyName))
+        {
+            string fallbackCannyPath = CreateFallbackImage(runInputDir, "canny_fallback.png", 512, 512, Color.black);
+            cannyName = await UploadImageIfPresentAsync(fallbackCannyPath, "/upload/image");
+            Debug.LogWarning($"ComfyUI canny image missing for request {requestId}; uploaded generated fallback '{cannyName}'.");
+        }
+
+        // Ensure named masks exist when workflow expects them.
+        if (string.IsNullOrWhiteSpace(maskOccupyName))
+        {
+            string fallbackMaskOccupyPath = CreateFallbackImage(runInputDir, "mask_occupy_fallback.png", 512, 512, Color.white);
+            maskOccupyName = await UploadMaskIfPresentAsync(fallbackMaskOccupyPath);
+            Debug.LogWarning($"ComfyUI occupy mask missing for request {requestId}; uploaded generated fallback '{maskOccupyName}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(maskAvoidName))
+        {
+            string fallbackMaskAvoidPath = CreateFallbackImage(runInputDir, "mask_avoid_fallback.png", 512, 512, Color.black);
+            maskAvoidName = await UploadMaskIfPresentAsync(fallbackMaskAvoidPath);
+            Debug.LogWarning($"ComfyUI avoid mask missing for request {requestId}; uploaded generated fallback '{maskAvoidName}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(maskFocusName))
+        {
+            string fallbackMaskFocusPath = CreateFallbackImage(runInputDir, "mask_focus_fallback.png", 512, 512, new Color(0.5f, 0.5f, 0.5f, 1f));
+            maskFocusName = await UploadMaskIfPresentAsync(fallbackMaskFocusPath);
+            Debug.LogWarning($"ComfyUI focus mask missing for request {requestId}; uploaded generated fallback '{maskFocusName}'.");
+        }
+
+        if (!CanRunWorkflowWithProvidedInputs(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, out string missingReason))
         {
             Debug.LogWarning(
                 $"Skipping ComfyUI execution for request {requestId}: {missingReason}. " +
@@ -64,7 +127,7 @@ public class RemoteGenerationBackend : IGenerationBackend
             return ConvertConstraintsToResult(request.constraints);
         }
 
-        string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames);
+        string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, request);
         var submitSw = Stopwatch.StartNew();
         string promptId = await SubmitPromptAsync(workflowJson);
         submitSw.Stop();
@@ -166,12 +229,25 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         for (int i = 0; i < stagedMaskPaths.Count; i++)
         {
-            string uploadedName = await UploadImageIfPresentAsync(stagedMaskPaths[i], "/upload/mask");
+            string uploadedName = await UploadMaskIfPresentAsync(stagedMaskPaths[i]);
             if (!string.IsNullOrWhiteSpace(uploadedName))
                 names.Add(uploadedName);
         }
 
         return names;
+    }
+
+    private async Task<string> UploadMaskIfPresentAsync(string localPath)
+    {
+        try
+        {
+            return await UploadImageIfPresentAsync(localPath, "/upload/mask");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"ComfyUI /upload/mask failed ({ex.Message}). Retrying via /upload/image.");
+            return await UploadImageIfPresentAsync(localPath, "/upload/image");
+        }
     }
 
     private async Task EnsureComfyRunningAsync()
@@ -320,7 +396,15 @@ public class RemoteGenerationBackend : IGenerationBackend
         return string.Empty;
     }
 
-    private string LoadAndBindWorkflow(string projectRoot, string depthName, string cannyName, List<string> maskNames)
+    private string LoadAndBindWorkflow(
+        string projectRoot,
+        string depthName,
+        string cannyName,
+        List<string> maskNames,
+        string maskOccupyName,
+        string maskAvoidName,
+        string maskFocusName,
+        BackendRequest request)
     {
         string workflowPath = _settings.comfyWorkflowTemplatePath;
         if (!Path.IsPathRooted(workflowPath))
@@ -333,6 +417,12 @@ public class RemoteGenerationBackend : IGenerationBackend
         workflow = workflow.Replace("__DEPTH_IMAGE__", EscapeJson(depthName));
         workflow = workflow.Replace("__CANNY_IMAGE__", EscapeJson(cannyName));
         workflow = workflow.Replace("__MASK_IMAGE_COUNT__", maskNames.Count.ToString());
+        workflow = workflow.Replace("__MASK_OCCUPY_IMAGE__", EscapeJson(maskOccupyName));
+        workflow = workflow.Replace("__MASK_AVOID_IMAGE__", EscapeJson(maskAvoidName));
+        workflow = workflow.Replace("__MASK_FOCUS_IMAGE__", EscapeJson(maskFocusName));
+        workflow = workflow.Replace("__MASK_OCCUPY_WEIGHT__", Mathf.Clamp01(request?.maskOccupyWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__MASK_AVOID_WEIGHT__", Mathf.Clamp01(request?.maskAvoidWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__MASK_FOCUS_WEIGHT__", Mathf.Clamp01(request?.maskFocusWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
 
         for (int i = 0; i < maskNames.Count; i++)
             workflow = workflow.Replace($"__MASK_IMAGE_{i}__", EscapeJson(maskNames[i]));
@@ -345,6 +435,9 @@ public class RemoteGenerationBackend : IGenerationBackend
         string depthName,
         string cannyName,
         List<string> maskNames,
+        string maskOccupyName,
+        string maskAvoidName,
+        string maskFocusName,
         out string reason)
     {
         reason = string.Empty;
@@ -378,6 +471,24 @@ public class RemoteGenerationBackend : IGenerationBackend
             return false;
         }
 
+        if (template.Contains("__MASK_OCCUPY_IMAGE__") && string.IsNullOrWhiteSpace(maskOccupyName))
+        {
+            reason = "workflow requires __MASK_OCCUPY_IMAGE__ but no occupy mask was provided";
+            return false;
+        }
+
+        if (template.Contains("__MASK_AVOID_IMAGE__") && string.IsNullOrWhiteSpace(maskAvoidName))
+        {
+            reason = "workflow requires __MASK_AVOID_IMAGE__ but no avoid mask was provided";
+            return false;
+        }
+
+        if (template.Contains("__MASK_FOCUS_IMAGE__") && string.IsNullOrWhiteSpace(maskFocusName))
+        {
+            reason = "workflow requires __MASK_FOCUS_IMAGE__ but no focus mask was provided";
+            return false;
+        }
+
         return true;
     }
 
@@ -397,6 +508,40 @@ public class RemoteGenerationBackend : IGenerationBackend
             throw new Exception($"ComfyUI /prompt response missing prompt_id: {responseText}");
 
         return promptId;
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        if (values == null) return string.Empty;
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (!string.IsNullOrWhiteSpace(values[i]))
+                return values[i];
+        }
+        return string.Empty;
+    }
+
+    private static string CreateFallbackImage(string outputDir, string fileName, int width, int height, Color color)
+    {
+        Texture2D texture = null;
+        try
+        {
+            texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            Color[] pixels = new Color[width * height];
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = color;
+            texture.SetPixels(pixels);
+            texture.Apply(false);
+
+            byte[] png = texture.EncodeToPNG();
+            string path = Path.Combine(outputDir, fileName);
+            File.WriteAllBytes(path, png);
+            return path;
+        }
+        finally
+        {
+            if (texture != null)
+                UnityEngine.Object.DestroyImmediate(texture);
+        }
     }
 
     private async Task TrackExecutionViaWebSocketAsync(string promptId)

@@ -1,29 +1,87 @@
 {
   "1": {
-    "class_type": "SolidMask",
+    "class_type": "LoadImage",
     "inputs": {
-      "value": 1.0,
-      "width": 512,
-      "height": 512
+      "image": "__DEPTH_IMAGE__",
+      "upload": "image"
     }
   },
   "2": {
-    "class_type": "MaskToImage",
+    "class_type": "LoadImage",
     "inputs": {
-      "mask": [
-        "1",
-        0
-      ]
+      "image": "__CANNY_IMAGE__",
+      "upload": "image"
+    }
+  },
+  "3": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__MASK_OCCUPY_IMAGE__",
+      "upload": "image"
+    }
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__MASK_AVOID_IMAGE__",
+      "upload": "image"
+    }
+  },
+  "5": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__MASK_FOCUS_IMAGE__",
+      "upload": "image"
     }
   },
   "9": {
     "class_type": "SaveImage",
     "inputs": {
       "images": [
+        "1",
+        0
+      ],
+      "filename_prefix": "spatialgen_depth"
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
         "2",
         0
       ],
-      "filename_prefix": "spatialgen"
+      "filename_prefix": "spatialgen_edges"
+    }
+  },
+  "11": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "3",
+        0
+      ],
+      "filename_prefix": "spatialgen_mask_occupy"
+    }
+  },
+  "12": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "4",
+        0
+      ],
+      "filename_prefix": "spatialgen_mask_avoid"
+    }
+  },
+  "13": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "5",
+        0
+      ],
+      "filename_prefix": "spatialgen_mask_focus"
     }
   }
 }
