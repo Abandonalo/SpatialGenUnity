@@ -1,6 +1,7 @@
 using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
+using NewBackendRequest = SpatialGeneration.Generation.Intent.BackendRequest;
 
 public class LocalFileGenerationBackend : IGenerationBackend
 {
@@ -9,7 +10,7 @@ public class LocalFileGenerationBackend : IGenerationBackend
 
     public LocalFileGenerationBackend(BackendSettings settings) => _s = settings;
 
-    public async Task<GenerationResult> GenerateAsync(BackendRequest request)
+    public async Task<GenerationResult> GenerateAsync(NewBackendRequest request)
     {
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         string dir = Path.Combine(projectRoot, _s.handoffFolder);

@@ -45,6 +45,9 @@ namespace SpatialGeneration.Generation.Intent
                 Prompt = prompt ?? string.Empty,
                 NegativePrompt = negativePrompt ?? string.Empty,
                 ConstraintSetJson = constraintSetJson,
+                MaskOccupyWeight = ResolveWeight(constraintSet, ConstraintType.OccupyVolume),
+                MaskAvoidWeight = ResolveWeight(constraintSet, ConstraintType.KeepEmpty),
+                MaskFocusWeight = ResolveWeight(constraintSet, ConstraintType.FocusRegion),
                 Payload = new ComfyUIRequestPayload
                 {
                     DepthBase64 = EncodePngBase64(depthTexture, nameof(depthTexture)),
@@ -126,6 +129,23 @@ namespace SpatialGeneration.Generation.Intent
             if (pngBytes == null || pngBytes.Length == 0)
                 throw new InvalidOperationException($"PNG bytes for {label} are empty.");
             return Convert.ToBase64String(pngBytes);
+        }
+
+        private static float ResolveWeight(ConstraintSet constraintSet, ConstraintType type)
+        {
+            if (constraintSet?.Constraints == null || constraintSet.Constraints.Count == 0)
+                return 1f;
+
+            float weight = 0f;
+            for (int i = 0; i < constraintSet.Constraints.Count; i++)
+            {
+                Constraint c = constraintSet.Constraints[i];
+                if (c == null || c.Type != type)
+                    continue;
+                weight = Mathf.Max(weight, c.Weight);
+            }
+
+            return weight <= 0f ? 1f : Mathf.Clamp01(weight);
         }
     }
 }

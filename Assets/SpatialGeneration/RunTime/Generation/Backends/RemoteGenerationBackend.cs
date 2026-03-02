@@ -12,6 +12,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
+using NewBackendRequest = SpatialGeneration.Generation.Intent.BackendRequest;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -31,27 +32,30 @@ public class RemoteGenerationBackend : IGenerationBackend
         _settings = settings;
     }
 
-    public async Task<GenerationResult> GenerateAsync(BackendRequest request)
+    public async Task<GenerationResult> GenerateAsync(NewBackendRequest request)
     {
         var totalSw = Stopwatch.StartNew();
         if (request == null)
             throw new ArgumentNullException(nameof(request));
 
-        string requestId = string.IsNullOrWhiteSpace(request.request_id)
+        string requestId = string.IsNullOrWhiteSpace(request.RequestId)
             ? Guid.NewGuid().ToString("N")
-            : request.request_id;
+            : request.RequestId;
 
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         string runInputDir = Path.Combine(projectRoot, _settings.comfyInputFolder, requestId);
         Directory.CreateDirectory(runInputDir);
         File.WriteAllText(Path.Combine(runInputDir, "request.json"), JsonUtility.ToJson(request, true));
 
-        string depthStagedPath = StageInputFile(request.depthImagePath, runInputDir, "depth");
-        string cannyStagedPath = StageInputFile(request.cannyImagePath, runInputDir, "canny");
-        List<string> maskStagedPaths = StageMaskFiles(request.maskImagePaths, runInputDir);
-        string maskOccupyStagedPath = StageInputFile(request.maskOccupyImagePath, runInputDir, "mask_occupy");
-        string maskAvoidStagedPath = StageInputFile(request.maskAvoidImagePath, runInputDir, "mask_avoid");
-        string maskFocusStagedPath = StageInputFile(request.maskFocusImagePath, runInputDir, "mask_focus");
+        string depthStagedPath = WriteBase64PngIfPresent(request?.Payload?.DepthBase64, runInputDir, "depth");
+        string cannyStagedPath = WriteBase64PngIfPresent(request?.Payload?.EdgesBase64, runInputDir, "canny");
+        string maskOccupyStagedPath = WriteBase64PngIfPresent(request?.Payload?.MaskOccupyBase64, runInputDir, "mask_occupy");
+        string maskAvoidStagedPath = WriteBase64PngIfPresent(request?.Payload?.MaskAvoidBase64, runInputDir, "mask_avoid");
+        string maskFocusStagedPath = WriteBase64PngIfPresent(request?.Payload?.MaskFocusBase64, runInputDir, "mask_focus");
+        List<string> maskStagedPaths = new List<string>();
+        if (!string.IsNullOrWhiteSpace(maskOccupyStagedPath)) maskStagedPaths.Add(maskOccupyStagedPath);
+        if (!string.IsNullOrWhiteSpace(maskAvoidStagedPath)) maskStagedPaths.Add(maskAvoidStagedPath);
+        if (!string.IsNullOrWhiteSpace(maskFocusStagedPath)) maskStagedPaths.Add(maskFocusStagedPath);
 
         await EnsureComfyRunningAsync();
 
@@ -124,7 +128,7 @@ public class RemoteGenerationBackend : IGenerationBackend
             Debug.LogWarning(
                 $"Skipping ComfyUI execution for request {requestId}: {missingReason}. " +
                 "Using proxy constraints to generate scene objects.");
-            return ConvertConstraintsToResult(request.constraints);
+            return ConvertConstraintsToResult(request.LegacyConstraints);
         }
 
         string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, request);
@@ -159,7 +163,9 @@ public class RemoteGenerationBackend : IGenerationBackend
             $"asset_refresh_ms={refreshSw.ElapsedMilliseconds} " +
             $"total_ms={totalSw.ElapsedMilliseconds}");
 
-        return ConvertConstraintsToResult(request.constraints);
+        var result = new GenerationResult();
+        result.outputFiles.AddRange(savedOutputs);
+        return result;
     }
 
     private string StageInputFile(string sourcePath, string runInputDir, string label)
@@ -172,6 +178,27 @@ public class RemoteGenerationBackend : IGenerationBackend
         string destPath = Path.Combine(runInputDir, fileName);
         File.Copy(sourcePath, destPath, overwrite: true);
         return destPath;
+    }
+
+    private string WriteBase64PngIfPresent(string base64, string runInputDir, string label)
+    {
+        if (string.IsNullOrWhiteSpace(base64))
+            return string.Empty;
+
+        try
+        {
+            byte[] bytes = Convert.FromBase64String(base64);
+            if (bytes == null || bytes.Length == 0)
+                return string.Empty;
+
+            string destPath = Path.Combine(runInputDir, $"{label}.png");
+            File.WriteAllBytes(destPath, bytes);
+            return destPath;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private List<string> StageMaskFiles(string[] maskPaths, string runInputDir)
@@ -404,7 +431,7 @@ public class RemoteGenerationBackend : IGenerationBackend
         string maskOccupyName,
         string maskAvoidName,
         string maskFocusName,
-        BackendRequest request)
+        NewBackendRequest request)
     {
         string workflowPath = _settings.comfyWorkflowTemplatePath;
         if (!Path.IsPathRooted(workflowPath))
@@ -420,9 +447,9 @@ public class RemoteGenerationBackend : IGenerationBackend
         workflow = workflow.Replace("__MASK_OCCUPY_IMAGE__", EscapeJson(maskOccupyName));
         workflow = workflow.Replace("__MASK_AVOID_IMAGE__", EscapeJson(maskAvoidName));
         workflow = workflow.Replace("__MASK_FOCUS_IMAGE__", EscapeJson(maskFocusName));
-        workflow = workflow.Replace("__MASK_OCCUPY_WEIGHT__", Mathf.Clamp01(request?.maskOccupyWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
-        workflow = workflow.Replace("__MASK_AVOID_WEIGHT__", Mathf.Clamp01(request?.maskAvoidWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
-        workflow = workflow.Replace("__MASK_FOCUS_WEIGHT__", Mathf.Clamp01(request?.maskFocusWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__MASK_OCCUPY_WEIGHT__", Mathf.Clamp01(request?.MaskOccupyWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__MASK_AVOID_WEIGHT__", Mathf.Clamp01(request?.MaskAvoidWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__MASK_FOCUS_WEIGHT__", Mathf.Clamp01(request?.MaskFocusWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
 
         for (int i = 0; i < maskNames.Count; i++)
             workflow = workflow.Replace($"__MASK_IMAGE_{i}__", EscapeJson(maskNames[i]));

@@ -13,6 +13,13 @@ namespace SpatialGeneration.Generation.Intent
 
         public string ConstraintSetJson = string.Empty;
 
+        public float MaskOccupyWeight = 1f;
+        public float MaskAvoidWeight = 1f;
+        public float MaskFocusWeight = 1f;
+
+        // Transitional bridge so legacy backends can still materialize proxy meshes.
+        public global::Constraint[] LegacyConstraints;
+
         public ComfyUIRequestPayload Payload = new();
     }
 

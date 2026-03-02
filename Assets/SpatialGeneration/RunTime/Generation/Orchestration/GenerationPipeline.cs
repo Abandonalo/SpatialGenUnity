@@ -19,7 +19,10 @@ public static class GenerationPipeline
 
     public static async Task<GenerationResult> GenerateAsync(SceneIntent intent)
     {
-        BackendRequest request = ConstraintTranslator.Build(intent);
+        NewBackendRequest request = new()
+        {
+            RequestId = Guid.NewGuid().ToString("N")
+        };
         IGenerationBackend backend = BackendRegistry.Current;
         return await backend.GenerateAsync(request);
     }
@@ -137,24 +140,16 @@ public static class GenerationPipeline
 
         SceneIntent legacyIntent = SceneIntentBuilder.Build();
         BackendRequest legacyRequest = ConstraintTranslator.Build(legacyIntent);
-        legacyRequest.request_id = requestId;
-        legacyRequest.prompt = request.Prompt;
-        legacyRequest.negativePrompt = request.NegativePrompt;
-        legacyRequest.constraintSetJson = request.ConstraintSetJson;
-        legacyRequest.depthImagePath = depthPath;
-        legacyRequest.cannyImagePath = edgesPath;
-        legacyRequest.maskImagePaths = new[] { occupyPath, avoidPath, focusPath };
-        legacyRequest.maskOccupyImagePath = occupyPath;
-        legacyRequest.maskAvoidImagePath = avoidPath;
-        legacyRequest.maskFocusImagePath = focusPath;
-        legacyRequest.maskOccupyWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.OccupyVolume);
-        legacyRequest.maskAvoidWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.KeepEmpty);
-        legacyRequest.maskFocusWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.FocusRegion);
+        request.RequestId = requestId;
+        request.MaskOccupyWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.OccupyVolume);
+        request.MaskAvoidWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.KeepEmpty);
+        request.MaskFocusWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.FocusRegion);
+        request.LegacyConstraints = legacyRequest.constraints;
         File.WriteAllText(Path.Combine(artifactDir, "LegacyBackendRequest.json"), JsonUtility.ToJson(legacyRequest, true));
 
         IGenerationBackend backend = BackendRegistry.Current;
         Debug.Log($"Spatial Generation artifacts saved to {artifactDir} (session={SessionId}, request_id={requestId})");
-        return await backend.GenerateAsync(legacyRequest);
+        return await backend.GenerateAsync(request);
     }
 
     private static string EnsureRunArtifactDirectory()

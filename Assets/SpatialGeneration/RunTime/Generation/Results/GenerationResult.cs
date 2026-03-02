@@ -4,6 +4,7 @@ using UnityEngine;
 public class GenerationResult
 {
     public List<GeneratedObject> objects = new();
+    public List<string> outputFiles = new();
 }
 
 public class GeneratedObject

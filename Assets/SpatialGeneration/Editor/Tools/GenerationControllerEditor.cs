@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
@@ -109,6 +110,37 @@ public static class GenerationControllerEditor
 
         // Cleanup previous generated children (Undo-aware)
         ClearChildrenUndo(root);
+
+        if (result.outputFiles != null)
+        {
+            string pngPath = result.outputFiles.Find(p =>
+                !string.IsNullOrWhiteSpace(p) &&
+                p.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(p));
+
+            if (!string.IsNullOrWhiteSpace(pngPath))
+            {
+                byte[] bytes = File.ReadAllBytes(pngPath);
+                Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                tex.LoadImage(bytes);
+
+                GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                quad.name = "Generated_Image";
+                quad.transform.SetParent(root.transform, false);
+                quad.transform.localPosition = Vector3.zero;
+
+                Shader shader = Shader.Find("Unlit/Texture");
+                if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
+                if (shader == null) shader = Shader.Find("Standard");
+                Material mat = new Material(shader);
+                mat.mainTexture = tex;
+                quad.GetComponent<Renderer>().sharedMaterial = mat;
+
+                Undo.RegisterCreatedObjectUndo(quad, "Create Generated Image Quad");
+                Undo.CollapseUndoOperations(group);
+                return;
+            }
+        }
 
         // Spawn new result (Undo-aware)
         foreach (var obj in result.objects)

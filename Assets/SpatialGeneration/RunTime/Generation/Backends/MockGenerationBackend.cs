@@ -1,18 +1,19 @@
 using System.Threading.Tasks;
 using UnityEngine;
+using NewBackendRequest = SpatialGeneration.Generation.Intent.BackendRequest;
 
 public class MockGenerationBackend : IGenerationBackend
 {
     public string Name => "Mock";
 
-    public Task<GenerationResult> GenerateAsync(BackendRequest request)
+    public Task<GenerationResult> GenerateAsync(NewBackendRequest request)
     {
         var result = new GenerationResult();
 
-        if (request?.constraints == null)
+        if (request?.LegacyConstraints == null)
             return Task.FromResult(result);
 
-        foreach (var c in request.constraints)
+        foreach (var c in request.LegacyConstraints)
         {
             PrimitiveType type = (c.shape ?? "").ToLowerInvariant() switch
             {
