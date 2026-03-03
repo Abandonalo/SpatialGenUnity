@@ -56,7 +56,7 @@ public static class GenerationControllerEditor
                 settings.steps,
                 settings.cfg,
                 settings.sampler,
-                SpatialGeneration.Generation.Intent.SceneStage.Creation);
+                ResolveSceneStage());
 
             // 4) Apply result on main thread with Undo
             EditorUtility.DisplayProgressBar("Spatial Generation", "Applying result…", 0.9f);
@@ -65,7 +65,8 @@ public static class GenerationControllerEditor
             {
                 try
                 {
-                    ApplyResultUndoable(result, backend.Name);
+                    Debug.Log("Outputs:\n" + string.Join("\n", result.outputFiles ?? new System.Collections.Generic.List<string>()));
+                    ApplyResultUndoable(result, backend.Name, intent, captureCamera);
                 }
                 finally
                 {
@@ -94,7 +95,7 @@ public static class GenerationControllerEditor
         return null;
     }
 
-    private static void ApplyResultUndoable(GenerationResult result, string backendName)
+    private static void ApplyResultUndoable(GenerationResult result, string backendName, SceneIntent intent, Camera captureCamera)
     {
         Undo.IncrementCurrentGroup();
         int group = Undo.GetCurrentGroup();
@@ -113,6 +114,26 @@ public static class GenerationControllerEditor
 
         if (result.outputFiles != null)
         {
+            string meshPath = result.outputFiles.Find(p =>
+                !string.IsNullOrWhiteSpace(p) &&
+                (p.EndsWith(".glb", StringComparison.OrdinalIgnoreCase) ||
+                 p.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase) ||
+                 p.EndsWith(".obj", StringComparison.OrdinalIgnoreCase)) &&
+                File.Exists(p));
+
+            if (!string.IsNullOrWhiteSpace(meshPath))
+            {
+                if (TryInstantiateMeshOutput(meshPath, root, out GameObject meshObject))
+                {
+                    PlaceGeneratedObject(meshObject, intent);
+                    Undo.RegisterCreatedObjectUndo(meshObject, "Create Generated Mesh");
+                    Undo.CollapseUndoOperations(group);
+                    return;
+                }
+
+                Debug.LogWarning($"Spatial Generation: Could not instantiate mesh output '{meshPath}'. Falling back to image/primitive output.");
+            }
+
             string pngPath = result.outputFiles.Find(p =>
                 !string.IsNullOrWhiteSpace(p) &&
                 p.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
@@ -127,7 +148,7 @@ public static class GenerationControllerEditor
                 GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
                 quad.name = "Generated_Image";
                 quad.transform.SetParent(root.transform, false);
-                quad.transform.localPosition = Vector3.zero;
+                PlacePreviewQuad(quad, captureCamera, intent);
 
                 Shader shader = Shader.Find("Unlit/Texture");
                 if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
@@ -155,6 +176,179 @@ public static class GenerationControllerEditor
         }
 
         Undo.CollapseUndoOperations(group);
+    }
+
+    private static bool TryInstantiateMeshOutput(string absolutePath, GameObject root, out GameObject instance)
+    {
+        instance = null;
+        string assetPath = StageFileIntoGeneratedAssets(absolutePath);
+        if (string.IsNullOrWhiteSpace(assetPath))
+            return false;
+
+        AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);
+
+        GameObject meshAsset = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+        if (meshAsset == null)
+            meshAsset = AssetDatabase.LoadMainAssetAtPath(assetPath) as GameObject;
+        if (meshAsset == null)
+        {
+            UnityEngine.Object loadedAsset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            Debug.LogWarning(
+                $"Spatial Generation: Imported '{assetPath}', but main asset type is '{loadedAsset?.GetType().Name ?? "null"}'. " +
+                "Install or configure a compatible importer for this mesh format.");
+            return false;
+        }
+
+        UnityEngine.Object created = PrefabUtility.InstantiatePrefab(meshAsset);
+        instance = created as GameObject;
+        if (instance == null)
+            return false;
+
+        instance.name = "Generated_Mesh";
+        instance.transform.SetParent(root.transform, false);
+        instance.transform.localPosition = Vector3.zero;
+        return true;
+    }
+
+    private static string StageFileIntoGeneratedAssets(string absolutePath)
+    {
+        if (string.IsNullOrWhiteSpace(absolutePath) || !File.Exists(absolutePath))
+            return null;
+
+        const string generatedRoot = "Assets/SpatialGeneration/Generated";
+        EnsureAssetFolder("Assets/SpatialGeneration");
+        EnsureAssetFolder(generatedRoot);
+
+        string sourceDir = Path.GetDirectoryName(absolutePath);
+        if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir))
+            return null;
+
+        string folderName = $"run_{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}";
+        string destinationFolder = $"{generatedRoot}/{folderName}";
+        AssetDatabase.CreateFolder(generatedRoot, folderName);
+
+        string[] files = Directory.GetFiles(sourceDir);
+        for (int i = 0; i < files.Length; i++)
+        {
+            string sourceFile = files[i];
+            string fileName = Path.GetFileName(sourceFile);
+            string destinationPath = Path.Combine(destinationFolder, fileName).Replace("\\", "/");
+            File.Copy(sourceFile, destinationPath, true);
+        }
+
+        return $"{destinationFolder}/{Path.GetFileName(absolutePath)}";
+    }
+
+    private static void EnsureAssetFolder(string assetPath)
+    {
+        if (AssetDatabase.IsValidFolder(assetPath))
+            return;
+
+        string parent = Path.GetDirectoryName(assetPath)?.Replace("\\", "/");
+        string name = Path.GetFileName(assetPath);
+        if (string.IsNullOrWhiteSpace(parent) || string.IsNullOrWhiteSpace(name))
+            return;
+
+        EnsureAssetFolder(parent);
+        if (!AssetDatabase.IsValidFolder(assetPath))
+            AssetDatabase.CreateFolder(parent, name);
+    }
+
+    private static void PlaceGeneratedObject(GameObject generatedObject, SceneIntent intent)
+    {
+        if (generatedObject == null)
+            return;
+
+        if (!TryGetPrimaryOccupyProxy(intent, out SpatialProxyIntent proxy))
+            return;
+
+        generatedObject.transform.position = proxy.position;
+        generatedObject.transform.rotation = proxy.rotation;
+        FitObjectToTargetSize(generatedObject, proxy.size);
+    }
+
+    private static void PlacePreviewQuad(GameObject quad, Camera captureCamera, SceneIntent intent)
+    {
+        if (quad == null)
+            return;
+
+        if (TryGetPrimaryOccupyProxy(intent, out SpatialProxyIntent proxy))
+        {
+            quad.transform.position = proxy.position;
+            quad.transform.rotation = proxy.rotation;
+            quad.transform.localScale = proxy.size;
+            return;
+        }
+
+        if (captureCamera != null)
+        {
+            quad.transform.position = captureCamera.transform.position + captureCamera.transform.forward * 2f;
+            quad.transform.rotation = Quaternion.LookRotation(-captureCamera.transform.forward, captureCamera.transform.up);
+            quad.transform.localScale = Vector3.one;
+            return;
+        }
+
+        quad.transform.localPosition = Vector3.zero;
+    }
+
+    private static bool TryGetPrimaryOccupyProxy(SceneIntent intent, out SpatialProxyIntent proxy)
+    {
+        proxy = null;
+        if (intent?.spatialProxies == null || intent.spatialProxies.Count == 0)
+            return false;
+
+        for (int i = 0; i < intent.spatialProxies.Count; i++)
+        {
+            SpatialProxyIntent candidate = intent.spatialProxies[i];
+            if (candidate == null)
+                continue;
+
+            if (candidate.role == SpatialProxyRole.Occupy && candidate.shape == SpatialProxyShape.Box)
+            {
+                proxy = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void FitObjectToTargetSize(GameObject generatedObject, Vector3 targetSize)
+    {
+        Renderer[] renderers = generatedObject.GetComponentsInChildren<Renderer>();
+        if (renderers == null || renderers.Length == 0)
+            return;
+
+        Bounds combined = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+            combined.Encapsulate(renderers[i].bounds);
+
+        const float min = 1e-4f;
+        Vector3 currentSize = combined.size;
+        Vector3 safeCurrent = new(
+            Mathf.Max(min, currentSize.x),
+            Mathf.Max(min, currentSize.y),
+            Mathf.Max(min, currentSize.z));
+        Vector3 safeTarget = new(
+            Mathf.Max(min, targetSize.x),
+            Mathf.Max(min, targetSize.y),
+            Mathf.Max(min, targetSize.z));
+
+        Vector3 multiplier = new(
+            safeTarget.x / safeCurrent.x,
+            safeTarget.y / safeCurrent.y,
+            safeTarget.z / safeCurrent.z);
+
+        generatedObject.transform.localScale = Vector3.Scale(generatedObject.transform.localScale, multiplier);
+    }
+
+    private static SpatialGeneration.Generation.Intent.SceneStage ResolveSceneStage()
+    {
+        GameObject root = GameObject.Find(GeneratedRootName);
+        bool hasGeneratedContent = root != null && root.transform.childCount > 0;
+        return hasGeneratedContent
+            ? SpatialGeneration.Generation.Intent.SceneStage.Refinement
+            : SpatialGeneration.Generation.Intent.SceneStage.Creation;
     }
 
     public static void CleanupGeneratedContent()

@@ -5,6 +5,7 @@ public class GenerationResult
 {
     public List<GeneratedObject> objects = new();
     public List<string> outputFiles = new();
+    public string primaryOutputFile = string.Empty;
 }
 
 public class GeneratedObject

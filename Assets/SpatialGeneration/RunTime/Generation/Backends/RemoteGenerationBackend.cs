@@ -165,6 +165,17 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         var result = new GenerationResult();
         result.outputFiles.AddRange(savedOutputs);
+        result.primaryOutputFile = ChoosePrimaryOutput(savedOutputs);
+
+        // If ComfyUI finished but produced no downloadable assets, fall back to proxy primitives.
+        if (savedOutputs.Count == 0)
+        {
+            GenerationResult fallback = ConvertConstraintsToResult(request.LegacyConstraints);
+            fallback.outputFiles.AddRange(savedOutputs);
+            fallback.primaryOutputFile = string.Empty;
+            return fallback;
+        }
+
         return result;
     }
 
@@ -759,6 +770,37 @@ public class RemoteGenerationBackend : IGenerationBackend
         }
 
         return result;
+    }
+
+    private static string ChoosePrimaryOutput(List<string> outputPaths)
+    {
+        if (outputPaths == null || outputPaths.Count == 0)
+            return string.Empty;
+
+        for (int i = 0; i < outputPaths.Count; i++)
+        {
+            string path = outputPaths[i];
+            if (string.IsNullOrWhiteSpace(path))
+                continue;
+            string ext = Path.GetExtension(path);
+            if (ext.Equals(".glb", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".gltf", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".obj", StringComparison.OrdinalIgnoreCase))
+            {
+                return path;
+            }
+        }
+
+        for (int i = 0; i < outputPaths.Count; i++)
+        {
+            string path = outputPaths[i];
+            if (string.IsNullOrWhiteSpace(path))
+                continue;
+            if (Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase))
+                return path;
+        }
+
+        return outputPaths[0] ?? string.Empty;
     }
 
     private async Task<List<string>> DownloadOutputsAsync(string promptId, string requestId, string outputDir)

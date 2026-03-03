@@ -18,7 +18,7 @@ namespace SpatialGeneration.Generation.Intent
 
         public string TargetLabel = string.Empty;
 
-        public string Mode = "attention";
+        public string Mode = string.Empty;
 
         public Vector3Data AxisHint;
 
