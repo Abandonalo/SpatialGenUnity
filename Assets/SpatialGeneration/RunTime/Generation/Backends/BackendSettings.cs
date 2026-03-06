@@ -25,6 +25,7 @@ public class BackendSettings : ScriptableObject
     public string comfyClientId = "spatialgen-unity-client";
     public string comfyWorkflowTemplatePath = "SpatialGenHandoff/comfy_workflow_api.json";
     public string comfyInputFolder = "SpatialGenHandoff/comfy_inputs";
+    public string comfyCheckpointName = "motiondesignv13dartC4D_v10.safetensors";
     public string comfyOutputAssetFolder = "Assets/SpatialGeneration/GeneratedAssets";
     public string comfyLaunchCommand = "/usr/bin/python3";
     public string comfyLaunchArguments = "main.py --listen 127.0.0.1 --port 8000";

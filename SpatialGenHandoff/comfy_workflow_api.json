@@ -1,87 +1,238 @@
 {
-  "1": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "__DEPTH_IMAGE__",
-      "upload": "image"
-    }
-  },
-  "2": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "__CANNY_IMAGE__",
-      "upload": "image"
-    }
-  },
   "3": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "__MASK_OCCUPY_IMAGE__",
-      "upload": "image"
+  "inputs": {
+    "seed": "__SEED__",
+    "steps": "__STEPS__",
+    "cfg": "__CFG__",
+    "sampler_name": "euler",
+    "scheduler": "normal",
+    "denoise": 1,
+    "model": ["18", 0],
+    "positive": ["17", 0],
+    "negative": ["17", 1],
+    "latent_image": ["5", 0]
+  },
+  "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
     }
   },
   "4": {
-    "class_type": "LoadImage",
     "inputs": {
-      "image": "__MASK_AVOID_IMAGE__",
-      "upload": "image"
+      "ckpt_name": "__CHECKPOINT__"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
     }
   },
   "5": {
-    "class_type": "LoadImage",
     "inputs": {
-      "image": "__MASK_FOCUS_IMAGE__",
-      "upload": "image"
+      "width": 512,
+      "height": 512,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
     }
   },
-  "9": {
-    "class_type": "SaveImage",
+  "6": {
     "inputs": {
-      "images": [
-        "1",
-        0
-      ],
-      "filename_prefix": "spatialgen_depth"
+      "text": "__PROMPT__",
+      "clip": [
+        "18",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
     }
   },
-  "10": {
-    "class_type": "SaveImage",
+  "7": {
     "inputs": {
-      "images": [
-        "2",
-        0
-      ],
-      "filename_prefix": "spatialgen_edges"
+      "text": "__NEG_PROMPT__",
+      "clip": [
+        "18",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
     }
   },
-  "11": {
-    "class_type": "SaveImage",
+  "8": {
     "inputs": {
-      "images": [
+      "samples": [
         "3",
         0
       ],
-      "filename_prefix": "spatialgen_mask_occupy"
+      "vae": [
+        "4",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
     }
   },
-  "12": {
-    "class_type": "SaveImage",
+  "11": {
     "inputs": {
-      "images": [
-        "4",
-        0
-      ],
-      "filename_prefix": "spatialgen_mask_avoid"
+      "image": "__DEPTH_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
     }
   },
   "13": {
-    "class_type": "SaveImage",
     "inputs": {
-      "images": [
-        "5",
+      "control_net_name": "controlnet-depth/diffusion_pytorch_model.safetensors"
+    },
+    "class_type": "ControlNetLoader",
+    "_meta": {
+      "title": "Load ControlNet Model"
+    }
+  },
+  "14": {
+    "inputs": {
+      "strength": 1,
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": [
+        "6",
         0
       ],
-      "filename_prefix": "spatialgen_mask_focus"
+      "negative": [
+        "7",
+        0
+      ],
+      "control_net": [
+        "13",
+        0
+      ],
+      "image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply ControlNet"
+    }
+  },
+  "15": {
+    "inputs": {
+      "control_net_name": "controlnet-canny/diffusion_pytorch_model.safetensors"
+    },
+    "class_type": "ControlNetLoader",
+    "_meta": {
+      "title": "Load ControlNet Model"
+    }
+  },
+  "16": {
+    "inputs": {
+      "image": "__CANNY_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "17": {
+    "inputs": {
+      "strength": 0.8,
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "14",
+        1
+      ],
+      "control_net": [
+        "15",
+        0
+      ],
+      "image": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply ControlNet"
+    }
+  },
+  "18": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "small_scene_V2.safetensors",
+        "strength": 1
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "4",
+        1
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "22": {
+    "inputs": {
+      "model": "model.safetensors",
+      "chunk_size": 8192
+    },
+    "class_type": "TripoSRModelLoader",
+    "_meta": {
+      "title": "TripoSR Model Loader"
+    }
+  },
+  "23": {
+    "inputs": {
+      "geometry_resolution": 256,
+      "threshold": 25,
+      "model": [
+        "22",
+        0
+      ],
+      "reference_image": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "TripoSRSampler",
+    "_meta": {
+      "title": "TripoSR Sampler"
+    }
+  },
+  "24": {
+    "inputs": {
+      "format": "glb",
+      "mesh": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "TripoSRViewer",
+    "_meta": {
+      "title": "TripoSR Viewer"
     }
   }
 }

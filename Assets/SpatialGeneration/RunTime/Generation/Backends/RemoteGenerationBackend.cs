@@ -9,6 +9,7 @@ using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -19,6 +20,8 @@ using UnityEditor;
 
 public class RemoteGenerationBackend : IGenerationBackend
 {
+    private const string DebugLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-9a2848.log";
+    private const string DebugSessionId = "9a2848";
     private readonly BackendSettings _settings;
     private static Process _comfyProcess;
     private static readonly HttpClient Http = new HttpClient();
@@ -130,6 +133,15 @@ public class RemoteGenerationBackend : IGenerationBackend
                 "Using proxy constraints to generate scene objects.");
             return ConvertConstraintsToResult(request.LegacyConstraints);
         }
+
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H2",
+            "RemoteGenerationBackend.GenerateAsync:before_submit",
+            "Prepared workflow-bound input names",
+            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"depthName\":\"{EscapeJson(depthName)}\",\"cannyName\":\"{EscapeJson(cannyName)}\",\"maskOccupyName\":\"{EscapeJson(maskOccupyName)}\",\"maskAvoidName\":\"{EscapeJson(maskAvoidName)}\",\"maskFocusName\":\"{EscapeJson(maskFocusName)}\",\"maskNamesCount\":{maskNames.Count}}}");
+        // #endregion
 
         string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, request);
         var submitSw = Stopwatch.StartNew();
@@ -283,6 +295,14 @@ public class RemoteGenerationBackend : IGenerationBackend
         }
         catch (Exception ex)
         {
+            // #region agent log
+            AppendDebugLog(
+                "baseline",
+                "H1",
+                "RemoteGenerationBackend.UploadMaskIfPresentAsync:mask_upload_failed",
+                "Mask upload endpoint failed; retrying image endpoint",
+                $"{{\"localPath\":\"{EscapeJson(localPath ?? string.Empty)}\",\"fileExists\":{(File.Exists(localPath) ? "true" : "false")},\"fileBytes\":{(File.Exists(localPath) ? new FileInfo(localPath).Length.ToString(CultureInfo.InvariantCulture) : "0")},\"error\":\"{EscapeJson(ex.Message ?? string.Empty)}\"}}");
+            // #endregion
             Debug.LogWarning($"ComfyUI /upload/mask failed ({ex.Message}). Retrying via /upload/image.");
             return await UploadImageIfPresentAsync(localPath, "/upload/image");
         }
@@ -451,7 +471,24 @@ public class RemoteGenerationBackend : IGenerationBackend
         if (!File.Exists(workflowPath))
             throw new Exception($"ComfyUI workflow file not found: {workflowPath}");
 
+        int seed = request?.Payload?.Generation?.Seed ?? _settings.seed;
+        if (seed < 0)
+            seed = UnityEngine.Random.Range(0, int.MaxValue);
+        int steps = Mathf.Max(1, request?.Payload?.Generation?.Steps ?? _settings.steps);
+        float cfg = Mathf.Max(0f, request?.Payload?.Generation?.Cfg ?? _settings.cfg);
+        string prompt = request?.Prompt ?? _settings.prompt ?? string.Empty;
+        string negativePrompt = request?.NegativePrompt ?? _settings.negativePrompt ?? string.Empty;
+        string checkpointName = string.IsNullOrWhiteSpace(_settings.comfyCheckpointName)
+            ? "motiondesignv13dartC4D_v10.safetensors"
+            : _settings.comfyCheckpointName.Trim();
+
         string workflow = File.ReadAllText(workflowPath);
+        workflow = workflow.Replace("__SEED__", seed.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__STEPS__", steps.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__CFG__", cfg.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__CHECKPOINT__", EscapeJson(checkpointName));
+        workflow = workflow.Replace("__PROMPT__", EscapeJson(prompt));
+        workflow = workflow.Replace("__NEG_PROMPT__", EscapeJson(negativePrompt));
         workflow = workflow.Replace("__DEPTH_IMAGE__", EscapeJson(depthName));
         workflow = workflow.Replace("__CANNY_IMAGE__", EscapeJson(cannyName));
         workflow = workflow.Replace("__MASK_IMAGE_COUNT__", maskNames.Count.ToString());
@@ -679,6 +716,17 @@ public class RemoteGenerationBackend : IGenerationBackend
                 string json = await response.Content.ReadAsStringAsync();
                 if (response.IsSuccessStatusCode && ContainsPromptInHistory(json, promptId))
                 {
+                    int refs = ExtractOutputImageRefs(json).Count;
+                    bool hasOutputRefs = refs > 0;
+                    bool completed = IsHistoryCompleted(json);
+                    // #region agent log
+                    AppendDebugLog(
+                        "baseline",
+                        "H4",
+                        "RemoteGenerationBackend.WaitForCompletionByHistoryPollingAsync:history_observed",
+                        "History polling state observed",
+                        $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"completed\":{(completed ? "true" : "false")},\"hasOutputRefs\":{(hasOutputRefs ? "true" : "false")},\"outputRefCount\":{refs},\"historyChars\":{json.Length.ToString(CultureInfo.InvariantCulture)}}}");
+                    // #endregion
                     if (IsHistoryError(json))
                     {
                         string errorMessage = ExtractJsonString(json, "exception_message");
@@ -687,7 +735,7 @@ public class RemoteGenerationBackend : IGenerationBackend
                         throw new Exception($"ComfyUI prompt failed for {promptId}: {errorMessage}");
                     }
 
-                    if (IsHistoryCompleted(json) || HasOutputImageRefs(json))
+                    if (completed || hasOutputRefs)
                         return;
                 }
             }
@@ -809,10 +857,49 @@ public class RemoteGenerationBackend : IGenerationBackend
         using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
         using HttpResponseMessage response = await Http.GetAsync($"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}", cts.Token);
         string historyJson = await response.Content.ReadAsStringAsync();
+        int firstFilenameIndex = (historyJson ?? string.Empty).IndexOf("\"filename\"", StringComparison.Ordinal);
+        int firstOutputTypeIndex = (historyJson ?? string.Empty).IndexOf("\"type\":\"output\"", StringComparison.Ordinal);
+        string filenameSnippet = BuildSanitizedSnippet(historyJson, firstFilenameIndex, 220);
+        string outputTypeSnippet = BuildSanitizedSnippet(historyJson, firstOutputTypeIndex, 220);
+        int genericFilenameCount = Regex.Matches(historyJson ?? string.Empty, "\"filename\"\\s*:\\s*\"([^\"]+)\"").Count;
+        int outputTypeCount = Regex.Matches(historyJson ?? string.Empty, "\"type\"\\s*:\\s*\"output\"").Count;
+        int orderedFilenameSubfolderTypeCount = Regex.Matches(
+            historyJson ?? string.Empty,
+            "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\"").Count;
+        int filenameSubfolderNullTypeCount = Regex.Matches(
+            historyJson ?? string.Empty,
+            "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*null\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\"").Count;
+        int typeBeforeFilenameCount = Regex.Matches(
+            historyJson ?? string.Empty,
+            "\"type\"\\s*:\\s*\"output\"[\\s\\S]{0,120}\"filename\"\\s*:\\s*\"([^\"]+)\"").Count;
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H3",
+            "RemoteGenerationBackend.DownloadOutputsAsync:history_downloaded",
+            "Fetched prompt history for output extraction",
+            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"statusCode\":{((int)response.StatusCode).ToString(CultureInfo.InvariantCulture)},\"historyChars\":{historyJson.Length.ToString(CultureInfo.InvariantCulture)},\"genericFilenameCount\":{genericFilenameCount},\"outputTypeCount\":{outputTypeCount},\"orderedFilenameSubfolderTypeCount\":{orderedFilenameSubfolderTypeCount},\"filenameSubfolderNullTypeCount\":{filenameSubfolderNullTypeCount},\"typeBeforeFilenameCount\":{typeBeforeFilenameCount},\"firstFilenameIndex\":{firstFilenameIndex},\"firstOutputTypeIndex\":{firstOutputTypeIndex}}}");
+        // #endregion
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H6",
+            "RemoteGenerationBackend.DownloadOutputsAsync:history_shape_snippets",
+            "Sanitized history snippets around filename/output markers",
+            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"filenameSnippet\":\"{EscapeJson(filenameSnippet)}\",\"outputTypeSnippet\":\"{EscapeJson(outputTypeSnippet)}\"}}");
+        // #endregion
         if (!response.IsSuccessStatusCode)
             throw new Exception($"ComfyUI /history/{promptId} failed: {(int)response.StatusCode} {historyJson}");
 
         var outputs = ExtractOutputImageRefs(historyJson);
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H5",
+            "RemoteGenerationBackend.DownloadOutputsAsync:extraction_result",
+            "Parsed output references using current extractor",
+            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"extractedCount\":{outputs.Count},\"genericFilenameCount\":{genericFilenameCount},\"outputTypeCount\":{outputTypeCount}}}");
+        // #endregion
         var saved = new List<string>();
 
         foreach (var output in outputs)
@@ -833,22 +920,58 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private static List<ImageRef> ExtractOutputImageRefs(string historyJson)
     {
-        var matches = Regex.Matches(
-            historyJson,
-            "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\"");
-
         var refs = new List<ImageRef>();
-        foreach (Match match in matches)
-        {
-            if (!match.Success || match.Groups.Count < 4)
-                continue;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(historyJson))
+            return refs;
 
-            refs.Add(new ImageRef
+        // Support both field orders observed in ComfyUI history payloads.
+        var patterns = new[]
+        {
+            "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\"",
+            "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*\"([^\"]*)\""
+        };
+
+        foreach (string pattern in patterns)
+        {
+            MatchCollection matches = Regex.Matches(historyJson, pattern);
+            foreach (Match match in matches)
             {
-                filename = match.Groups[1].Value,
-                subfolder = match.Groups[2].Value,
-                type = match.Groups[3].Value
-            });
+                if (!match.Success || match.Groups.Count < 4)
+                    continue;
+
+                string filename = match.Groups[1].Value;
+                string second = match.Groups[2].Value;
+                string third = match.Groups[3].Value;
+                string subfolder;
+                string type;
+
+                // Pattern 1: [filename, subfolder, type], Pattern 2: [filename, type, subfolder]
+                if (pattern.Contains("\"subfolder\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"type\""))
+                {
+                    subfolder = second;
+                    type = third;
+                }
+                else
+                {
+                    type = second;
+                    subfolder = third;
+                }
+
+                if (!type.Equals("output", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string key = $"{filename}|{subfolder}|{type}";
+                if (!seen.Add(key))
+                    continue;
+
+                refs.Add(new ImageRef
+                {
+                    filename = filename,
+                    subfolder = subfolder,
+                    type = type
+                });
+            }
         }
 
         return refs;
@@ -902,11 +1025,44 @@ public class RemoteGenerationBackend : IGenerationBackend
         return m.Success && m.Groups.Count > 1 ? m.Groups[1].Value : string.Empty;
     }
 
+    private static void AppendDebugLog(string runId, string hypothesisId, string location, string message, string dataJson)
+    {
+        try
+        {
+            string safeRunId = EscapeJson(runId ?? "baseline");
+            string safeHypothesisId = EscapeJson(hypothesisId ?? string.Empty);
+            string safeLocation = EscapeJson(location ?? string.Empty);
+            string safeMessage = EscapeJson(message ?? string.Empty);
+            string safeDataJson = string.IsNullOrWhiteSpace(dataJson) ? "{}" : dataJson;
+            long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            string line =
+                $"{{\"sessionId\":\"{DebugSessionId}\",\"runId\":\"{safeRunId}\",\"hypothesisId\":\"{safeHypothesisId}\",\"location\":\"{safeLocation}\",\"message\":\"{safeMessage}\",\"data\":{safeDataJson},\"timestamp\":{ts.ToString(CultureInfo.InvariantCulture)}}}";
+            File.AppendAllText(DebugLogPath, line + Environment.NewLine);
+        }
+        catch
+        {
+            // Never interrupt generation flow due to debug logging failures.
+        }
+    }
+
     private static void RefreshAssetDatabaseIfNeeded()
     {
 #if UNITY_EDITOR
         AssetDatabase.Refresh();
 #endif
+    }
+
+    private static string BuildSanitizedSnippet(string text, int centerIndex, int radius)
+    {
+        if (string.IsNullOrEmpty(text) || centerIndex < 0)
+            return string.Empty;
+
+        int start = Math.Max(0, centerIndex - Math.Max(10, radius));
+        int length = Math.Min(text.Length - start, Math.Max(20, radius * 2));
+        string snippet = text.Substring(start, length);
+        snippet = snippet.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+        snippet = Regex.Replace(snippet, "\\s+", " ");
+        return snippet;
     }
 
     private class ImageRef
