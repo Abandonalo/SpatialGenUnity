@@ -207,6 +207,8 @@ public static class GenerationControllerEditor
         instance.name = "Generated_Mesh";
         instance.transform.SetParent(root.transform, false);
         instance.transform.localPosition = Vector3.zero;
+        bool hasVertexColors = MeshHasVertexColors(instance);
+        EnsureRenderableMaterials(instance, hasVertexColors, out _);
         return true;
     }
 
@@ -237,6 +239,53 @@ public static class GenerationControllerEditor
         }
 
         return $"{destinationFolder}/{Path.GetFileName(absolutePath)}";
+    }
+
+    private static int EnsureRenderableMaterials(GameObject root, bool preferVertexColor, out string fallbackShaderName)
+    {
+        fallbackShaderName = string.Empty;
+        if (root == null)
+            return 0;
+
+        Shader fallback = null;
+        if (preferVertexColor)
+            fallback = Shader.Find("SpatialGeneration/VertexColorUnlit");
+        if (fallback == null) fallback = Shader.Find("Universal Render Pipeline/Lit");
+        if (fallback == null) fallback = Shader.Find("Universal Render Pipeline/Simple Lit");
+        if (fallback == null) fallback = Shader.Find("Standard");
+        if (fallback == null) fallback = Shader.Find("Sprites/Default");
+        if (fallback == null)
+            return 0;
+
+        fallbackShaderName = fallback.name;
+        int replaced = 0;
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+        for (int r = 0; r < renderers.Length; r++)
+        {
+            Renderer renderer = renderers[r];
+            Material[] mats = renderer.sharedMaterials;
+            bool dirty = false;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                Material mat = mats[i];
+                bool shouldReplace = mat == null || mat.shader == null || !mat.shader.isSupported;
+                if (!shouldReplace)
+                    continue;
+
+                var replacement = new Material(fallback)
+                {
+                    name = "Generated_FallbackMaterial"
+                };
+                mats[i] = replacement;
+                replaced++;
+                dirty = true;
+            }
+
+            if (dirty)
+                renderer.sharedMaterials = mats;
+        }
+
+        return replaced;
     }
 
     private static void EnsureAssetFolder(string assetPath)
@@ -334,12 +383,31 @@ public static class GenerationControllerEditor
             Mathf.Max(min, targetSize.y),
             Mathf.Max(min, targetSize.z));
 
-        Vector3 multiplier = new(
+        // Preserve generated mesh proportions: scale uniformly to avoid axis stretching.
+        Vector3 axisRatios = new(
             safeTarget.x / safeCurrent.x,
             safeTarget.y / safeCurrent.y,
             safeTarget.z / safeCurrent.z);
-
+        float uniformScale = Mathf.Max(axisRatios.x, Mathf.Max(axisRatios.y, axisRatios.z));
+        Vector3 multiplier = new(uniformScale, uniformScale, uniformScale);
         generatedObject.transform.localScale = Vector3.Scale(generatedObject.transform.localScale, multiplier);
+    }
+
+    private static bool MeshHasVertexColors(GameObject root)
+    {
+        if (root == null)
+            return false;
+        MeshFilter[] meshFilters = root.GetComponentsInChildren<MeshFilter>(true);
+        for (int i = 0; i < meshFilters.Length; i++)
+        {
+            Mesh mesh = meshFilters[i].sharedMesh;
+            if (mesh == null)
+                continue;
+            if (mesh.colors != null && mesh.colors.Length > 0)
+                return true;
+        }
+
+        return false;
     }
 
     private static SpatialGeneration.Generation.Intent.SceneStage ResolveSceneStage()
