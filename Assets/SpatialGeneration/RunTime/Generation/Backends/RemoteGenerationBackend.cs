@@ -20,8 +20,8 @@ using UnityEditor;
 
 public class RemoteGenerationBackend : IGenerationBackend
 {
-    private const string DebugLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-9a2848.log";
-    private const string DebugSessionId = "9a2848";
+    private const string DebugLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-f611c7.log";
+    private const string DebugSessionId = "f611c7";
     private readonly BackendSettings _settings;
     private static Process _comfyProcess;
     private static readonly HttpClient Http = new HttpClient();
@@ -44,6 +44,30 @@ public class RemoteGenerationBackend : IGenerationBackend
         string requestId = string.IsNullOrWhiteSpace(request.RequestId)
             ? Guid.NewGuid().ToString("N")
             : request.RequestId;
+
+        int legacyConstraintCount = request?.LegacyConstraints?.Length ?? 0;
+        int legacyOccupyCount = 0;
+        int legacyAttractCount = 0;
+        if (request?.LegacyConstraints != null)
+        {
+            for (int i = 0; i < request.LegacyConstraints.Length; i++)
+            {
+                Constraint c = request.LegacyConstraints[i];
+                string type = (c?.type ?? string.Empty).Trim().ToLowerInvariant();
+                if (type == "occupy")
+                    legacyOccupyCount++;
+                else if (type == "attract")
+                    legacyAttractCount++;
+            }
+        }
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H4",
+            "RemoteGenerationBackend.GenerateAsync:request_constraints",
+            "Captured incoming legacy constraints composition",
+            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"legacyConstraintCount\":{legacyConstraintCount},\"legacyOccupyCount\":{legacyOccupyCount},\"legacyAttractCount\":{legacyAttractCount}}}");
+        // #endregion
 
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         string runInputDir = Path.Combine(projectRoot, _settings.comfyInputFolder, requestId);
@@ -128,6 +152,14 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         if (!CanRunWorkflowWithProvidedInputs(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, out string missingReason))
         {
+            // #region agent log
+            AppendDebugLog(
+                "baseline",
+                "H2",
+                "RemoteGenerationBackend.GenerateAsync:workflow_skipped",
+                "Workflow was skipped and fallback conversion is used",
+                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"reason\":\"{EscapeJson(missingReason)}\"}}");
+            // #endregion
             Debug.LogWarning(
                 $"Skipping ComfyUI execution for request {requestId}: {missingReason}. " +
                 "Using proxy constraints to generate scene objects.");
@@ -156,6 +188,14 @@ public class RemoteGenerationBackend : IGenerationBackend
         var downloadSw = Stopwatch.StartNew();
         List<string> savedOutputs = await DownloadOutputsAsync(promptId, requestId, outputDir);
         downloadSw.Stop();
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H1",
+            "RemoteGenerationBackend.GenerateAsync:saved_outputs",
+            "Downloaded outputs after Comfy execution",
+            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"promptId\":\"{EscapeJson(promptId)}\",\"savedOutputCount\":{savedOutputs.Count},\"savedOutputNames\":\"{EscapeJson(string.Join(";", savedOutputs))}\"}}");
+        // #endregion
 
         var refreshSw = Stopwatch.StartNew();
         RefreshAssetDatabaseIfNeeded();
@@ -185,9 +225,25 @@ public class RemoteGenerationBackend : IGenerationBackend
             GenerationResult fallback = ConvertConstraintsToResult(request.LegacyConstraints);
             fallback.outputFiles.AddRange(savedOutputs);
             fallback.primaryOutputFile = string.Empty;
+            // #region agent log
+            AppendDebugLog(
+                "baseline",
+                "H2",
+                "RemoteGenerationBackend.GenerateAsync:fallback_result",
+                "Returning proxy-converted fallback result",
+                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"fallbackObjectCount\":{fallback.objects.Count},\"fallbackOutputFileCount\":{fallback.outputFiles.Count}}}");
+            // #endregion
             return fallback;
         }
 
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H3",
+            "RemoteGenerationBackend.GenerateAsync:final_result",
+            "Returning non-fallback result",
+            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"resultOutputFileCount\":{result.outputFiles.Count},\"primaryOutputFile\":\"{EscapeJson(result.primaryOutputFile)}\"}}");
+        // #endregion
         return result;
     }
 
@@ -798,7 +854,17 @@ public class RemoteGenerationBackend : IGenerationBackend
     {
         var result = new GenerationResult();
         if (constraints == null)
+        {
+            // #region agent log
+            AppendDebugLog(
+                "baseline",
+                "H2",
+                "RemoteGenerationBackend.ConvertConstraintsToResult:null_constraints",
+                "Fallback conversion had no constraints",
+                "{\"constraintCount\":0,\"convertedObjectCount\":0}");
+            // #endregion
             return result;
+        }
 
         foreach (Constraint c in constraints)
         {
@@ -816,6 +882,14 @@ public class RemoteGenerationBackend : IGenerationBackend
                 size = c.size
             });
         }
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H2",
+            "RemoteGenerationBackend.ConvertConstraintsToResult:converted",
+            "Converted proxy constraints to generated primitives",
+            $"{{\"constraintCount\":{constraints.Length},\"convertedObjectCount\":{result.objects.Count}}}");
+        // #endregion
 
         return result;
     }
@@ -899,6 +973,14 @@ public class RemoteGenerationBackend : IGenerationBackend
             "RemoteGenerationBackend.DownloadOutputsAsync:extraction_result",
             "Parsed output references using current extractor",
             $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"extractedCount\":{outputs.Count},\"genericFilenameCount\":{genericFilenameCount},\"outputTypeCount\":{outputTypeCount}}}");
+        // #endregion
+        // #region agent log
+        AppendDebugLog(
+            "baseline",
+            "H1",
+            "RemoteGenerationBackend.DownloadOutputsAsync:extracted_refs",
+            "Extracted output references details",
+            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"extractedRefs\":\"{EscapeJson(string.Join(";", outputs.ConvertAll(o => $"{o.filename}|{o.subfolder}|{o.type}")))}\"}}");
         // #endregion
         var saved = new List<string>();
 

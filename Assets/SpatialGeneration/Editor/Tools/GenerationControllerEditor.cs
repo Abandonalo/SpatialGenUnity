@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using UnityEditor;
@@ -114,24 +115,49 @@ public static class GenerationControllerEditor
 
         if (result.outputFiles != null)
         {
-            string meshPath = result.outputFiles.Find(p =>
+            var meshPaths = result.outputFiles.FindAll(p =>
                 !string.IsNullOrWhiteSpace(p) &&
                 (p.EndsWith(".glb", StringComparison.OrdinalIgnoreCase) ||
                  p.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase) ||
                  p.EndsWith(".obj", StringComparison.OrdinalIgnoreCase)) &&
                 File.Exists(p));
 
-            if (!string.IsNullOrWhiteSpace(meshPath))
+            if (meshPaths.Count > 0)
             {
-                if (TryInstantiateMeshOutput(meshPath, root, out GameObject meshObject))
+                List<SpatialProxyIntent> occupyProxies = GetOccupyPlacementProxies(intent);
+                int placementCount = occupyProxies.Count > 0 ? occupyProxies.Count : meshPaths.Count;
+                bool createdAnyMesh = false;
+
+                for (int i = 0; i < placementCount; i++)
                 {
-                    PlaceGeneratedObject(meshObject, intent);
+                    string meshPath = meshPaths[Mathf.Min(i, meshPaths.Count - 1)];
+                    if (!TryInstantiateMeshOutput(meshPath, root, out GameObject meshObject))
+                        continue;
+
+                    if (occupyProxies.Count > 0)
+                        PlaceGeneratedObjectAtProxy(meshObject, occupyProxies[i]);
+
+                    meshObject.name = occupyProxies.Count > 0
+                        ? $"Generated_Mesh_{occupyProxies[i].id}"
+                        : $"Generated_Mesh_{i}";
                     Undo.RegisterCreatedObjectUndo(meshObject, "Create Generated Mesh");
+                    createdAnyMesh = true;
+                }
+
+                if (createdAnyMesh)
+                {
+                    if (meshPaths.Count > occupyProxies.Count && occupyProxies.Count > 0)
+                    {
+                        Debug.LogWarning(
+                            $"Spatial Generation: Received {meshPaths.Count} mesh outputs but only {occupyProxies.Count} occupy proxies. " +
+                            "Extra mesh outputs were not placed.");
+                    }
+
                     Undo.CollapseUndoOperations(group);
                     return;
                 }
 
-                Debug.LogWarning($"Spatial Generation: Could not instantiate mesh output '{meshPath}'. Falling back to image/primitive output.");
+                Debug.LogWarning("Spatial Generation: Could not instantiate mesh outputs. Falling back to image/primitive output.");
             }
 
             string pngPath = result.outputFiles.Find(p =>
@@ -303,12 +329,11 @@ public static class GenerationControllerEditor
             AssetDatabase.CreateFolder(parent, name);
     }
 
-    private static void PlaceGeneratedObject(GameObject generatedObject, SceneIntent intent)
+    private static void PlaceGeneratedObjectAtProxy(GameObject generatedObject, SpatialProxyIntent proxy)
     {
         if (generatedObject == null)
             return;
-
-        if (!TryGetPrimaryOccupyProxy(intent, out SpatialProxyIntent proxy))
+        if (proxy == null)
             return;
 
         generatedObject.transform.position = proxy.position;
@@ -343,8 +368,18 @@ public static class GenerationControllerEditor
     private static bool TryGetPrimaryOccupyProxy(SceneIntent intent, out SpatialProxyIntent proxy)
     {
         proxy = null;
-        if (intent?.spatialProxies == null || intent.spatialProxies.Count == 0)
+        List<SpatialProxyIntent> proxies = GetOccupyPlacementProxies(intent);
+        if (proxies.Count == 0)
             return false;
+        proxy = proxies[0];
+        return true;
+    }
+
+    private static List<SpatialProxyIntent> GetOccupyPlacementProxies(SceneIntent intent)
+    {
+        var proxies = new List<SpatialProxyIntent>();
+        if (intent?.spatialProxies == null || intent.spatialProxies.Count == 0)
+            return proxies;
 
         for (int i = 0; i < intent.spatialProxies.Count; i++)
         {
@@ -352,14 +387,12 @@ public static class GenerationControllerEditor
             if (candidate == null)
                 continue;
 
-            if (candidate.role == SpatialProxyRole.Occupy && candidate.shape == SpatialProxyShape.Box)
-            {
-                proxy = candidate;
-                return true;
-            }
+            // Placement targets are explicit occupy proxies only.
+            if (candidate.role == SpatialProxyRole.Occupy)
+                proxies.Add(candidate);
         }
 
-        return false;
+        return proxies;
     }
 
     private static void FitObjectToTargetSize(GameObject generatedObject, Vector3 targetSize)
