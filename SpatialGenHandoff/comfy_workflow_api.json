@@ -240,7 +240,7 @@
         0
       ],
       "reference_image": [
-        "8",
+        "42",
         0
       ]
     },
@@ -341,6 +341,139 @@
     "class_type": "ControlNetApplyAdvanced",
     "_meta": {
       "title": "Apply Focus Mask Guidance"
+    }
+  },
+  "35": {
+    "inputs": {
+      "filename_prefix": "spatialgen_preview",
+      "images": [
+        "42",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Preview Image"
+    }
+  },
+  "36": {
+    "inputs": {
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "cfg": "__CFG__",
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": ["18", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "Prompt Only KSampler"
+    }
+  },
+  "37": {
+    "inputs": {
+      "samples": [
+        "36",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Prompt Only VAE Decode"
+    }
+  },
+  "38": {
+    "inputs": {
+      "filename_prefix": "spatialgen_prompt_only",
+      "images": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Prompt Only Image"
+    }
+  },
+  "39": {
+    "inputs": {
+      "text": "__MESH_PROMPT__",
+      "clip": [
+        "18",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Mesh Source Prompt)"
+    }
+  },
+  "40": {
+    "inputs": {
+      "text": "__MESH_NEG_PROMPT__",
+      "clip": [
+        "18",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Mesh Source Negative Prompt)"
+    }
+  },
+  "41": {
+    "inputs": {
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "cfg": "__CFG__",
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": ["18", 0],
+      "positive": ["39", 0],
+      "negative": ["40", 0],
+      "latent_image": ["5", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "Mesh Source KSampler"
+    }
+  },
+  "42": {
+    "inputs": {
+      "samples": [
+        "41",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Mesh Source VAE Decode"
+    }
+  },
+  "43": {
+    "inputs": {
+      "filename_prefix": "spatialgen_mesh_source",
+      "images": [
+        "42",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Mesh Source Image"
     }
   }
 }

@@ -34,6 +34,7 @@ public class IntentContractsTests
         Assert.AreEqual(ProxyRoleModel.Occupy, proxyIntent.Role);
         Assert.AreEqual(ProxyShapeModel.Box, proxyIntent.Shape);
         Assert.AreEqual(string.Empty, proxyIntent.Label);
+        Assert.AreEqual(string.Empty, proxyIntent.AssetPrompt);
         Assert.AreEqual(1f, proxyIntent.Strength);
         Assert.AreEqual(0, proxyIntent.Priority);
         Assert.IsNotNull(proxyIntent.Pose);
@@ -53,6 +54,7 @@ public class IntentContractsTests
             Role = ProxyRoleModel.Attract,
             Shape = ProxyShapeModel.Cylinder,
             Label = "vending_machine",
+            AssetPrompt = "stylized vending machine with neon decals",
             Strength = 0.7f,
             Priority = 3
         });
@@ -85,6 +87,7 @@ public class IntentContractsTests
             Id = "proxy_critical",
             Role = ProxyRoleModel.Avoid,
             Shape = ProxyShapeModel.Sphere,
+            AssetPrompt = "keep this space empty",
             Strength = 0.35f,
             Priority = 9
         });
@@ -96,6 +99,7 @@ public class IntentContractsTests
         Assert.AreEqual("proxy_critical", proxy.Id);
         Assert.AreEqual(ProxyRoleModel.Avoid, proxy.Role);
         Assert.AreEqual(ProxyShapeModel.Sphere, proxy.Shape);
+        Assert.AreEqual("keep this space empty", proxy.AssetPrompt);
         Assert.AreEqual(0.35f, proxy.Strength);
         Assert.AreEqual(9, proxy.Priority);
     }
@@ -163,6 +167,7 @@ public class IntentContractsTests
         Assert.IsFalse(string.IsNullOrWhiteSpace(request.ConstraintSetJson));
         Assert.AreEqual(4, request.Payload.Generation.Width);
         Assert.AreEqual(4, request.Payload.Generation.Height);
+        Assert.IsNotNull(request.PerProxyAssetPrompts);
 
         Object.DestroyImmediate(depth);
         Object.DestroyImmediate(occupy);

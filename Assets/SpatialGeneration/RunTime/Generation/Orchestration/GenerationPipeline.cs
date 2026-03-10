@@ -94,6 +94,7 @@ public static class GenerationPipeline
         NewBackendRequest request = NewBackendRequestBuilder.Build(
             prompt, negativePrompt, depthTexture, edgesTexture, compiledConstraints,
             seed, steps, cfg, sampler, constraintSet);
+        request.PerProxyAssetPrompts = BuildPerProxyAssetPrompts(sceneIntent);
 
         string artifactDir = EnsureRunArtifactDirectory();
         string requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId;
@@ -221,6 +222,33 @@ public static class GenerationPipeline
             weight = Mathf.Max(weight, c.Weight);
         }
         return weight <= 0f ? 1f : Mathf.Clamp01(weight);
+    }
+
+    private static List<SpatialGeneration.Generation.Intent.PerProxyAssetPrompt> BuildPerProxyAssetPrompts(NewSceneIntent sceneIntent)
+    {
+        List<SpatialGeneration.Generation.Intent.PerProxyAssetPrompt> prompts = new();
+        if (sceneIntent?.Proxies == null || sceneIntent.Proxies.Count == 0)
+            return prompts;
+
+        for (int i = 0; i < sceneIntent.Proxies.Count; i++)
+        {
+            var proxy = sceneIntent.Proxies[i];
+            if (proxy == null ||
+                proxy.Role != SpatialGeneration.Generation.Intent.ProxyRole.Occupy ||
+                string.IsNullOrWhiteSpace(proxy.Id) ||
+                string.IsNullOrWhiteSpace(proxy.AssetPrompt))
+            {
+                continue;
+            }
+
+            prompts.Add(new SpatialGeneration.Generation.Intent.PerProxyAssetPrompt
+            {
+                ProxyId = proxy.Id,
+                AssetPrompt = proxy.AssetPrompt.Trim()
+            });
+        }
+
+        return prompts;
     }
 
     [Serializable]

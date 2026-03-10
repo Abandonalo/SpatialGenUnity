@@ -27,6 +27,8 @@ namespace SpatialGeneration.Generation.Intent
 
         public string Label = string.Empty;
 
+        public string AssetPrompt = string.Empty;
+
         public PoseData Pose = new();
 
         public float Strength = 1f;

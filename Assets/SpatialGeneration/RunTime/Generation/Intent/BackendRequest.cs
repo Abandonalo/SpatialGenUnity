@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace SpatialGeneration.Generation.Intent
 {
@@ -16,6 +17,8 @@ namespace SpatialGeneration.Generation.Intent
         public float MaskOccupyWeight = 1f;
         public float MaskAvoidWeight = 1f;
         public float MaskFocusWeight = 1f;
+
+        public List<PerProxyAssetPrompt> PerProxyAssetPrompts = new();
 
         // Transitional bridge so legacy backends can still materialize proxy meshes.
         public global::Constraint[] LegacyConstraints;
@@ -53,5 +56,13 @@ namespace SpatialGeneration.Generation.Intent
         public int Width = 1024;
 
         public int Height = 1024;
+    }
+
+    [Serializable]
+    public class PerProxyAssetPrompt
+    {
+        public string ProxyId = string.Empty;
+
+        public string AssetPrompt = string.Empty;
     }
 }

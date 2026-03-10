@@ -22,6 +22,8 @@ public class RemoteGenerationBackend : IGenerationBackend
 {
     private const string DebugLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-f611c7.log";
     private const string DebugSessionId = "f611c7";
+    private const string AgentDebugLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-e9b45f.log";
+    private const string AgentDebugSessionId = "e9b45f";
     private readonly BackendSettings _settings;
     private static Process _comfyProcess;
     private static readonly HttpClient Http = new HttpClient();
@@ -60,6 +62,14 @@ public class RemoteGenerationBackend : IGenerationBackend
                     legacyAttractCount++;
             }
         }
+        // #region agent log
+        AppendAgentDebugLog(
+            "pre-fix",
+            "H1,H2",
+            "RemoteGenerationBackend.cs:64",
+            "incoming_prompt_request",
+            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"basePrompt\":\"{EscapeJson(SummarizeTextForDebug(request?.Prompt))}\",\"negativePrompt\":\"{EscapeJson(SummarizeTextForDebug(request?.NegativePrompt))}\",\"perProxyPromptCount\":{(request?.PerProxyAssetPrompts?.Count ?? 0).ToString(CultureInfo.InvariantCulture)},\"perProxyPrompts\":\"{EscapeJson(SummarizePerProxyPromptsForDebug(request))}\",\"legacyOccupyProxyIds\":\"{EscapeJson(SummarizeLegacyOccupyProxyIdsForDebug(request))}\"}}");
+        // #endregion
         // #region agent log
         AppendDebugLog(
             "baseline",
@@ -170,6 +180,10 @@ public class RemoteGenerationBackend : IGenerationBackend
         int runCount = Mathf.Max(1, occupyConstraints.Count);
         string outputDir = ResolveOutputDirectory(projectRoot);
         var savedOutputs = new List<string>();
+        string previousPreviewPath = null;
+        string previousPromptOnlyPath = null;
+        string previousMeshSourcePath = null;
+        string previousMaskGuidedMeshSourcePath = null;
         long submitMsTotal = 0;
         long executionMsTotal = 0;
         long downloadMsTotal = 0;
@@ -189,11 +203,15 @@ public class RemoteGenerationBackend : IGenerationBackend
             string occupyProxyId = !string.IsNullOrWhiteSpace(occupy?.proxy_id)
                 ? occupy.proxy_id
                 : $"occupy_{runIndex}";
+            string runPrompt = ResolveRunPrompt(request, occupyProxyId);
+            string meshSourcePrompt = BuildMeshSourcePrompt(runPrompt, occupyProxyId, request);
+            string meshSourceNegativePrompt = BuildMeshSourceNegativePrompt(request);
             string runMaskOccupyName = maskOccupyName;
+            string perProxyMaskPath = string.Empty;
 
             if (occupy != null)
             {
-                string perProxyMaskPath = BuildPerProxyOccupyMaskPath(occupy, request, runInputDir, runIndex);
+                perProxyMaskPath = BuildPerProxyOccupyMaskPath(occupy, request, runInputDir, runIndex);
                 if (!string.IsNullOrWhiteSpace(perProxyMaskPath))
                 {
                     string uploadedPerProxyMaskName = await UploadMaskIfPresentAsync(perProxyMaskPath);
@@ -201,6 +219,14 @@ public class RemoteGenerationBackend : IGenerationBackend
                         runMaskOccupyName = uploadedPerProxyMaskName;
                 }
             }
+            // #region agent log
+            AppendAgentDebugLog(
+                "pre-fix",
+                "H1,H2,H4",
+                "RemoteGenerationBackend.cs:206",
+                "per_proxy_run_prompt_resolution",
+                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"assetPrompt\":\"{EscapeJson(SummarizeTextForDebug(ResolvePerProxyAssetPrompt(request, occupyProxyId)))}\",\"runPrompt\":\"{EscapeJson(SummarizeTextForDebug(runPrompt))}\",\"meshSourcePrompt\":\"{EscapeJson(SummarizeTextForDebug(meshSourcePrompt))}\",\"meshSourceNegativePrompt\":\"{EscapeJson(SummarizeTextForDebug(meshSourceNegativePrompt))}\",\"runPromptContainsAssetPrompt\":{(string.IsNullOrWhiteSpace(ResolvePerProxyAssetPrompt(request, occupyProxyId)) ? "false" : (runPrompt ?? string.Empty).Contains(ResolvePerProxyAssetPrompt(request, occupyProxyId), StringComparison.Ordinal) ? "true" : "false")},\"perProxyMaskPath\":\"{EscapeJson(perProxyMaskPath)}\",\"perProxyMaskCoverage\":{CalculateMaskCoverage(perProxyMaskPath).ToString("0.######", CultureInfo.InvariantCulture)}}}");
+            // #endregion
 
             // #region agent log
             AppendDebugLog(
@@ -211,7 +237,7 @@ public class RemoteGenerationBackend : IGenerationBackend
                 $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"depthName\":\"{EscapeJson(depthName)}\",\"cannyName\":\"{EscapeJson(cannyName)}\",\"maskOccupyName\":\"{EscapeJson(runMaskOccupyName)}\",\"maskAvoidName\":\"{EscapeJson(maskAvoidName)}\",\"maskFocusName\":\"{EscapeJson(maskFocusName)}\"}}");
             // #endregion
 
-            string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, runMaskOccupyName, maskAvoidName, maskFocusName, request);
+            string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, runMaskOccupyName, maskAvoidName, maskFocusName, request, runPrompt, meshSourcePrompt, meshSourceNegativePrompt);
             var submitSw = Stopwatch.StartNew();
             string promptId = await SubmitPromptAsync(workflowJson);
             submitSw.Stop();
@@ -227,6 +253,74 @@ public class RemoteGenerationBackend : IGenerationBackend
             List<string> runSavedOutputs = await DownloadOutputsAsync(promptId, requestId, outputDir, runOutputPrefix);
             downloadSw.Stop();
             downloadMsTotal += downloadSw.ElapsedMilliseconds;
+            string runPreviewPath = FindFirstPreviewOutput(runSavedOutputs);
+            string runPromptOnlyPath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_prompt_only");
+            string runMeshSourcePath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_mesh_source");
+            string runMaskGuidedMeshSourcePath = BuildMaskGuidedMeshSourceImage(runMeshSourcePath, perProxyMaskPath, outputDir, runOutputPrefix);
+            if (!string.IsNullOrWhiteSpace(previousPreviewPath) && !string.IsNullOrWhiteSpace(runPreviewPath))
+            {
+                PreviewSimilarityStats similarity = ComparePreviewImages(previousPreviewPath, runPreviewPath);
+                // #region agent log
+                AppendAgentDebugLog(
+                    "pre-fix",
+                    "H10",
+                    "RemoteGenerationBackend.cs:232",
+                    "preview_similarity_between_prompt_variants",
+                    $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"previousPreview\":\"{EscapeJson(Path.GetFileName(previousPreviewPath))}\",\"currentPreview\":\"{EscapeJson(Path.GetFileName(runPreviewPath))}\",\"meanAbsoluteDifference\":{similarity.MeanAbsoluteDifference.ToString("0.######", CultureInfo.InvariantCulture)},\"maxChannelDifference\":{similarity.MaxChannelDifference.ToString("0.######", CultureInfo.InvariantCulture)}}}");
+                // #endregion
+            }
+            if (!string.IsNullOrWhiteSpace(runPreviewPath))
+                previousPreviewPath = runPreviewPath;
+            if (!string.IsNullOrWhiteSpace(previousPromptOnlyPath) && !string.IsNullOrWhiteSpace(runPromptOnlyPath))
+            {
+                PreviewSimilarityStats promptOnlySimilarity = ComparePreviewImages(previousPromptOnlyPath, runPromptOnlyPath);
+                // #region agent log
+                AppendAgentDebugLog(
+                    "pre-fix",
+                    "H12,H13",
+                    "RemoteGenerationBackend.cs:244",
+                    "prompt_only_similarity_between_prompt_variants",
+                    $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"previousPromptOnly\":\"{EscapeJson(Path.GetFileName(previousPromptOnlyPath))}\",\"currentPromptOnly\":\"{EscapeJson(Path.GetFileName(runPromptOnlyPath))}\",\"meanAbsoluteDifference\":{promptOnlySimilarity.MeanAbsoluteDifference.ToString("0.######", CultureInfo.InvariantCulture)},\"maxChannelDifference\":{promptOnlySimilarity.MaxChannelDifference.ToString("0.######", CultureInfo.InvariantCulture)}}}");
+                // #endregion
+            }
+            if (!string.IsNullOrWhiteSpace(runPromptOnlyPath))
+                previousPromptOnlyPath = runPromptOnlyPath;
+            if (!string.IsNullOrWhiteSpace(previousMeshSourcePath) && !string.IsNullOrWhiteSpace(runMeshSourcePath))
+            {
+                PreviewSimilarityStats meshSourceSimilarity = ComparePreviewImages(previousMeshSourcePath, runMeshSourcePath);
+                // #region agent log
+                AppendAgentDebugLog(
+                    "pre-fix",
+                    "H14",
+                    "RemoteGenerationBackend.cs:256",
+                    "mesh_source_similarity_between_prompt_variants",
+                    $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"previousMeshSource\":\"{EscapeJson(Path.GetFileName(previousMeshSourcePath))}\",\"currentMeshSource\":\"{EscapeJson(Path.GetFileName(runMeshSourcePath))}\",\"meanAbsoluteDifference\":{meshSourceSimilarity.MeanAbsoluteDifference.ToString("0.######", CultureInfo.InvariantCulture)},\"maxChannelDifference\":{meshSourceSimilarity.MaxChannelDifference.ToString("0.######", CultureInfo.InvariantCulture)}}}");
+                // #endregion
+            }
+            if (!string.IsNullOrWhiteSpace(runMeshSourcePath))
+                previousMeshSourcePath = runMeshSourcePath;
+            if (!string.IsNullOrWhiteSpace(previousMaskGuidedMeshSourcePath) && !string.IsNullOrWhiteSpace(runMaskGuidedMeshSourcePath))
+            {
+                PreviewSimilarityStats maskGuidedSimilarity = ComparePreviewImages(previousMaskGuidedMeshSourcePath, runMaskGuidedMeshSourcePath);
+                // #region agent log
+                AppendAgentDebugLog(
+                    "pre-fix",
+                    "H16",
+                    "RemoteGenerationBackend.cs:268",
+                    "mask_guided_mesh_source_similarity_between_prompt_variants",
+                    $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"previousMaskGuidedMeshSource\":\"{EscapeJson(Path.GetFileName(previousMaskGuidedMeshSourcePath))}\",\"currentMaskGuidedMeshSource\":\"{EscapeJson(Path.GetFileName(runMaskGuidedMeshSourcePath))}\",\"meanAbsoluteDifference\":{maskGuidedSimilarity.MeanAbsoluteDifference.ToString("0.######", CultureInfo.InvariantCulture)},\"maxChannelDifference\":{maskGuidedSimilarity.MaxChannelDifference.ToString("0.######", CultureInfo.InvariantCulture)}}}");
+                // #endregion
+            }
+            if (!string.IsNullOrWhiteSpace(runMaskGuidedMeshSourcePath))
+                previousMaskGuidedMeshSourcePath = runMaskGuidedMeshSourcePath;
+            // #region agent log
+            AppendAgentDebugLog(
+                "pre-fix",
+                "H5",
+                "RemoteGenerationBackend.cs:234",
+                "per_proxy_run_outputs",
+                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"promptId\":\"{EscapeJson(promptId)}\",\"runOutputPrefix\":\"{EscapeJson(runOutputPrefix)}\",\"runSavedOutputCount\":{runSavedOutputs.Count.ToString(CultureInfo.InvariantCulture)},\"firstSavedOutput\":\"{EscapeJson(runSavedOutputs.Count > 0 ? Path.GetFileName(runSavedOutputs[0]) : string.Empty)}\"}}");
+            // #endregion
 
             savedOutputs.AddRange(runSavedOutputs);
 
@@ -717,7 +811,10 @@ public class RemoteGenerationBackend : IGenerationBackend
         string maskOccupyName,
         string maskAvoidName,
         string maskFocusName,
-        NewBackendRequest request)
+        NewBackendRequest request,
+        string promptOverride = null,
+        string meshPromptOverride = null,
+        string meshNegativePromptOverride = null)
     {
         string workflowPath = _settings.comfyWorkflowTemplatePath;
         if (!Path.IsPathRooted(workflowPath))
@@ -731,19 +828,27 @@ public class RemoteGenerationBackend : IGenerationBackend
             seed = UnityEngine.Random.Range(0, int.MaxValue);
         int steps = Mathf.Max(1, request?.Payload?.Generation?.Steps ?? _settings.steps);
         float cfg = Mathf.Max(0f, request?.Payload?.Generation?.Cfg ?? _settings.cfg);
-        string prompt = request?.Prompt ?? _settings.prompt ?? string.Empty;
+        string prompt = string.IsNullOrWhiteSpace(promptOverride)
+            ? request?.Prompt ?? _settings.prompt ?? string.Empty
+            : promptOverride;
         string negativePrompt = request?.NegativePrompt ?? _settings.negativePrompt ?? string.Empty;
+        string meshPrompt = string.IsNullOrWhiteSpace(meshPromptOverride) ? prompt : meshPromptOverride;
+        string meshNegativePrompt = string.IsNullOrWhiteSpace(meshNegativePromptOverride) ? negativePrompt : meshNegativePromptOverride;
         string checkpointName = string.IsNullOrWhiteSpace(_settings.comfyCheckpointName)
             ? "motiondesignv13dartC4D_v10.safetensors"
             : _settings.comfyCheckpointName.Trim();
 
         string workflow = File.ReadAllText(workflowPath);
+        bool templateHasPromptToken = workflow.Contains("__PROMPT__", StringComparison.Ordinal);
+        bool templateHasNegativePromptToken = workflow.Contains("__NEG_PROMPT__", StringComparison.Ordinal);
         workflow = workflow.Replace("__SEED__", seed.ToString(System.Globalization.CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__STEPS__", steps.ToString(System.Globalization.CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__CFG__", cfg.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__CHECKPOINT__", EscapeJson(checkpointName));
         workflow = workflow.Replace("__PROMPT__", EscapeJson(prompt));
         workflow = workflow.Replace("__NEG_PROMPT__", EscapeJson(negativePrompt));
+        workflow = workflow.Replace("__MESH_PROMPT__", EscapeJson(meshPrompt));
+        workflow = workflow.Replace("__MESH_NEG_PROMPT__", EscapeJson(meshNegativePrompt));
         workflow = workflow.Replace("__DEPTH_IMAGE__", EscapeJson(depthName));
         workflow = workflow.Replace("__CANNY_IMAGE__", EscapeJson(cannyName));
         workflow = workflow.Replace("__MASK_IMAGE_COUNT__", maskNames.Count.ToString());
@@ -757,7 +862,81 @@ public class RemoteGenerationBackend : IGenerationBackend
         for (int i = 0; i < maskNames.Count; i++)
             workflow = workflow.Replace($"__MASK_IMAGE_{i}__", EscapeJson(maskNames[i]));
 
+        // #region agent log
+        AppendAgentDebugLog(
+            "pre-fix",
+            "H3",
+            "RemoteGenerationBackend.cs:764",
+            "workflow_prompt_binding",
+            $"{{\"workflowPath\":\"{EscapeJson(workflowPath)}\",\"resolvedSeed\":{seed.ToString(CultureInfo.InvariantCulture)},\"templateHasPromptToken\":{(templateHasPromptToken ? "true" : "false")},\"templateHasNegativePromptToken\":{(templateHasNegativePromptToken ? "true" : "false")},\"resolvedPrompt\":\"{EscapeJson(SummarizeTextForDebug(prompt))}\",\"resolvedNegativePrompt\":\"{EscapeJson(SummarizeTextForDebug(negativePrompt))}\",\"resolvedMeshPrompt\":\"{EscapeJson(SummarizeTextForDebug(meshPrompt))}\",\"resolvedMeshNegativePrompt\":\"{EscapeJson(SummarizeTextForDebug(meshNegativePrompt))}\",\"depthName\":\"{EscapeJson(depthName)}\",\"cannyName\":\"{EscapeJson(cannyName)}\",\"maskOccupyName\":\"{EscapeJson(maskOccupyName)}\",\"maskAvoidName\":\"{EscapeJson(maskAvoidName)}\",\"maskFocusName\":\"{EscapeJson(maskFocusName)}\",\"boundWorkflowContainsPromptText\":{(!string.IsNullOrWhiteSpace(prompt) && workflow.Contains(EscapeJson(prompt), StringComparison.Ordinal) ? "true" : "false")},\"boundWorkflowContainsNegativePromptText\":{(!string.IsNullOrWhiteSpace(negativePrompt) && workflow.Contains(EscapeJson(negativePrompt), StringComparison.Ordinal) ? "true" : "false")}}}");
+        // #endregion
+
         return workflow;
+    }
+
+    private static string ResolveRunPrompt(NewBackendRequest request, string occupyProxyId)
+    {
+        string basePrompt = request?.Prompt ?? string.Empty;
+        string assetPrompt = ResolvePerProxyAssetPrompt(request, occupyProxyId);
+        if (string.IsNullOrWhiteSpace(assetPrompt))
+            return basePrompt;
+        if (string.IsNullOrWhiteSpace(basePrompt))
+            return assetPrompt;
+        return $"{basePrompt}, {assetPrompt}";
+    }
+
+    private static string BuildMeshSourcePrompt(string runPrompt, string occupyProxyId, NewBackendRequest request)
+    {
+        string assetPrompt = ResolvePerProxyAssetPrompt(request, occupyProxyId);
+        string primaryPrompt = string.IsNullOrWhiteSpace(assetPrompt) ? (runPrompt ?? string.Empty) : assetPrompt;
+        string stylePrompt = BuildMeshStylePrompt(runPrompt, assetPrompt);
+        string combined =
+            $"{primaryPrompt}, {stylePrompt}, single main object, single centered asset, full object in frame, isolated object render, transparent background, alpha background, no floor, no pedestal, no support, no platform, no environment, no scenery, no architecture, no extra objects, product render, studio cutout";
+        return Regex.Replace(combined, "\\s+", " ").Trim().Trim(',');
+    }
+
+    private static string BuildMeshSourceNegativePrompt(NewBackendRequest request)
+    {
+        string negativePrompt = request?.NegativePrompt ?? string.Empty;
+        string combined =
+            $"{negativePrompt}, scene, environment, scenery, landscape, architecture, building, room, platform, pedestal, floor, ground plane, support structure, extra objects, attached objects, multiple objects, background clutter, close-up crop, partial object, frame edge crop, occluders";
+        return Regex.Replace(combined, "\\s+", " ").Trim().Trim(',');
+    }
+
+    private static string BuildMeshStylePrompt(string runPrompt, string assetPrompt)
+    {
+        string value = runPrompt ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(assetPrompt))
+            value = Regex.Replace(value, $"\\b{Regex.Escape(assetPrompt)}\\b", " ", RegexOptions.IgnoreCase);
+
+        value = Regex.Replace(value, "\\bscene\\b", "asset", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, "\\benvironment\\b", " ", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, "\\bscenery\\b", " ", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, "\\blandscape\\b", " ", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, "\\bbackground\\b", " ", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, "\\s+", " ").Trim().Trim(',');
+
+        if (string.IsNullOrWhiteSpace(value))
+            return "high quality 3d asset";
+
+        return value;
+    }
+
+    private static string ResolvePerProxyAssetPrompt(NewBackendRequest request, string occupyProxyId)
+    {
+        if (request?.PerProxyAssetPrompts == null || request.PerProxyAssetPrompts.Count == 0 || string.IsNullOrWhiteSpace(occupyProxyId))
+            return string.Empty;
+
+        for (int i = 0; i < request.PerProxyAssetPrompts.Count; i++)
+        {
+            var entry = request.PerProxyAssetPrompts[i];
+            if (entry == null || !string.Equals(entry.ProxyId, occupyProxyId, StringComparison.Ordinal))
+                continue;
+
+            return (entry.AssetPrompt ?? string.Empty).Trim();
+        }
+
+        return string.Empty;
     }
 
     private bool CanRunWorkflowWithProvidedInputs(
@@ -1181,6 +1360,14 @@ public class RemoteGenerationBackend : IGenerationBackend
             "Extracted output references details",
             $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"extractedRefs\":\"{EscapeJson(string.Join(";", outputs.ConvertAll(o => $"{o.filename}|{o.subfolder}|{o.type}")))}\"}}");
         // #endregion
+        // #region agent log
+        AppendAgentDebugLog(
+            "pre-fix",
+            "H6,H7",
+            "RemoteGenerationBackend.cs:1254",
+            "download_output_refs",
+            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"outputRefCount\":{outputs.Count.ToString(CultureInfo.InvariantCulture)},\"outputRefs\":\"{EscapeJson(string.Join(";", outputs.ConvertAll(o => $"{o.filename}|{o.subfolder}|{o.type}")))}\"}}");
+        // #endregion
         var saved = new List<string>();
 
         foreach (var output in outputs)
@@ -1195,9 +1382,326 @@ public class RemoteGenerationBackend : IGenerationBackend
             string outPath = Path.Combine(outputDir, finalName);
             File.WriteAllBytes(outPath, bytes);
             saved.Add(outPath);
+
+            if (finalName.IndexOf("spatialgen_preview", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                finalName.IndexOf("spatialgen_prompt_only", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                finalName.IndexOf("spatialgen_mesh_source", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                PreviewOccupancyStats stats = AnalyzePreviewOccupancy(outPath);
+                string kind = finalName.IndexOf("spatialgen_prompt_only", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? "prompt_only"
+                    : finalName.IndexOf("spatialgen_mesh_source", StringComparison.OrdinalIgnoreCase) >= 0
+                        ? "mesh_source"
+                    : "conditioned_preview";
+                // #region agent log
+                AppendAgentDebugLog(
+                    "pre-fix",
+                    "H8,H9",
+                    "RemoteGenerationBackend.cs:1274",
+                    "preview_image_occupancy",
+                    $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"kind\":\"{EscapeJson(kind)}\",\"savedPreview\":\"{EscapeJson(Path.GetFileName(outPath))}\",\"occupiedPixelRatio\":{stats.OccupiedPixelRatio.ToString("0.######", CultureInfo.InvariantCulture)},\"occupiedBoundsRatio\":{stats.OccupiedBoundsRatio.ToString("0.######", CultureInfo.InvariantCulture)},\"bounds\":\"{EscapeJson(stats.BoundsSummary)}\"}}");
+                // #endregion
+            }
         }
 
         return saved;
+    }
+
+    private static string BuildMaskGuidedMeshSourceImage(string meshSourcePath, string maskPath, string outputDir, string outputPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(meshSourcePath) || string.IsNullOrWhiteSpace(maskPath) || !File.Exists(meshSourcePath) || !File.Exists(maskPath))
+            return string.Empty;
+
+        Texture2D source = null;
+        Texture2D mask = null;
+        Texture2D output = null;
+        try
+        {
+            source = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            mask = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            byte[] sourceBytes = File.ReadAllBytes(meshSourcePath);
+            byte[] maskBytes = File.ReadAllBytes(maskPath);
+            if (!source.LoadImage(sourceBytes) || !mask.LoadImage(maskBytes))
+                return string.Empty;
+            if (source.width != mask.width || source.height != mask.height)
+                return string.Empty;
+
+            int width = source.width;
+            int height = source.height;
+            Color[] sourcePixels = source.GetPixels();
+            Color[] maskPixels = mask.GetPixels();
+            Color[] outputPixels = new Color[sourcePixels.Length];
+
+            RectInt maskRect = ComputeMaskBounds(maskPixels, width, height);
+            if (maskRect.width <= 0 || maskRect.height <= 0)
+                return string.Empty;
+
+            RectInt expandedRect = ExpandRect(maskRect, width, height, 2.5f, 24);
+            for (int y = 0; y < height; y++)
+            {
+                int row = y * width;
+                for (int x = 0; x < width; x++)
+                {
+                    int idx = row + x;
+                    if (!expandedRect.Contains(new Vector2Int(x, y)))
+                    {
+                        outputPixels[idx] = new Color(0f, 0f, 0f, 0f);
+                        continue;
+                    }
+
+                    float alpha = maskPixels[idx].maxColorComponent;
+                    if (alpha <= 0.05f)
+                    {
+                        outputPixels[idx] = new Color(0f, 0f, 0f, 0f);
+                        continue;
+                    }
+
+                    Color color = sourcePixels[idx];
+                    color.a = 1f;
+                    outputPixels[idx] = color;
+                }
+            }
+
+            output = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            output.SetPixels(outputPixels);
+            output.Apply(false);
+            Directory.CreateDirectory(outputDir);
+            string outPath = Path.Combine(outputDir, $"{outputPrefix}_mesh_source_mask_guided.png");
+            File.WriteAllBytes(outPath, output.EncodeToPNG());
+
+            PreviewOccupancyStats stats = AnalyzePreviewOccupancy(outPath);
+            // #region agent log
+            AppendAgentDebugLog(
+                "pre-fix",
+                "H16",
+                "RemoteGenerationBackend.cs:1370",
+                "mask_guided_mesh_source_occupancy",
+                $"{{\"meshSource\":\"{EscapeJson(Path.GetFileName(meshSourcePath))}\",\"maskPath\":\"{EscapeJson(Path.GetFileName(maskPath))}\",\"savedPreview\":\"{EscapeJson(Path.GetFileName(outPath))}\",\"occupiedPixelRatio\":{stats.OccupiedPixelRatio.ToString("0.######", CultureInfo.InvariantCulture)},\"occupiedBoundsRatio\":{stats.OccupiedBoundsRatio.ToString("0.######", CultureInfo.InvariantCulture)},\"bounds\":\"{EscapeJson(stats.BoundsSummary)}\"}}");
+            // #endregion
+
+            return outPath;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+        finally
+        {
+            if (source != null)
+                UnityEngine.Object.DestroyImmediate(source);
+            if (mask != null)
+                UnityEngine.Object.DestroyImmediate(mask);
+            if (output != null)
+                UnityEngine.Object.DestroyImmediate(output);
+        }
+    }
+
+    private static RectInt ComputeMaskBounds(Color[] maskPixels, int width, int height)
+    {
+        int minX = width;
+        int minY = height;
+        int maxX = -1;
+        int maxY = -1;
+        for (int y = 0; y < height; y++)
+        {
+            int row = y * width;
+            for (int x = 0; x < width; x++)
+            {
+                if (maskPixels[row + x].maxColorComponent <= 0.05f)
+                    continue;
+
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+            }
+        }
+
+        if (maxX < minX || maxY < minY)
+            return new RectInt(0, 0, 0, 0);
+
+        return new RectInt(minX, minY, (maxX - minX) + 1, (maxY - minY) + 1);
+    }
+
+    private static RectInt ExpandRect(RectInt rect, int width, int height, float scale, int minPadding)
+    {
+        int centerX = rect.x + (rect.width / 2);
+        int centerY = rect.y + (rect.height / 2);
+        int expandedWidth = Mathf.Clamp(Mathf.CeilToInt(rect.width * scale), rect.width + minPadding, width);
+        int expandedHeight = Mathf.Clamp(Mathf.CeilToInt(rect.height * scale), rect.height + minPadding, height);
+        int x = Mathf.Clamp(centerX - (expandedWidth / 2), 0, Mathf.Max(0, width - expandedWidth));
+        int y = Mathf.Clamp(centerY - (expandedHeight / 2), 0, Mathf.Max(0, height - expandedHeight));
+        return new RectInt(x, y, expandedWidth, expandedHeight);
+    }
+
+    private static PreviewOccupancyStats AnalyzePreviewOccupancy(string imagePath)
+    {
+        var stats = new PreviewOccupancyStats();
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return stats;
+
+        Texture2D texture = null;
+        try
+        {
+            texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            byte[] bytes = File.ReadAllBytes(imagePath);
+            if (bytes == null || bytes.Length == 0 || !texture.LoadImage(bytes))
+                return stats;
+
+            int width = texture.width;
+            int height = texture.height;
+            if (width <= 0 || height <= 0)
+                return stats;
+
+            Color[] pixels = texture.GetPixels();
+            Color background = EstimateBackgroundColor(texture);
+            const float threshold = 0.06f;
+
+            int minX = width;
+            int minY = height;
+            int maxX = -1;
+            int maxY = -1;
+            int occupiedPixels = 0;
+            for (int y = 0; y < height; y++)
+            {
+                int row = y * width;
+                for (int x = 0; x < width; x++)
+                {
+                    Color pixel = pixels[row + x];
+                    if (ColorDistance(pixel, background) <= threshold)
+                        continue;
+
+                    occupiedPixels++;
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+            }
+
+            stats.OccupiedPixelRatio = occupiedPixels / (float)(width * height);
+            if (maxX >= minX && maxY >= minY)
+            {
+                int boundsWidth = (maxX - minX) + 1;
+                int boundsHeight = (maxY - minY) + 1;
+                stats.OccupiedBoundsRatio = (boundsWidth * boundsHeight) / (float)(width * height);
+                stats.BoundsSummary = $"{minX},{minY},{boundsWidth},{boundsHeight}";
+            }
+
+            return stats;
+        }
+        catch
+        {
+            return stats;
+        }
+        finally
+        {
+            if (texture != null)
+                UnityEngine.Object.DestroyImmediate(texture);
+        }
+    }
+
+    private static string FindFirstPreviewOutput(List<string> paths)
+    {
+        return FindFirstOutputContaining(paths, "spatialgen_preview");
+    }
+
+    private static string FindFirstOutputContaining(List<string> paths, string token)
+    {
+        if (paths == null || paths.Count == 0 || string.IsNullOrWhiteSpace(token))
+            return string.Empty;
+
+        for (int i = 0; i < paths.Count; i++)
+        {
+            string path = paths[i];
+            if (!string.IsNullOrWhiteSpace(path) &&
+                path.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0 &&
+                File.Exists(path))
+            {
+                return path;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static PreviewSimilarityStats ComparePreviewImages(string firstPath, string secondPath)
+    {
+        var stats = new PreviewSimilarityStats();
+        if (string.IsNullOrWhiteSpace(firstPath) || string.IsNullOrWhiteSpace(secondPath) || !File.Exists(firstPath) || !File.Exists(secondPath))
+            return stats;
+
+        Texture2D first = null;
+        Texture2D second = null;
+        try
+        {
+            first = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            second = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            byte[] firstBytes = File.ReadAllBytes(firstPath);
+            byte[] secondBytes = File.ReadAllBytes(secondPath);
+            if (!first.LoadImage(firstBytes) || !second.LoadImage(secondBytes))
+                return stats;
+            if (first.width != second.width || first.height != second.height)
+                return stats;
+
+            Color[] firstPixels = first.GetPixels();
+            Color[] secondPixels = second.GetPixels();
+            if (firstPixels == null || secondPixels == null || firstPixels.Length != secondPixels.Length || firstPixels.Length == 0)
+                return stats;
+
+            float totalDifference = 0f;
+            float maxDifference = 0f;
+            for (int i = 0; i < firstPixels.Length; i++)
+            {
+                Color a = firstPixels[i];
+                Color b = secondPixels[i];
+                float diff =
+                    (Mathf.Abs(a.r - b.r) +
+                     Mathf.Abs(a.g - b.g) +
+                     Mathf.Abs(a.b - b.b)) / 3f;
+                totalDifference += diff;
+                if (diff > maxDifference)
+                    maxDifference = diff;
+            }
+
+            stats.MeanAbsoluteDifference = totalDifference / firstPixels.Length;
+            stats.MaxChannelDifference = maxDifference;
+            return stats;
+        }
+        catch
+        {
+            return stats;
+        }
+        finally
+        {
+            if (first != null)
+                UnityEngine.Object.DestroyImmediate(first);
+            if (second != null)
+                UnityEngine.Object.DestroyImmediate(second);
+        }
+    }
+
+    private static Color EstimateBackgroundColor(Texture2D texture)
+    {
+        int lastX = Mathf.Max(0, texture.width - 1);
+        int lastY = Mathf.Max(0, texture.height - 1);
+        Color c1 = texture.GetPixel(0, 0);
+        Color c2 = texture.GetPixel(lastX, 0);
+        Color c3 = texture.GetPixel(0, lastY);
+        Color c4 = texture.GetPixel(lastX, lastY);
+        return new Color(
+            (c1.r + c2.r + c3.r + c4.r) * 0.25f,
+            (c1.g + c2.g + c3.g + c4.g) * 0.25f,
+            (c1.b + c2.b + c3.b + c4.b) * 0.25f,
+            (c1.a + c2.a + c3.a + c4.a) * 0.25f);
+    }
+
+    private static float ColorDistance(Color a, Color b)
+    {
+        float dr = a.r - b.r;
+        float dg = a.g - b.g;
+        float db = a.b - b.b;
+        return Mathf.Sqrt((dr * dr) + (dg * dg) + (db * db));
     }
 
     private static List<ImageRef> ExtractOutputImageRefs(string historyJson)
@@ -1327,6 +1831,109 @@ public class RemoteGenerationBackend : IGenerationBackend
         }
     }
 
+    private static void AppendAgentDebugLog(string runId, string hypothesisId, string location, string message, string dataJson)
+    {
+        try
+        {
+            string safeRunId = EscapeJson(runId ?? "pre-fix");
+            string safeHypothesisId = EscapeJson(hypothesisId ?? string.Empty);
+            string safeLocation = EscapeJson(location ?? string.Empty);
+            string safeMessage = EscapeJson(message ?? string.Empty);
+            string safeDataJson = string.IsNullOrWhiteSpace(dataJson) ? "{}" : dataJson;
+            long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            string line =
+                $"{{\"sessionId\":\"{AgentDebugSessionId}\",\"runId\":\"{safeRunId}\",\"hypothesisId\":\"{safeHypothesisId}\",\"location\":\"{safeLocation}\",\"message\":\"{safeMessage}\",\"data\":{safeDataJson},\"timestamp\":{ts.ToString(CultureInfo.InvariantCulture)}}}";
+            File.AppendAllText(AgentDebugLogPath, line + Environment.NewLine);
+        }
+        catch
+        {
+            // Never interrupt generation flow due to debug logging failures.
+        }
+    }
+
+    private static string SummarizeTextForDebug(string value, int maxChars = 160)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        string normalized = value.Trim().Replace("\r", " ").Replace("\n", " ");
+        normalized = Regex.Replace(normalized, "\\s+", " ");
+        return normalized.Length <= maxChars ? normalized : normalized.Substring(0, maxChars) + "...";
+    }
+
+    private static string SummarizePerProxyPromptsForDebug(NewBackendRequest request)
+    {
+        if (request?.PerProxyAssetPrompts == null || request.PerProxyAssetPrompts.Count == 0)
+            return string.Empty;
+
+        var parts = new List<string>();
+        for (int i = 0; i < request.PerProxyAssetPrompts.Count; i++)
+        {
+            var entry = request.PerProxyAssetPrompts[i];
+            if (entry == null)
+                continue;
+
+            parts.Add($"{entry.ProxyId}:{SummarizeTextForDebug(entry.AssetPrompt, 60)}");
+        }
+
+        return string.Join(";", parts);
+    }
+
+    private static string SummarizeLegacyOccupyProxyIdsForDebug(NewBackendRequest request)
+    {
+        if (request?.LegacyConstraints == null || request.LegacyConstraints.Length == 0)
+            return string.Empty;
+
+        var proxyIds = new List<string>();
+        for (int i = 0; i < request.LegacyConstraints.Length; i++)
+        {
+            Constraint constraint = request.LegacyConstraints[i];
+            if (!string.Equals((constraint?.type ?? string.Empty).Trim(), "occupy", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            proxyIds.Add(constraint?.proxy_id ?? string.Empty);
+        }
+
+        return string.Join(";", proxyIds);
+    }
+
+    private static float CalculateMaskCoverage(string imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return 0f;
+
+        Texture2D texture = null;
+        try
+        {
+            texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            byte[] bytes = File.ReadAllBytes(imagePath);
+            if (bytes == null || bytes.Length == 0 || !texture.LoadImage(bytes))
+                return 0f;
+
+            Color[] pixels = texture.GetPixels();
+            if (pixels == null || pixels.Length == 0)
+                return 0f;
+
+            int activePixels = 0;
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                if (pixels[i].maxColorComponent > 0.5f)
+                    activePixels++;
+            }
+
+            return (float)activePixels / pixels.Length;
+        }
+        catch
+        {
+            return 0f;
+        }
+        finally
+        {
+            if (texture != null)
+                UnityEngine.Object.DestroyImmediate(texture);
+        }
+    }
+
     private static void RefreshAssetDatabaseIfNeeded()
     {
 #if UNITY_EDITOR
@@ -1352,5 +1959,18 @@ public class RemoteGenerationBackend : IGenerationBackend
         public string filename;
         public string subfolder;
         public string type;
+    }
+
+    private class PreviewOccupancyStats
+    {
+        public float OccupiedPixelRatio;
+        public float OccupiedBoundsRatio;
+        public string BoundsSummary = string.Empty;
+    }
+
+    private class PreviewSimilarityStats
+    {
+        public float MeanAbsoluteDifference;
+        public float MaxChannelDifference;
     }
 }

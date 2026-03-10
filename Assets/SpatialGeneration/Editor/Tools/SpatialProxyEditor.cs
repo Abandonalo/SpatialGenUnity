@@ -38,6 +38,8 @@ public class SpatialProxyEditor : Editor
 
         var newRole = (SpatialProxyRole)EditorGUILayout.EnumPopup("Role", proxy.role);
         var newLabel = EditorGUILayout.TextField("Label", proxy.label);
+        EditorGUILayout.LabelField("Asset Prompt");
+        var newAssetPrompt = EditorGUILayout.TextArea(proxy.assetPrompt, GUILayout.MinHeight(48f));
         var newStrength = EditorGUILayout.Slider("Strength", proxy.strength, 0f, 1f);
         var newPriority = EditorGUILayout.IntField("Priority", proxy.priority);
         var newSize = EditorGUILayout.Vector3Field("Size", proxy.size);
@@ -54,12 +56,14 @@ public class SpatialProxyEditor : Editor
 
             bool roleChanged = newRole != proxy.role;
             bool labelChanged = newLabel != proxy.label;
+            bool assetPromptChanged = newAssetPrompt != proxy.assetPrompt;
             bool strengthChanged = !Mathf.Approximately(newStrength, proxy.strength);
             bool priorityChanged = newPriority != proxy.priority;
             bool sizeChanged = newSize != proxy.size;
 
             proxy.role = newRole;
             proxy.label = newLabel;
+            proxy.assetPrompt = newAssetPrompt;
             proxy.strength = Mathf.Clamp01(newStrength);
             proxy.priority = newPriority;
             proxy.size = newSize;
@@ -73,6 +77,11 @@ public class SpatialProxyEditor : Editor
             if (labelChanged)
             {
                 InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_label_change"));
+            }
+
+            if (assetPromptChanged)
+            {
+                InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_asset_prompt_change"));
             }
 
             if (strengthChanged)

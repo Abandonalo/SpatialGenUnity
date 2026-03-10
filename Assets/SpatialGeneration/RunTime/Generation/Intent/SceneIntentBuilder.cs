@@ -29,6 +29,7 @@ namespace SpatialGeneration.Generation.Intent
                     Role = ToIntentRole(proxy.role),
                     Shape = ToIntentShape(proxy.Shape),
                     Label = proxy.label,
+                    AssetPrompt = proxy.assetPrompt,
                     Strength = Mathf.Clamp01(proxy.strength),
                     Priority = proxy.priority,
                     Pose = new PoseData

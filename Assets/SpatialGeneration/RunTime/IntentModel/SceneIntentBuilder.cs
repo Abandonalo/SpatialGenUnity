@@ -19,6 +19,7 @@ public static class SceneIntentBuilder
                 role = proxy.role,
                 shape = proxy.Shape,
                 label = proxy.label,
+                asset_prompt = proxy.assetPrompt,
                 strength = proxy.strength,
                 priority = proxy.priority
             });

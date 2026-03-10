@@ -23,6 +23,7 @@ public class SpatialProxyIntent
     public SpatialProxyRole role;
     public SpatialProxyShape shape;
     public string label;
+    public string asset_prompt;
     public float strength;
     public int priority;
 }

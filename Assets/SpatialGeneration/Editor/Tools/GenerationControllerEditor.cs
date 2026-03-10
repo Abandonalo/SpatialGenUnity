@@ -16,10 +16,20 @@ public static class GenerationControllerEditor
     /// </summary>
     public static void RegenerateFromIntent(SceneIntent intent)
     {
-        _ = RegenerateFromIntentAsync(intent);
+        _ = RegenerateFromIntentAsync(intent, null, null);
     }
 
-    private static async Task RegenerateFromIntentAsync(SceneIntent intent)
+    public static void RegenerateFromIntent(SceneIntent intent, string promptOverride)
+    {
+        _ = RegenerateFromIntentAsync(intent, promptOverride, null);
+    }
+
+    public static void RegenerateFromIntent(SceneIntent intent, string promptOverride, string negativePromptOverride)
+    {
+        _ = RegenerateFromIntentAsync(intent, promptOverride, negativePromptOverride);
+    }
+
+    private static async Task RegenerateFromIntentAsync(SceneIntent intent, string promptOverride, string negativePromptOverride)
     {
         if (_isGenerating)
         {
@@ -47,12 +57,19 @@ public static class GenerationControllerEditor
 
             EditorUtility.DisplayProgressBar("Spatial Generation", $"Generating via {backend.Name}…", 0.3f);
 
+            string resolvedPrompt = string.IsNullOrWhiteSpace(promptOverride)
+                ? settings.prompt
+                : promptOverride.Trim();
+            string resolvedNegativePrompt = string.IsNullOrWhiteSpace(negativePromptOverride)
+                ? settings.negativePrompt
+                : negativePromptOverride.Trim();
+
             GenerationResult result = await GenerationPipeline.GenerateAsync(
                 captureCamera,
                 settings.captureWidth,
                 settings.captureHeight,
-                settings.prompt,
-                settings.negativePrompt,
+                resolvedPrompt,
+                resolvedNegativePrompt,
                 settings.seed,
                 settings.steps,
                 settings.cfg,
