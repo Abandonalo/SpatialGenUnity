@@ -138,7 +138,7 @@ public static class GenerationControllerEditor
                         PlaceGeneratedObjectAtProxy(meshObject, occupyProxies[i]);
 
                     meshObject.name = occupyProxies.Count > 0
-                        ? $"Generated_Mesh_{occupyProxies[i].id}"
+                        ? $"Generated_Mesh_{(string.IsNullOrWhiteSpace(occupyProxies[i].proxy_id) ? i.ToString() : occupyProxies[i].proxy_id)}"
                         : $"Generated_Mesh_{i}";
                     Undo.RegisterCreatedObjectUndo(meshObject, "Create Generated Mesh");
                     createdAnyMesh = true;

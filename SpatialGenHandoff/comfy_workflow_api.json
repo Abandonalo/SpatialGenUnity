@@ -8,8 +8,8 @@
     "scheduler": "normal",
     "denoise": 1,
     "model": ["18", 0],
-    "positive": ["17", 0],
-    "negative": ["17", 1],
+    "positive": ["34", 0],
+    "negative": ["34", 1],
     "latent_image": ["5", 0]
   },
   "class_type": "KSampler",
@@ -194,6 +194,33 @@
       "title": "Power Lora Loader (rgthree)"
     }
   },
+  "19": {
+    "inputs": {
+      "image": "__MASK_OCCUPY_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Occupy Mask"
+    }
+  },
+  "20": {
+    "inputs": {
+      "image": "__MASK_AVOID_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Avoid Mask"
+    }
+  },
+  "21": {
+    "inputs": {
+      "image": "__MASK_FOCUS_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Focus Mask"
+    }
+  },
   "22": {
     "inputs": {
       "model": "model.safetensors",
@@ -233,6 +260,87 @@
     "class_type": "TripoSRViewer",
     "_meta": {
       "title": "TripoSR Viewer"
+    }
+  },
+  "32": {
+    "inputs": {
+      "strength": "__MASK_OCCUPY_WEIGHT__",
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "17",
+        1
+      ],
+      "control_net": [
+        "15",
+        0
+      ],
+      "image": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply Occupy Mask Guidance"
+    }
+  },
+  "33": {
+    "inputs": {
+      "strength": "__MASK_AVOID_WEIGHT__",
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": [
+        "32",
+        0
+      ],
+      "negative": [
+        "32",
+        1
+      ],
+      "control_net": [
+        "15",
+        0
+      ],
+      "image": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply Avoid Mask Guidance"
+    }
+  },
+  "34": {
+    "inputs": {
+      "strength": "__MASK_FOCUS_WEIGHT__",
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": [
+        "33",
+        0
+      ],
+      "negative": [
+        "33",
+        1
+      ],
+      "control_net": [
+        "15",
+        0
+      ],
+      "image": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply Focus Mask Guidance"
     }
   }
 }

@@ -166,36 +166,79 @@ public class RemoteGenerationBackend : IGenerationBackend
             return ConvertConstraintsToResult(request.LegacyConstraints);
         }
 
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H2",
-            "RemoteGenerationBackend.GenerateAsync:before_submit",
-            "Prepared workflow-bound input names",
-            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"depthName\":\"{EscapeJson(depthName)}\",\"cannyName\":\"{EscapeJson(cannyName)}\",\"maskOccupyName\":\"{EscapeJson(maskOccupyName)}\",\"maskAvoidName\":\"{EscapeJson(maskAvoidName)}\",\"maskFocusName\":\"{EscapeJson(maskFocusName)}\",\"maskNamesCount\":{maskNames.Count}}}");
-        // #endregion
-
-        string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, request);
-        var submitSw = Stopwatch.StartNew();
-        string promptId = await SubmitPromptAsync(workflowJson);
-        submitSw.Stop();
-
-        var executionSw = Stopwatch.StartNew();
-        await WaitForPromptCompletionAsync(promptId);
-        executionSw.Stop();
-
+        List<Constraint> occupyConstraints = ExtractConstraintsByType(request?.LegacyConstraints, "occupy");
+        int runCount = Mathf.Max(1, occupyConstraints.Count);
         string outputDir = ResolveOutputDirectory(projectRoot);
-        var downloadSw = Stopwatch.StartNew();
-        List<string> savedOutputs = await DownloadOutputsAsync(promptId, requestId, outputDir);
-        downloadSw.Stop();
+        var savedOutputs = new List<string>();
+        long submitMsTotal = 0;
+        long executionMsTotal = 0;
+        long downloadMsTotal = 0;
+
         // #region agent log
         AppendDebugLog(
             "baseline",
-            "H1",
-            "RemoteGenerationBackend.GenerateAsync:saved_outputs",
-            "Downloaded outputs after Comfy execution",
-            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"promptId\":\"{EscapeJson(promptId)}\",\"savedOutputCount\":{savedOutputs.Count},\"savedOutputNames\":\"{EscapeJson(string.Join(";", savedOutputs))}\"}}");
+            "H7",
+            "RemoteGenerationBackend.GenerateAsync:per_proxy_plan",
+            "Prepared per-occupy execution plan",
+            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"occupyConstraintCount\":{occupyConstraints.Count},\"runCount\":{runCount}}}");
         // #endregion
+
+        for (int runIndex = 0; runIndex < runCount; runIndex++)
+        {
+            Constraint occupy = runIndex < occupyConstraints.Count ? occupyConstraints[runIndex] : null;
+            string occupyProxyId = !string.IsNullOrWhiteSpace(occupy?.proxy_id)
+                ? occupy.proxy_id
+                : $"occupy_{runIndex}";
+            string runMaskOccupyName = maskOccupyName;
+
+            if (occupy != null)
+            {
+                string perProxyMaskPath = BuildPerProxyOccupyMaskPath(occupy, request, runInputDir, runIndex);
+                if (!string.IsNullOrWhiteSpace(perProxyMaskPath))
+                {
+                    string uploadedPerProxyMaskName = await UploadMaskIfPresentAsync(perProxyMaskPath);
+                    if (!string.IsNullOrWhiteSpace(uploadedPerProxyMaskName))
+                        runMaskOccupyName = uploadedPerProxyMaskName;
+                }
+            }
+
+            // #region agent log
+            AppendDebugLog(
+                "baseline",
+                "H7",
+                "RemoteGenerationBackend.GenerateAsync:before_submit_run",
+                "Prepared workflow-bound names for per-proxy run",
+                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"depthName\":\"{EscapeJson(depthName)}\",\"cannyName\":\"{EscapeJson(cannyName)}\",\"maskOccupyName\":\"{EscapeJson(runMaskOccupyName)}\",\"maskAvoidName\":\"{EscapeJson(maskAvoidName)}\",\"maskFocusName\":\"{EscapeJson(maskFocusName)}\"}}");
+            // #endregion
+
+            string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, runMaskOccupyName, maskAvoidName, maskFocusName, request);
+            var submitSw = Stopwatch.StartNew();
+            string promptId = await SubmitPromptAsync(workflowJson);
+            submitSw.Stop();
+            submitMsTotal += submitSw.ElapsedMilliseconds;
+
+            var executionSw = Stopwatch.StartNew();
+            await WaitForPromptCompletionAsync(promptId);
+            executionSw.Stop();
+            executionMsTotal += executionSw.ElapsedMilliseconds;
+
+            string runOutputPrefix = $"{requestId}_{SanitizeFileToken(occupyProxyId)}";
+            var downloadSw = Stopwatch.StartNew();
+            List<string> runSavedOutputs = await DownloadOutputsAsync(promptId, requestId, outputDir, runOutputPrefix);
+            downloadSw.Stop();
+            downloadMsTotal += downloadSw.ElapsedMilliseconds;
+
+            savedOutputs.AddRange(runSavedOutputs);
+
+            // #region agent log
+            AppendDebugLog(
+                "baseline",
+                "H7",
+                "RemoteGenerationBackend.GenerateAsync:run_saved_outputs",
+                "Completed one per-proxy run",
+                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"promptId\":\"{EscapeJson(promptId)}\",\"runSavedOutputCount\":{runSavedOutputs.Count},\"runSavedOutputNames\":\"{EscapeJson(string.Join(";", runSavedOutputs))}\"}}");
+            // #endregion
+        }
 
         var refreshSw = Stopwatch.StartNew();
         RefreshAssetDatabaseIfNeeded();
@@ -203,15 +246,15 @@ public class RemoteGenerationBackend : IGenerationBackend
         totalSw.Stop();
 
         if (savedOutputs.Count == 0)
-            Debug.LogWarning($"ComfyUI returned no downloadable outputs for prompt_id={promptId}");
+            Debug.LogWarning($"ComfyUI returned no downloadable outputs for request_id={requestId}");
         else
             Debug.Log($"ComfyUI saved {savedOutputs.Count} file(s) to {outputDir}");
 
         Debug.Log(
-            $"ComfyUI timings request_id={requestId} prompt_id={promptId} " +
-            $"submit_ms={submitSw.ElapsedMilliseconds} " +
-            $"execution_ms={executionSw.ElapsedMilliseconds} " +
-            $"download_ms={downloadSw.ElapsedMilliseconds} " +
+            $"ComfyUI timings request_id={requestId} runs={runCount} " +
+            $"submit_ms={submitMsTotal} " +
+            $"execution_ms={executionMsTotal} " +
+            $"download_ms={downloadMsTotal} " +
             $"asset_refresh_ms={refreshSw.ElapsedMilliseconds} " +
             $"total_ms={totalSw.ElapsedMilliseconds}");
 
@@ -242,7 +285,7 @@ public class RemoteGenerationBackend : IGenerationBackend
             "H3",
             "RemoteGenerationBackend.GenerateAsync:final_result",
             "Returning non-fallback result",
-            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"resultOutputFileCount\":{result.outputFiles.Count},\"primaryOutputFile\":\"{EscapeJson(result.primaryOutputFile)}\"}}");
+            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"resultOutputFileCount\":{result.outputFiles.Count},\"primaryOutputFile\":\"{EscapeJson(result.primaryOutputFile)}\",\"runCount\":{runCount}}}");
         // #endregion
         return result;
     }
@@ -299,6 +342,162 @@ public class RemoteGenerationBackend : IGenerationBackend
         }
 
         return stagedPaths;
+    }
+
+    private static List<Constraint> ExtractConstraintsByType(Constraint[] constraints, string type)
+    {
+        var filtered = new List<Constraint>();
+        if (constraints == null || string.IsNullOrWhiteSpace(type))
+            return filtered;
+
+        string normalizedType = type.Trim().ToLowerInvariant();
+        for (int i = 0; i < constraints.Length; i++)
+        {
+            Constraint c = constraints[i];
+            if (c == null)
+                continue;
+            if ((c.type ?? string.Empty).Trim().ToLowerInvariant() == normalizedType)
+                filtered.Add(c);
+        }
+
+        return filtered;
+    }
+
+    private string BuildPerProxyOccupyMaskPath(Constraint occupyConstraint, NewBackendRequest request, string runInputDir, int runIndex)
+    {
+        if (occupyConstraint == null || string.IsNullOrWhiteSpace(runInputDir))
+            return string.Empty;
+
+        int width = Mathf.Max(64, request?.Payload?.Generation?.Width ?? 512);
+        int height = Mathf.Max(64, request?.Payload?.Generation?.Height ?? 512);
+        Texture2D texture = null;
+        try
+        {
+            texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            Color[] pixels = new Color[width * height];
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = Color.black;
+
+            RectInt pixelRect = new RectInt(0, 0, 0, 0);
+            Camera cam = Camera.main;
+            bool hasProjectedRect = cam != null && TryProjectConstraintToPixelRect(cam, occupyConstraint, width, height, out pixelRect);
+            if (!hasProjectedRect)
+            {
+                int fallbackW = Mathf.Max(8, width / 6);
+                int fallbackH = Mathf.Max(8, height / 6);
+                pixelRect = new RectInt((width - fallbackW) / 2, (height - fallbackH) / 2, fallbackW, fallbackH);
+            }
+
+            int xMin = Mathf.Clamp(pixelRect.xMin, 0, width - 1);
+            int xMax = Mathf.Clamp(pixelRect.xMax, 1, width);
+            int yMin = Mathf.Clamp(pixelRect.yMin, 0, height - 1);
+            int yMax = Mathf.Clamp(pixelRect.yMax, 1, height);
+            for (int y = yMin; y < yMax; y++)
+            {
+                int row = y * width;
+                for (int x = xMin; x < xMax; x++)
+                    pixels[row + x] = Color.white;
+            }
+
+            texture.SetPixels(pixels);
+            texture.Apply(false);
+            byte[] png = texture.EncodeToPNG();
+            if (png == null || png.Length == 0)
+                return string.Empty;
+
+            string proxyToken = SanitizeFileToken(occupyConstraint.proxy_id);
+            if (string.IsNullOrWhiteSpace(proxyToken))
+                proxyToken = $"occupy_{runIndex}";
+            string fileName = $"mask_occupy_{proxyToken}_{runIndex}.png";
+            string path = Path.Combine(runInputDir, fileName);
+            File.WriteAllBytes(path, png);
+            return path;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+        finally
+        {
+            if (texture != null)
+                UnityEngine.Object.DestroyImmediate(texture);
+        }
+    }
+
+    private static bool TryProjectConstraintToPixelRect(Camera cam, Constraint constraint, int width, int height, out RectInt rect)
+    {
+        rect = new RectInt(0, 0, 0, 0);
+        if (cam == null || constraint == null)
+            return false;
+
+        Vector3 size = constraint.size;
+        Vector3 half = new Vector3(
+            Mathf.Max(0.1f, Mathf.Abs(size.x) * 0.5f),
+            Mathf.Max(0.1f, Mathf.Abs(size.y) * 0.5f),
+            Mathf.Max(0.1f, Mathf.Abs(size.z) * 0.5f));
+        Quaternion rotation = constraint.rotation;
+        Vector3 center = constraint.position;
+        Vector3[] localCorners =
+        {
+            new Vector3(-half.x, -half.y, -half.z), new Vector3(half.x, -half.y, -half.z),
+            new Vector3(-half.x, half.y, -half.z), new Vector3(half.x, half.y, -half.z),
+            new Vector3(-half.x, -half.y, half.z), new Vector3(half.x, -half.y, half.z),
+            new Vector3(-half.x, half.y, half.z), new Vector3(half.x, half.y, half.z)
+        };
+
+        bool projectedAny = false;
+        float minX = width - 1;
+        float minY = height - 1;
+        float maxX = 0f;
+        float maxY = 0f;
+        for (int i = 0; i < localCorners.Length; i++)
+        {
+            Vector3 world = center + rotation * localCorners[i];
+            Vector3 viewport = cam.WorldToViewportPoint(world);
+            if (viewport.z <= 0f)
+                continue;
+
+            projectedAny = true;
+            float x = Mathf.Clamp(viewport.x * (width - 1), 0f, width - 1);
+            float y = Mathf.Clamp(viewport.y * (height - 1), 0f, height - 1);
+            minX = Mathf.Min(minX, x);
+            minY = Mathf.Min(minY, y);
+            maxX = Mathf.Max(maxX, x);
+            maxY = Mathf.Max(maxY, y);
+        }
+
+        if (!projectedAny)
+            return false;
+
+        int pad = Mathf.Max(2, Mathf.RoundToInt(Mathf.Min(width, height) * 0.01f));
+        int xMin = Mathf.Clamp(Mathf.FloorToInt(minX) - pad, 0, width - 1);
+        int yMin = Mathf.Clamp(Mathf.FloorToInt(minY) - pad, 0, height - 1);
+        int xMax = Mathf.Clamp(Mathf.CeilToInt(maxX) + pad, 1, width);
+        int yMax = Mathf.Clamp(Mathf.CeilToInt(maxY) + pad, 1, height);
+        if (xMax <= xMin || yMax <= yMin)
+            return false;
+
+        rect = new RectInt(xMin, yMin, xMax - xMin, yMax - yMin);
+        return true;
+    }
+
+    private static string SanitizeFileToken(string token)
+    {
+        string value = token ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var builder = new StringBuilder(value.Length);
+        for (int i = 0; i < value.Length; i++)
+        {
+            char ch = value[i];
+            if (char.IsLetterOrDigit(ch) || ch == '_' || ch == '-')
+                builder.Append(ch);
+            else
+                builder.Append('_');
+        }
+
+        string sanitized = builder.ToString().Trim('_');
+        return string.IsNullOrWhiteSpace(sanitized) ? string.Empty : sanitized;
     }
 
     private async Task<string> UploadImageIfPresentAsync(string localPath, string uploadRoute)
@@ -925,7 +1124,7 @@ public class RemoteGenerationBackend : IGenerationBackend
         return outputPaths[0] ?? string.Empty;
     }
 
-    private async Task<List<string>> DownloadOutputsAsync(string promptId, string requestId, string outputDir)
+    private async Task<List<string>> DownloadOutputsAsync(string promptId, string requestId, string outputDir, string outputPrefix = null)
     {
         Directory.CreateDirectory(outputDir);
         using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
@@ -991,7 +1190,8 @@ public class RemoteGenerationBackend : IGenerationBackend
                 $"&subfolder={Uri.EscapeDataString(output.subfolder)}&type={Uri.EscapeDataString(output.type)}";
             byte[] bytes = await Http.GetByteArrayAsync(url);
 
-            string finalName = $"{requestId}_{Path.GetFileName(output.filename)}";
+            string prefix = string.IsNullOrWhiteSpace(outputPrefix) ? requestId : outputPrefix;
+            string finalName = $"{prefix}_{Path.GetFileName(output.filename)}";
             string outPath = Path.Combine(outputDir, finalName);
             File.WriteAllBytes(outPath, bytes);
             saved.Add(outPath);
