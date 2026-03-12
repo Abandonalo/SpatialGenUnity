@@ -1,18 +1,30 @@
 {
   "3": {
-  "inputs": {
-    "seed": "__SEED__",
-    "steps": "__STEPS__",
-    "cfg": "__CFG__",
-    "sampler_name": "euler",
-    "scheduler": "normal",
-    "denoise": 1,
-    "model": ["18", 0],
-    "positive": ["34", 0],
-    "negative": ["34", 1],
-    "latent_image": ["5", 0]
-  },
-  "class_type": "KSampler",
+    "inputs": {
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "cfg": "__CFG__",
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "18",
+        0
+      ],
+      "positive": [
+        "34",
+        0
+      ],
+      "negative": [
+        "34",
+        1
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "KSampler",
     "_meta": {
       "title": "KSampler"
     }
@@ -90,7 +102,7 @@
   },
   "13": {
     "inputs": {
-      "control_net_name": "controlnet-depth/diffusion_pytorch_model.safetensors"
+      "control_net_name": "__DEPTH_CONTROLNET__"
     },
     "class_type": "ControlNetLoader",
     "_meta": {
@@ -126,7 +138,7 @@
   },
   "15": {
     "inputs": {
-      "control_net_name": "controlnet-canny/diffusion_pytorch_model.safetensors"
+      "control_net_name": "__CANNY_CONTROLNET__"
     },
     "class_type": "ControlNetLoader",
     "_meta": {
@@ -175,11 +187,11 @@
         "type": "PowerLoraLoaderHeaderWidget"
       },
       "lora_1": {
-        "on": true,
+        "on": false,
         "lora": "small_scene_V2.safetensors",
-        "strength": 1
+        "strength": 0.0
       },
-      "➕ Add Lora": "",
+      "\u2795 Add Lora": "",
       "model": [
         "4",
         0
@@ -223,7 +235,7 @@
   },
   "22": {
     "inputs": {
-      "model": "model.safetensors",
+      "model": "__TRIPOSR_MODEL__",
       "chunk_size": 8192
     },
     "class_type": "TripoSRModelLoader",
@@ -233,14 +245,14 @@
   },
   "23": {
     "inputs": {
-      "geometry_resolution": 256,
-      "threshold": 25,
+      "geometry_resolution": "__GEOMETRY_RESOLUTION__",
+      "threshold": "__TRIPOSR_THRESHOLD__",
       "model": [
         "22",
         0
       ],
       "reference_image": [
-        "42",
+        "25",
         0
       ]
     },
@@ -345,9 +357,9 @@
   },
   "35": {
     "inputs": {
-      "filename_prefix": "spatialgen_preview",
+      "filename_prefix": "spatialgen_conditioned_source",
       "images": [
-        "42",
+        "8",
         0
       ]
     },
@@ -361,13 +373,25 @@
       "seed": "__SEED__",
       "steps": "__STEPS__",
       "cfg": "__CFG__",
-      "sampler_name": "euler",
-      "scheduler": "normal",
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
       "denoise": 1,
-      "model": ["18", 0],
-      "positive": ["6", 0],
-      "negative": ["7", 0],
-      "latent_image": ["5", 0]
+      "model": [
+        "18",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
     },
     "class_type": "KSampler",
     "_meta": {
@@ -434,13 +458,25 @@
       "seed": "__SEED__",
       "steps": "__STEPS__",
       "cfg": "__CFG__",
-      "sampler_name": "euler",
-      "scheduler": "normal",
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
       "denoise": 1,
-      "model": ["18", 0],
-      "positive": ["39", 0],
-      "negative": ["40", 0],
-      "latent_image": ["5", 0]
+      "model": [
+        "18",
+        0
+      ],
+      "positive": [
+        "39",
+        0
+      ],
+      "negative": [
+        "40",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
     },
     "class_type": "KSampler",
     "_meta": {
@@ -474,6 +510,50 @@
     "class_type": "SaveImage",
     "_meta": {
       "title": "Save Mesh Source Image"
+    }
+  },
+  "25": {
+  "inputs": {
+    "image": ["42", 0],
+    "model": "RMBG-2.0",
+    "sensitivity": 1.0,
+    "process_res": 1024,
+    "mask_blur": 1,
+    "mask_offset": 2,
+    "invert_output": false,
+    "refine_foreground": true,
+    "background": "Color",
+    "background_color": "#FFFFFF"
+  },
+  "class_type": "RMBG",
+  "_meta": {
+    "title": "Remove Background (RMBG)"
+  }
+},
+  "26": {
+    "inputs": {
+      "filename_prefix": "spatialgen_rmbg_source",
+      "images": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save RMBG Source Image"
+    }
+  },
+  "27": {
+    "inputs": {
+      "filename_prefix": "spatialgen_rmbg_mask",
+      "images": [
+        "25",
+        2
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save RMBG Mask Preview"
     }
   }
 }

@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using Process = System.Diagnostics.Process;
 using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
-using Stopwatch = System.Diagnostics.Stopwatch;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
@@ -20,15 +20,10 @@ using UnityEditor;
 
 public class RemoteGenerationBackend : IGenerationBackend
 {
-    private const string DebugLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-f611c7.log";
-    private const string DebugSessionId = "f611c7";
-    private const string AgentDebugLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-e9b45f.log";
-    private const string AgentDebugSessionId = "e9b45f";
     private readonly BackendSettings _settings;
     private static Process _comfyProcess;
     private static readonly HttpClient Http = new HttpClient();
     private static bool _preferHistoryPolling;
-    private static bool _loggedPollingMode;
 
     public string Name => "ComfyUI";
 
@@ -39,45 +34,12 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     public async Task<GenerationResult> GenerateAsync(NewBackendRequest request)
     {
-        var totalSw = Stopwatch.StartNew();
         if (request == null)
             throw new ArgumentNullException(nameof(request));
 
         string requestId = string.IsNullOrWhiteSpace(request.RequestId)
             ? Guid.NewGuid().ToString("N")
             : request.RequestId;
-
-        int legacyConstraintCount = request?.LegacyConstraints?.Length ?? 0;
-        int legacyOccupyCount = 0;
-        int legacyAttractCount = 0;
-        if (request?.LegacyConstraints != null)
-        {
-            for (int i = 0; i < request.LegacyConstraints.Length; i++)
-            {
-                Constraint c = request.LegacyConstraints[i];
-                string type = (c?.type ?? string.Empty).Trim().ToLowerInvariant();
-                if (type == "occupy")
-                    legacyOccupyCount++;
-                else if (type == "attract")
-                    legacyAttractCount++;
-            }
-        }
-        // #region agent log
-        AppendAgentDebugLog(
-            "pre-fix",
-            "H1,H2",
-            "RemoteGenerationBackend.cs:64",
-            "incoming_prompt_request",
-            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"basePrompt\":\"{EscapeJson(SummarizeTextForDebug(request?.Prompt))}\",\"negativePrompt\":\"{EscapeJson(SummarizeTextForDebug(request?.NegativePrompt))}\",\"perProxyPromptCount\":{(request?.PerProxyAssetPrompts?.Count ?? 0).ToString(CultureInfo.InvariantCulture)},\"perProxyPrompts\":\"{EscapeJson(SummarizePerProxyPromptsForDebug(request))}\",\"legacyOccupyProxyIds\":\"{EscapeJson(SummarizeLegacyOccupyProxyIdsForDebug(request))}\"}}");
-        // #endregion
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H4",
-            "RemoteGenerationBackend.GenerateAsync:request_constraints",
-            "Captured incoming legacy constraints composition",
-            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"legacyConstraintCount\":{legacyConstraintCount},\"legacyOccupyCount\":{legacyOccupyCount},\"legacyAttractCount\":{legacyAttractCount}}}");
-        // #endregion
 
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         string runInputDir = Path.Combine(projectRoot, _settings.comfyInputFolder, requestId);
@@ -110,32 +72,22 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         // Temporary adapter fallback: legacy generation path may not provide depth/canny images yet.
         if (string.IsNullOrWhiteSpace(depthName))
-        {
             depthName = FirstNonEmpty(maskFocusName, maskOccupyName, maskAvoidName);
-            if (!string.IsNullOrWhiteSpace(depthName))
-                Debug.LogWarning($"ComfyUI depth image missing for request {requestId}; falling back to '{depthName}'.");
-        }
 
         if (string.IsNullOrWhiteSpace(cannyName))
-        {
             cannyName = FirstNonEmpty(maskAvoidName, maskOccupyName, maskFocusName, depthName);
-            if (!string.IsNullOrWhiteSpace(cannyName))
-                Debug.LogWarning($"ComfyUI canny image missing for request {requestId}; falling back to '{cannyName}'.");
-        }
 
         // If depth/canny are still missing, synthesize neutral fallback images so template placeholders are satisfied.
         if (string.IsNullOrWhiteSpace(depthName))
         {
             string fallbackDepthPath = CreateFallbackImage(runInputDir, "depth_fallback.png", 512, 512, new Color(0.5f, 0.5f, 0.5f, 1f));
             depthName = await UploadImageIfPresentAsync(fallbackDepthPath, "/upload/image");
-            Debug.LogWarning($"ComfyUI depth image missing for request {requestId}; uploaded generated fallback '{depthName}'.");
         }
 
         if (string.IsNullOrWhiteSpace(cannyName))
         {
             string fallbackCannyPath = CreateFallbackImage(runInputDir, "canny_fallback.png", 512, 512, Color.black);
             cannyName = await UploadImageIfPresentAsync(fallbackCannyPath, "/upload/image");
-            Debug.LogWarning($"ComfyUI canny image missing for request {requestId}; uploaded generated fallback '{cannyName}'.");
         }
 
         // Ensure named masks exist when workflow expects them.
@@ -143,59 +95,27 @@ public class RemoteGenerationBackend : IGenerationBackend
         {
             string fallbackMaskOccupyPath = CreateFallbackImage(runInputDir, "mask_occupy_fallback.png", 512, 512, Color.white);
             maskOccupyName = await UploadMaskIfPresentAsync(fallbackMaskOccupyPath);
-            Debug.LogWarning($"ComfyUI occupy mask missing for request {requestId}; uploaded generated fallback '{maskOccupyName}'.");
         }
 
         if (string.IsNullOrWhiteSpace(maskAvoidName))
         {
             string fallbackMaskAvoidPath = CreateFallbackImage(runInputDir, "mask_avoid_fallback.png", 512, 512, Color.black);
             maskAvoidName = await UploadMaskIfPresentAsync(fallbackMaskAvoidPath);
-            Debug.LogWarning($"ComfyUI avoid mask missing for request {requestId}; uploaded generated fallback '{maskAvoidName}'.");
         }
 
         if (string.IsNullOrWhiteSpace(maskFocusName))
         {
             string fallbackMaskFocusPath = CreateFallbackImage(runInputDir, "mask_focus_fallback.png", 512, 512, new Color(0.5f, 0.5f, 0.5f, 1f));
             maskFocusName = await UploadMaskIfPresentAsync(fallbackMaskFocusPath);
-            Debug.LogWarning($"ComfyUI focus mask missing for request {requestId}; uploaded generated fallback '{maskFocusName}'.");
         }
 
-        if (!CanRunWorkflowWithProvidedInputs(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, out string missingReason))
-        {
-            // #region agent log
-            AppendDebugLog(
-                "baseline",
-                "H2",
-                "RemoteGenerationBackend.GenerateAsync:workflow_skipped",
-                "Workflow was skipped and fallback conversion is used",
-                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"reason\":\"{EscapeJson(missingReason)}\"}}");
-            // #endregion
-            Debug.LogWarning(
-                $"Skipping ComfyUI execution for request {requestId}: {missingReason}. " +
-                "Using proxy constraints to generate scene objects.");
+        if (!CanRunWorkflowWithProvidedInputs(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, out _))
             return ConvertConstraintsToResult(request.LegacyConstraints);
-        }
 
         List<Constraint> occupyConstraints = ExtractConstraintsByType(request?.LegacyConstraints, "occupy");
         int runCount = Mathf.Max(1, occupyConstraints.Count);
         string outputDir = ResolveOutputDirectory(projectRoot);
         var savedOutputs = new List<string>();
-        string previousPreviewPath = null;
-        string previousPromptOnlyPath = null;
-        string previousMeshSourcePath = null;
-        string previousMaskGuidedMeshSourcePath = null;
-        long submitMsTotal = 0;
-        long executionMsTotal = 0;
-        long downloadMsTotal = 0;
-
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H7",
-            "RemoteGenerationBackend.GenerateAsync:per_proxy_plan",
-            "Prepared per-occupy execution plan",
-            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"occupyConstraintCount\":{occupyConstraints.Count},\"runCount\":{runCount}}}");
-        // #endregion
 
         for (int runIndex = 0; runIndex < runCount; runIndex++)
         {
@@ -219,138 +139,39 @@ public class RemoteGenerationBackend : IGenerationBackend
                         runMaskOccupyName = uploadedPerProxyMaskName;
                 }
             }
-            // #region agent log
-            AppendAgentDebugLog(
-                "pre-fix",
-                "H1,H2,H4",
-                "RemoteGenerationBackend.cs:206",
-                "per_proxy_run_prompt_resolution",
-                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"assetPrompt\":\"{EscapeJson(SummarizeTextForDebug(ResolvePerProxyAssetPrompt(request, occupyProxyId)))}\",\"runPrompt\":\"{EscapeJson(SummarizeTextForDebug(runPrompt))}\",\"meshSourcePrompt\":\"{EscapeJson(SummarizeTextForDebug(meshSourcePrompt))}\",\"meshSourceNegativePrompt\":\"{EscapeJson(SummarizeTextForDebug(meshSourceNegativePrompt))}\",\"runPromptContainsAssetPrompt\":{(string.IsNullOrWhiteSpace(ResolvePerProxyAssetPrompt(request, occupyProxyId)) ? "false" : (runPrompt ?? string.Empty).Contains(ResolvePerProxyAssetPrompt(request, occupyProxyId), StringComparison.Ordinal) ? "true" : "false")},\"perProxyMaskPath\":\"{EscapeJson(perProxyMaskPath)}\",\"perProxyMaskCoverage\":{CalculateMaskCoverage(perProxyMaskPath).ToString("0.######", CultureInfo.InvariantCulture)}}}");
-            // #endregion
-
-            // #region agent log
-            AppendDebugLog(
-                "baseline",
-                "H7",
-                "RemoteGenerationBackend.GenerateAsync:before_submit_run",
-                "Prepared workflow-bound names for per-proxy run",
-                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"depthName\":\"{EscapeJson(depthName)}\",\"cannyName\":\"{EscapeJson(cannyName)}\",\"maskOccupyName\":\"{EscapeJson(runMaskOccupyName)}\",\"maskAvoidName\":\"{EscapeJson(maskAvoidName)}\",\"maskFocusName\":\"{EscapeJson(maskFocusName)}\"}}");
-            // #endregion
 
             string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, runMaskOccupyName, maskAvoidName, maskFocusName, request, runPrompt, meshSourcePrompt, meshSourceNegativePrompt);
-            var submitSw = Stopwatch.StartNew();
             string promptId = await SubmitPromptAsync(workflowJson);
-            submitSw.Stop();
-            submitMsTotal += submitSw.ElapsedMilliseconds;
-
-            var executionSw = Stopwatch.StartNew();
             await WaitForPromptCompletionAsync(promptId);
-            executionSw.Stop();
-            executionMsTotal += executionSw.ElapsedMilliseconds;
 
             string runOutputPrefix = $"{requestId}_{SanitizeFileToken(occupyProxyId)}";
-            var downloadSw = Stopwatch.StartNew();
             List<string> runSavedOutputs = await DownloadOutputsAsync(promptId, requestId, outputDir, runOutputPrefix);
-            downloadSw.Stop();
-            downloadMsTotal += downloadSw.ElapsedMilliseconds;
-            string runPreviewPath = FindFirstPreviewOutput(runSavedOutputs);
-            string runPromptOnlyPath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_prompt_only");
             string runMeshSourcePath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_mesh_source");
-            string runMaskGuidedMeshSourcePath = BuildMaskGuidedMeshSourceImage(runMeshSourcePath, perProxyMaskPath, outputDir, runOutputPrefix);
-            if (!string.IsNullOrWhiteSpace(previousPreviewPath) && !string.IsNullOrWhiteSpace(runPreviewPath))
+            string runRmbgSourcePath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_rmbg_source");
+            string runRmbgMaskPath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_rmbg_mask");
+            string runNormalizedTripoInputPath = NormalizeImageForTripoSr(runRmbgSourcePath, runRmbgMaskPath, outputDir, runOutputPrefix);
+            BuildMaskGuidedMeshSourceImage(runMeshSourcePath, perProxyMaskPath, outputDir, runOutputPrefix);
+            var normalizedTripoOutputs = new List<string>();
+            if (!string.IsNullOrWhiteSpace(runNormalizedTripoInputPath))
             {
-                PreviewSimilarityStats similarity = ComparePreviewImages(previousPreviewPath, runPreviewPath);
-                // #region agent log
-                AppendAgentDebugLog(
-                    "pre-fix",
-                    "H10",
-                    "RemoteGenerationBackend.cs:232",
-                    "preview_similarity_between_prompt_variants",
-                    $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"previousPreview\":\"{EscapeJson(Path.GetFileName(previousPreviewPath))}\",\"currentPreview\":\"{EscapeJson(Path.GetFileName(runPreviewPath))}\",\"meanAbsoluteDifference\":{similarity.MeanAbsoluteDifference.ToString("0.######", CultureInfo.InvariantCulture)},\"maxChannelDifference\":{similarity.MaxChannelDifference.ToString("0.######", CultureInfo.InvariantCulture)}}}");
-                // #endregion
+                normalizedTripoOutputs = await RunNormalizedTripoSrPassAsync(runNormalizedTripoInputPath, requestId, outputDir, $"{runOutputPrefix}_normalized");
             }
-            if (!string.IsNullOrWhiteSpace(runPreviewPath))
-                previousPreviewPath = runPreviewPath;
-            if (!string.IsNullOrWhiteSpace(previousPromptOnlyPath) && !string.IsNullOrWhiteSpace(runPromptOnlyPath))
-            {
-                PreviewSimilarityStats promptOnlySimilarity = ComparePreviewImages(previousPromptOnlyPath, runPromptOnlyPath);
-                // #region agent log
-                AppendAgentDebugLog(
-                    "pre-fix",
-                    "H12,H13",
-                    "RemoteGenerationBackend.cs:244",
-                    "prompt_only_similarity_between_prompt_variants",
-                    $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"previousPromptOnly\":\"{EscapeJson(Path.GetFileName(previousPromptOnlyPath))}\",\"currentPromptOnly\":\"{EscapeJson(Path.GetFileName(runPromptOnlyPath))}\",\"meanAbsoluteDifference\":{promptOnlySimilarity.MeanAbsoluteDifference.ToString("0.######", CultureInfo.InvariantCulture)},\"maxChannelDifference\":{promptOnlySimilarity.MaxChannelDifference.ToString("0.######", CultureInfo.InvariantCulture)}}}");
-                // #endregion
-            }
-            if (!string.IsNullOrWhiteSpace(runPromptOnlyPath))
-                previousPromptOnlyPath = runPromptOnlyPath;
-            if (!string.IsNullOrWhiteSpace(previousMeshSourcePath) && !string.IsNullOrWhiteSpace(runMeshSourcePath))
-            {
-                PreviewSimilarityStats meshSourceSimilarity = ComparePreviewImages(previousMeshSourcePath, runMeshSourcePath);
-                // #region agent log
-                AppendAgentDebugLog(
-                    "pre-fix",
-                    "H14",
-                    "RemoteGenerationBackend.cs:256",
-                    "mesh_source_similarity_between_prompt_variants",
-                    $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"previousMeshSource\":\"{EscapeJson(Path.GetFileName(previousMeshSourcePath))}\",\"currentMeshSource\":\"{EscapeJson(Path.GetFileName(runMeshSourcePath))}\",\"meanAbsoluteDifference\":{meshSourceSimilarity.MeanAbsoluteDifference.ToString("0.######", CultureInfo.InvariantCulture)},\"maxChannelDifference\":{meshSourceSimilarity.MaxChannelDifference.ToString("0.######", CultureInfo.InvariantCulture)}}}");
-                // #endregion
-            }
-            if (!string.IsNullOrWhiteSpace(runMeshSourcePath))
-                previousMeshSourcePath = runMeshSourcePath;
-            if (!string.IsNullOrWhiteSpace(previousMaskGuidedMeshSourcePath) && !string.IsNullOrWhiteSpace(runMaskGuidedMeshSourcePath))
-            {
-                PreviewSimilarityStats maskGuidedSimilarity = ComparePreviewImages(previousMaskGuidedMeshSourcePath, runMaskGuidedMeshSourcePath);
-                // #region agent log
-                AppendAgentDebugLog(
-                    "pre-fix",
-                    "H16",
-                    "RemoteGenerationBackend.cs:268",
-                    "mask_guided_mesh_source_similarity_between_prompt_variants",
-                    $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"previousMaskGuidedMeshSource\":\"{EscapeJson(Path.GetFileName(previousMaskGuidedMeshSourcePath))}\",\"currentMaskGuidedMeshSource\":\"{EscapeJson(Path.GetFileName(runMaskGuidedMeshSourcePath))}\",\"meanAbsoluteDifference\":{maskGuidedSimilarity.MeanAbsoluteDifference.ToString("0.######", CultureInfo.InvariantCulture)},\"maxChannelDifference\":{maskGuidedSimilarity.MaxChannelDifference.ToString("0.######", CultureInfo.InvariantCulture)}}}");
-                // #endregion
-            }
-            if (!string.IsNullOrWhiteSpace(runMaskGuidedMeshSourcePath))
-                previousMaskGuidedMeshSourcePath = runMaskGuidedMeshSourcePath;
-            // #region agent log
-            AppendAgentDebugLog(
-                "pre-fix",
-                "H5",
-                "RemoteGenerationBackend.cs:234",
-                "per_proxy_run_outputs",
-                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex.ToString(CultureInfo.InvariantCulture)},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"promptId\":\"{EscapeJson(promptId)}\",\"runOutputPrefix\":\"{EscapeJson(runOutputPrefix)}\",\"runSavedOutputCount\":{runSavedOutputs.Count.ToString(CultureInfo.InvariantCulture)},\"firstSavedOutput\":\"{EscapeJson(runSavedOutputs.Count > 0 ? Path.GetFileName(runSavedOutputs[0]) : string.Empty)}\"}}");
-            // #endregion
 
-            savedOutputs.AddRange(runSavedOutputs);
+            for (int i = 0; i < runSavedOutputs.Count; i++)
+            {
+                string outputPath = runSavedOutputs[i];
+                if (IsMeshFile(outputPath))
+                    continue;
+                savedOutputs.Add(outputPath);
+            }
 
-            // #region agent log
-            AppendDebugLog(
-                "baseline",
-                "H7",
-                "RemoteGenerationBackend.GenerateAsync:run_saved_outputs",
-                "Completed one per-proxy run",
-                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"runIndex\":{runIndex},\"occupyProxyId\":\"{EscapeJson(occupyProxyId)}\",\"promptId\":\"{EscapeJson(promptId)}\",\"runSavedOutputCount\":{runSavedOutputs.Count},\"runSavedOutputNames\":\"{EscapeJson(string.Join(";", runSavedOutputs))}\"}}");
-            // #endregion
+            if (!string.IsNullOrWhiteSpace(runNormalizedTripoInputPath) && File.Exists(runNormalizedTripoInputPath))
+                savedOutputs.Add(runNormalizedTripoInputPath);
+
+            savedOutputs.AddRange(normalizedTripoOutputs);
         }
 
-        var refreshSw = Stopwatch.StartNew();
         RefreshAssetDatabaseIfNeeded();
-        refreshSw.Stop();
-        totalSw.Stop();
-
-        if (savedOutputs.Count == 0)
-            Debug.LogWarning($"ComfyUI returned no downloadable outputs for request_id={requestId}");
-        else
-            Debug.Log($"ComfyUI saved {savedOutputs.Count} file(s) to {outputDir}");
-
-        Debug.Log(
-            $"ComfyUI timings request_id={requestId} runs={runCount} " +
-            $"submit_ms={submitMsTotal} " +
-            $"execution_ms={executionMsTotal} " +
-            $"download_ms={downloadMsTotal} " +
-            $"asset_refresh_ms={refreshSw.ElapsedMilliseconds} " +
-            $"total_ms={totalSw.ElapsedMilliseconds}");
 
         var result = new GenerationResult();
         result.outputFiles.AddRange(savedOutputs);
@@ -362,25 +183,9 @@ public class RemoteGenerationBackend : IGenerationBackend
             GenerationResult fallback = ConvertConstraintsToResult(request.LegacyConstraints);
             fallback.outputFiles.AddRange(savedOutputs);
             fallback.primaryOutputFile = string.Empty;
-            // #region agent log
-            AppendDebugLog(
-                "baseline",
-                "H2",
-                "RemoteGenerationBackend.GenerateAsync:fallback_result",
-                "Returning proxy-converted fallback result",
-                $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"fallbackObjectCount\":{fallback.objects.Count},\"fallbackOutputFileCount\":{fallback.outputFiles.Count}}}");
-            // #endregion
             return fallback;
         }
 
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H3",
-            "RemoteGenerationBackend.GenerateAsync:final_result",
-            "Returning non-fallback result",
-            $"{{\"requestId\":\"{EscapeJson(requestId)}\",\"resultOutputFileCount\":{result.outputFiles.Count},\"primaryOutputFile\":\"{EscapeJson(result.primaryOutputFile)}\",\"runCount\":{runCount}}}");
-        // #endregion
         return result;
     }
 
@@ -642,17 +447,8 @@ public class RemoteGenerationBackend : IGenerationBackend
         {
             return await UploadImageIfPresentAsync(localPath, "/upload/mask");
         }
-        catch (Exception ex)
+        catch
         {
-            // #region agent log
-            AppendDebugLog(
-                "baseline",
-                "H1",
-                "RemoteGenerationBackend.UploadMaskIfPresentAsync:mask_upload_failed",
-                "Mask upload endpoint failed; retrying image endpoint",
-                $"{{\"localPath\":\"{EscapeJson(localPath ?? string.Empty)}\",\"fileExists\":{(File.Exists(localPath) ? "true" : "false")},\"fileBytes\":{(File.Exists(localPath) ? new FileInfo(localPath).Length.ToString(CultureInfo.InvariantCulture) : "0")},\"error\":\"{EscapeJson(ex.Message ?? string.Empty)}\"}}");
-            // #endregion
-            Debug.LogWarning($"ComfyUI /upload/mask failed ({ex.Message}). Retrying via /upload/image.");
             return await UploadImageIfPresentAsync(localPath, "/upload/image");
         }
     }
@@ -667,13 +463,7 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         bool desktopAlreadyRunning = IsComfyDesktopProcessRunning();
         if (!desktopAlreadyRunning)
-        {
             StartComfyProcess();
-        }
-        else
-        {
-            Debug.Log("ComfyUI desktop process already running; waiting for API to become ready.");
-        }
 
         float waited = 0f;
         while (waited < _settings.comfyBootTimeoutSeconds)
@@ -837,10 +627,19 @@ public class RemoteGenerationBackend : IGenerationBackend
         string checkpointName = string.IsNullOrWhiteSpace(_settings.comfyCheckpointName)
             ? "motiondesignv13dartC4D_v10.safetensors"
             : _settings.comfyCheckpointName.Trim();
+        string depthControlNetName = string.IsNullOrWhiteSpace(_settings.comfyDepthControlNetName)
+            ? "controlnet-depth/diffusion_pytorch_model.safetensors"
+            : _settings.comfyDepthControlNetName.Trim();
+        string cannyControlNetName = string.IsNullOrWhiteSpace(_settings.comfyCannyControlNetName)
+            ? "controlnet-canny/diffusion_pytorch_model.safetensors"
+            : _settings.comfyCannyControlNetName.Trim();
+        string tripoSrModelName = string.IsNullOrWhiteSpace(_settings.comfyTripoSrModelName)
+            ? "model.safetensors"
+            : _settings.comfyTripoSrModelName.Trim();
+        int geometryResolution = Mathf.Clamp(_settings.comfyGeometryResolution, 128, 12288);
+        float tripoSrThreshold = Mathf.Max(0f, _settings.comfyTripoSrThreshold);
 
         string workflow = File.ReadAllText(workflowPath);
-        bool templateHasPromptToken = workflow.Contains("__PROMPT__", StringComparison.Ordinal);
-        bool templateHasNegativePromptToken = workflow.Contains("__NEG_PROMPT__", StringComparison.Ordinal);
         workflow = workflow.Replace("__SEED__", seed.ToString(System.Globalization.CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__STEPS__", steps.ToString(System.Globalization.CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__CFG__", cfg.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
@@ -850,7 +649,12 @@ public class RemoteGenerationBackend : IGenerationBackend
         workflow = workflow.Replace("__MESH_PROMPT__", EscapeJson(meshPrompt));
         workflow = workflow.Replace("__MESH_NEG_PROMPT__", EscapeJson(meshNegativePrompt));
         workflow = workflow.Replace("__DEPTH_IMAGE__", EscapeJson(depthName));
+        workflow = workflow.Replace("__DEPTH_CONTROLNET__", EscapeJson(depthControlNetName));
+        workflow = workflow.Replace("__CANNY_CONTROLNET__", EscapeJson(cannyControlNetName));
         workflow = workflow.Replace("__CANNY_IMAGE__", EscapeJson(cannyName));
+        workflow = workflow.Replace("__TRIPOSR_MODEL__", EscapeJson(tripoSrModelName));
+        workflow = workflow.Replace("__GEOMETRY_RESOLUTION__", geometryResolution.ToString(CultureInfo.InvariantCulture));
+        workflow = workflow.Replace("__TRIPOSR_THRESHOLD__", tripoSrThreshold.ToString("0.###", CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__MASK_IMAGE_COUNT__", maskNames.Count.ToString());
         workflow = workflow.Replace("__MASK_OCCUPY_IMAGE__", EscapeJson(maskOccupyName));
         workflow = workflow.Replace("__MASK_AVOID_IMAGE__", EscapeJson(maskAvoidName));
@@ -861,15 +665,6 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         for (int i = 0; i < maskNames.Count; i++)
             workflow = workflow.Replace($"__MASK_IMAGE_{i}__", EscapeJson(maskNames[i]));
-
-        // #region agent log
-        AppendAgentDebugLog(
-            "pre-fix",
-            "H3",
-            "RemoteGenerationBackend.cs:764",
-            "workflow_prompt_binding",
-            $"{{\"workflowPath\":\"{EscapeJson(workflowPath)}\",\"resolvedSeed\":{seed.ToString(CultureInfo.InvariantCulture)},\"templateHasPromptToken\":{(templateHasPromptToken ? "true" : "false")},\"templateHasNegativePromptToken\":{(templateHasNegativePromptToken ? "true" : "false")},\"resolvedPrompt\":\"{EscapeJson(SummarizeTextForDebug(prompt))}\",\"resolvedNegativePrompt\":\"{EscapeJson(SummarizeTextForDebug(negativePrompt))}\",\"resolvedMeshPrompt\":\"{EscapeJson(SummarizeTextForDebug(meshPrompt))}\",\"resolvedMeshNegativePrompt\":\"{EscapeJson(SummarizeTextForDebug(meshNegativePrompt))}\",\"depthName\":\"{EscapeJson(depthName)}\",\"cannyName\":\"{EscapeJson(cannyName)}\",\"maskOccupyName\":\"{EscapeJson(maskOccupyName)}\",\"maskAvoidName\":\"{EscapeJson(maskAvoidName)}\",\"maskFocusName\":\"{EscapeJson(maskFocusName)}\",\"boundWorkflowContainsPromptText\":{(!string.IsNullOrWhiteSpace(prompt) && workflow.Contains(EscapeJson(prompt), StringComparison.Ordinal) ? "true" : "false")},\"boundWorkflowContainsNegativePromptText\":{(!string.IsNullOrWhiteSpace(negativePrompt) && workflow.Contains(EscapeJson(negativePrompt), StringComparison.Ordinal) ? "true" : "false")}}}");
-        // #endregion
 
         return workflow;
     }
@@ -887,39 +682,140 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private static string BuildMeshSourcePrompt(string runPrompt, string occupyProxyId, NewBackendRequest request)
     {
-        string assetPrompt = ResolvePerProxyAssetPrompt(request, occupyProxyId);
-        string primaryPrompt = string.IsNullOrWhiteSpace(assetPrompt) ? (runPrompt ?? string.Empty) : assetPrompt;
-        string stylePrompt = BuildMeshStylePrompt(runPrompt, assetPrompt);
-        string combined =
-            $"{primaryPrompt}, {stylePrompt}, single main object, single centered asset, full object in frame, isolated object render, transparent background, alpha background, no floor, no pedestal, no support, no platform, no environment, no scenery, no architecture, no extra objects, product render, studio cutout";
-        return Regex.Replace(combined, "\\s+", " ").Trim().Trim(',');
+        string globalPrompt = NormalizePrompt(runPrompt);
+        string assetPrompt = NormalizePrompt(ResolvePerProxyAssetPrompt(request, occupyProxyId));
+        string stylePrompt = NormalizePrompt(BuildMeshStylePrompt(runPrompt, assetPrompt));
+
+        var parts = new List<string>();
+
+        // Keep the global prompt as the main semantic driver.
+        if (!string.IsNullOrWhiteSpace(globalPrompt))
+            parts.Add(globalPrompt);
+
+        // Add per-asset semantics as an extra constraint, not a replacement.
+        if (!string.IsNullOrWhiteSpace(assetPrompt))
+            parts.Add(assetPrompt);
+
+        // Keep style as supplemental only.
+        if (!string.IsNullOrWhiteSpace(stylePrompt))
+            parts.Add(stylePrompt);
+
+        // Strong object-isolation constraints for TripoSR-friendly source images.
+        parts.Add(
+            "single main object, single centered asset, close-up, full object in frame, " +
+            "clean silhouette, isolated object render, studio cutout, product render, " +
+            "plain background, no floor, no ground, no pedestal, no support, no platform, " +
+            "no base, no slab, no table, no shelf, no environment, no scenery, no extra objects, " +
+            "no contact shadow"
+        );
+
+        return JoinPromptParts(parts);
     }
 
     private static string BuildMeshSourceNegativePrompt(NewBackendRequest request)
     {
-        string negativePrompt = request?.NegativePrompt ?? string.Empty;
-        string combined =
-            $"{negativePrompt}, scene, environment, scenery, landscape, architecture, building, room, platform, pedestal, floor, ground plane, support structure, extra objects, attached objects, multiple objects, background clutter, close-up crop, partial object, frame edge crop, occluders";
-        return Regex.Replace(combined, "\\s+", " ").Trim().Trim(',');
+        string negativePrompt = NormalizePrompt(request?.NegativePrompt);
+
+        var parts = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(negativePrompt))
+            parts.Add(negativePrompt);
+
+        parts.Add(
+            "background, ground, floor, ground plane, pedestal, stand, platform, base, slab, " +
+            "support, support plane, table, shelf, road, fence, trees, sky, shadow, contact shadow, " +
+            "environment, scenery, landscape, room, multiple objects, clutter"
+        );
+
+        return JoinPromptParts(parts);
+    }
+
+    private static string JoinPromptParts(IEnumerable<string> parts)
+    {
+        var cleaned = parts
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .SelectMany(p => p.Split(','))
+            .Select(p => p.Trim())
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        return string.Join(", ", cleaned);
+    }
+
+    private static string NormalizePrompt(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        return Regex.Replace(text, "\\s+", " ").Trim().Trim(',');
     }
 
     private static string BuildMeshStylePrompt(string runPrompt, string assetPrompt)
     {
-        string value = runPrompt ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(assetPrompt))
-            value = Regex.Replace(value, $"\\b{Regex.Escape(assetPrompt)}\\b", " ", RegexOptions.IgnoreCase);
-
-        value = Regex.Replace(value, "\\bscene\\b", "asset", RegexOptions.IgnoreCase);
-        value = Regex.Replace(value, "\\benvironment\\b", " ", RegexOptions.IgnoreCase);
-        value = Regex.Replace(value, "\\bscenery\\b", " ", RegexOptions.IgnoreCase);
-        value = Regex.Replace(value, "\\blandscape\\b", " ", RegexOptions.IgnoreCase);
-        value = Regex.Replace(value, "\\bbackground\\b", " ", RegexOptions.IgnoreCase);
-        value = Regex.Replace(value, "\\s+", " ").Trim().Trim(',');
+        string value = NormalizePrompt(runPrompt);
+        string asset = NormalizePrompt(assetPrompt);
 
         if (string.IsNullOrWhiteSpace(value))
-            return "high quality 3d asset";
+            return "high quality 3d asset, studio lighting, clean materials";
 
-        return value;
+        // Remove exact asset prompt only if it is substantial enough to avoid duplication,
+        // but keep the rest of the global prompt intact.
+        if (!string.IsNullOrWhiteSpace(asset) && asset.Length >= 8)
+        {
+            value = Regex.Replace(
+                value,
+                Regex.Escape(asset),
+                " ",
+                RegexOptions.IgnoreCase);
+        }
+
+        // Keep style-bearing words. Only soften composition-heavy scene language.
+        value = Regex.Replace(value, "\\bwide shot\\b", "close-up", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, "\\bfull scene\\b", "single object render", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, "\\bestablishing shot\\b", "studio render", RegexOptions.IgnoreCase);
+
+        // Remove only strongly scene-composition phrases that tend to add unwanted context.
+        string[] bannedPhrases =
+        {
+        "in a room",
+        "in the room",
+        "in an environment",
+        "in the environment",
+        "surrounded by",
+        "next to other objects",
+        "with other objects",
+        "on a table",
+        "on the table",
+        "on a shelf",
+        "on the shelf",
+        "on the floor",
+        "in a landscape",
+        "in the landscape"
+    };
+
+        for (int i = 0; i < bannedPhrases.Length; i++)
+        {
+            value = Regex.Replace(
+                value,
+                "\\b" + Regex.Escape(bannedPhrases[i]) + "\\b",
+                " ",
+                RegexOptions.IgnoreCase);
+        }
+
+        value = NormalizePrompt(value);
+
+        if (string.IsNullOrWhiteSpace(value))
+            return "high quality 3d asset, studio lighting, clean materials";
+
+        // Add mesh-friendly style guidance without changing the object semantics.
+        return JoinPromptParts(new[]
+        {
+        value,
+        "high quality 3d asset",
+        "studio lighting",
+        "clean materials",
+        "sharp silhouette"
+    });
     }
 
     private static string ResolvePerProxyAssetPrompt(NewBackendRequest request, string occupyProxyId)
@@ -1093,9 +989,6 @@ public class RemoteGenerationBackend : IGenerationBackend
             if (msgPromptId == promptId)
             {
                 string msgType = ExtractJsonString(msg, "type");
-                if (msgType == "progress")
-                    Debug.Log($"ComfyUI progress: {msg}");
-
                 // ComfyUI emits executing with node=null when the prompt has completed.
                 if (msgType == "executing" && Regex.IsMatch(msg, "\"node\"\\s*:\\s*null"))
                     return;
@@ -1112,11 +1005,6 @@ public class RemoteGenerationBackend : IGenerationBackend
     {
         if (_preferHistoryPolling)
         {
-            if (!_loggedPollingMode)
-            {
-                Debug.Log("ComfyUI tracking mode: history polling (websocket disabled after previous transport failures).");
-                _loggedPollingMode = true;
-            }
             await WaitForCompletionByHistoryPollingAsync(promptId);
             return;
         }
@@ -1129,8 +1017,6 @@ public class RemoteGenerationBackend : IGenerationBackend
         catch (Exception ex) when (IsRecoverableWebSocketFailure(ex))
         {
             _preferHistoryPolling = true;
-            Debug.LogWarning(
-                $"ComfyUI websocket tracking failed ({ex.Message}). Falling back to history polling for prompt_id={promptId}.");
         }
 
         await WaitForCompletionByHistoryPollingAsync(promptId);
@@ -1153,14 +1039,6 @@ public class RemoteGenerationBackend : IGenerationBackend
                     int refs = ExtractOutputImageRefs(json).Count;
                     bool hasOutputRefs = refs > 0;
                     bool completed = IsHistoryCompleted(json);
-                    // #region agent log
-                    AppendDebugLog(
-                        "baseline",
-                        "H4",
-                        "RemoteGenerationBackend.WaitForCompletionByHistoryPollingAsync:history_observed",
-                        "History polling state observed",
-                        $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"completed\":{(completed ? "true" : "false")},\"hasOutputRefs\":{(hasOutputRefs ? "true" : "false")},\"outputRefCount\":{refs},\"historyChars\":{json.Length.ToString(CultureInfo.InvariantCulture)}}}");
-                    // #endregion
                     if (IsHistoryError(json))
                     {
                         string errorMessage = ExtractJsonString(json, "exception_message");
@@ -1232,17 +1110,7 @@ public class RemoteGenerationBackend : IGenerationBackend
     {
         var result = new GenerationResult();
         if (constraints == null)
-        {
-            // #region agent log
-            AppendDebugLog(
-                "baseline",
-                "H2",
-                "RemoteGenerationBackend.ConvertConstraintsToResult:null_constraints",
-                "Fallback conversion had no constraints",
-                "{\"constraintCount\":0,\"convertedObjectCount\":0}");
-            // #endregion
             return result;
-        }
 
         foreach (Constraint c in constraints)
         {
@@ -1260,14 +1128,6 @@ public class RemoteGenerationBackend : IGenerationBackend
                 size = c.size
             });
         }
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H2",
-            "RemoteGenerationBackend.ConvertConstraintsToResult:converted",
-            "Converted proxy constraints to generated primitives",
-            $"{{\"constraintCount\":{constraints.Length},\"convertedObjectCount\":{result.objects.Count}}}");
-        // #endregion
 
         return result;
     }
@@ -1309,65 +1169,10 @@ public class RemoteGenerationBackend : IGenerationBackend
         using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
         using HttpResponseMessage response = await Http.GetAsync($"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}", cts.Token);
         string historyJson = await response.Content.ReadAsStringAsync();
-        int firstFilenameIndex = (historyJson ?? string.Empty).IndexOf("\"filename\"", StringComparison.Ordinal);
-        int firstOutputTypeIndex = (historyJson ?? string.Empty).IndexOf("\"type\":\"output\"", StringComparison.Ordinal);
-        string filenameSnippet = BuildSanitizedSnippet(historyJson, firstFilenameIndex, 220);
-        string outputTypeSnippet = BuildSanitizedSnippet(historyJson, firstOutputTypeIndex, 220);
-        int genericFilenameCount = Regex.Matches(historyJson ?? string.Empty, "\"filename\"\\s*:\\s*\"([^\"]+)\"").Count;
-        int outputTypeCount = Regex.Matches(historyJson ?? string.Empty, "\"type\"\\s*:\\s*\"output\"").Count;
-        int orderedFilenameSubfolderTypeCount = Regex.Matches(
-            historyJson ?? string.Empty,
-            "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\"").Count;
-        int filenameSubfolderNullTypeCount = Regex.Matches(
-            historyJson ?? string.Empty,
-            "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*null\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\"").Count;
-        int typeBeforeFilenameCount = Regex.Matches(
-            historyJson ?? string.Empty,
-            "\"type\"\\s*:\\s*\"output\"[\\s\\S]{0,120}\"filename\"\\s*:\\s*\"([^\"]+)\"").Count;
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H3",
-            "RemoteGenerationBackend.DownloadOutputsAsync:history_downloaded",
-            "Fetched prompt history for output extraction",
-            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"statusCode\":{((int)response.StatusCode).ToString(CultureInfo.InvariantCulture)},\"historyChars\":{historyJson.Length.ToString(CultureInfo.InvariantCulture)},\"genericFilenameCount\":{genericFilenameCount},\"outputTypeCount\":{outputTypeCount},\"orderedFilenameSubfolderTypeCount\":{orderedFilenameSubfolderTypeCount},\"filenameSubfolderNullTypeCount\":{filenameSubfolderNullTypeCount},\"typeBeforeFilenameCount\":{typeBeforeFilenameCount},\"firstFilenameIndex\":{firstFilenameIndex},\"firstOutputTypeIndex\":{firstOutputTypeIndex}}}");
-        // #endregion
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H6",
-            "RemoteGenerationBackend.DownloadOutputsAsync:history_shape_snippets",
-            "Sanitized history snippets around filename/output markers",
-            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"filenameSnippet\":\"{EscapeJson(filenameSnippet)}\",\"outputTypeSnippet\":\"{EscapeJson(outputTypeSnippet)}\"}}");
-        // #endregion
         if (!response.IsSuccessStatusCode)
             throw new Exception($"ComfyUI /history/{promptId} failed: {(int)response.StatusCode} {historyJson}");
 
         var outputs = ExtractOutputImageRefs(historyJson);
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H5",
-            "RemoteGenerationBackend.DownloadOutputsAsync:extraction_result",
-            "Parsed output references using current extractor",
-            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"extractedCount\":{outputs.Count},\"genericFilenameCount\":{genericFilenameCount},\"outputTypeCount\":{outputTypeCount}}}");
-        // #endregion
-        // #region agent log
-        AppendDebugLog(
-            "baseline",
-            "H1",
-            "RemoteGenerationBackend.DownloadOutputsAsync:extracted_refs",
-            "Extracted output references details",
-            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"extractedRefs\":\"{EscapeJson(string.Join(";", outputs.ConvertAll(o => $"{o.filename}|{o.subfolder}|{o.type}")))}\"}}");
-        // #endregion
-        // #region agent log
-        AppendAgentDebugLog(
-            "pre-fix",
-            "H6,H7",
-            "RemoteGenerationBackend.cs:1254",
-            "download_output_refs",
-            $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"outputRefCount\":{outputs.Count.ToString(CultureInfo.InvariantCulture)},\"outputRefs\":\"{EscapeJson(string.Join(";", outputs.ConvertAll(o => $"{o.filename}|{o.subfolder}|{o.type}")))}\"}}");
-        // #endregion
         var saved = new List<string>();
 
         foreach (var output in outputs)
@@ -1382,26 +1187,6 @@ public class RemoteGenerationBackend : IGenerationBackend
             string outPath = Path.Combine(outputDir, finalName);
             File.WriteAllBytes(outPath, bytes);
             saved.Add(outPath);
-
-            if (finalName.IndexOf("spatialgen_preview", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                finalName.IndexOf("spatialgen_prompt_only", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                finalName.IndexOf("spatialgen_mesh_source", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                PreviewOccupancyStats stats = AnalyzePreviewOccupancy(outPath);
-                string kind = finalName.IndexOf("spatialgen_prompt_only", StringComparison.OrdinalIgnoreCase) >= 0
-                    ? "prompt_only"
-                    : finalName.IndexOf("spatialgen_mesh_source", StringComparison.OrdinalIgnoreCase) >= 0
-                        ? "mesh_source"
-                    : "conditioned_preview";
-                // #region agent log
-                AppendAgentDebugLog(
-                    "pre-fix",
-                    "H8,H9",
-                    "RemoteGenerationBackend.cs:1274",
-                    "preview_image_occupancy",
-                    $"{{\"promptId\":\"{EscapeJson(promptId)}\",\"requestId\":\"{EscapeJson(requestId)}\",\"kind\":\"{EscapeJson(kind)}\",\"savedPreview\":\"{EscapeJson(Path.GetFileName(outPath))}\",\"occupiedPixelRatio\":{stats.OccupiedPixelRatio.ToString("0.######", CultureInfo.InvariantCulture)},\"occupiedBoundsRatio\":{stats.OccupiedBoundsRatio.ToString("0.######", CultureInfo.InvariantCulture)},\"bounds\":\"{EscapeJson(stats.BoundsSummary)}\"}}");
-                // #endregion
-            }
         }
 
         return saved;
@@ -1469,16 +1254,6 @@ public class RemoteGenerationBackend : IGenerationBackend
             string outPath = Path.Combine(outputDir, $"{outputPrefix}_mesh_source_mask_guided.png");
             File.WriteAllBytes(outPath, output.EncodeToPNG());
 
-            PreviewOccupancyStats stats = AnalyzePreviewOccupancy(outPath);
-            // #region agent log
-            AppendAgentDebugLog(
-                "pre-fix",
-                "H16",
-                "RemoteGenerationBackend.cs:1370",
-                "mask_guided_mesh_source_occupancy",
-                $"{{\"meshSource\":\"{EscapeJson(Path.GetFileName(meshSourcePath))}\",\"maskPath\":\"{EscapeJson(Path.GetFileName(maskPath))}\",\"savedPreview\":\"{EscapeJson(Path.GetFileName(outPath))}\",\"occupiedPixelRatio\":{stats.OccupiedPixelRatio.ToString("0.######", CultureInfo.InvariantCulture)},\"occupiedBoundsRatio\":{stats.OccupiedBoundsRatio.ToString("0.######", CultureInfo.InvariantCulture)},\"bounds\":\"{EscapeJson(stats.BoundsSummary)}\"}}");
-            // #endregion
-
             return outPath;
         }
         catch
@@ -1534,78 +1309,6 @@ public class RemoteGenerationBackend : IGenerationBackend
         return new RectInt(x, y, expandedWidth, expandedHeight);
     }
 
-    private static PreviewOccupancyStats AnalyzePreviewOccupancy(string imagePath)
-    {
-        var stats = new PreviewOccupancyStats();
-        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
-            return stats;
-
-        Texture2D texture = null;
-        try
-        {
-            texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            byte[] bytes = File.ReadAllBytes(imagePath);
-            if (bytes == null || bytes.Length == 0 || !texture.LoadImage(bytes))
-                return stats;
-
-            int width = texture.width;
-            int height = texture.height;
-            if (width <= 0 || height <= 0)
-                return stats;
-
-            Color[] pixels = texture.GetPixels();
-            Color background = EstimateBackgroundColor(texture);
-            const float threshold = 0.06f;
-
-            int minX = width;
-            int minY = height;
-            int maxX = -1;
-            int maxY = -1;
-            int occupiedPixels = 0;
-            for (int y = 0; y < height; y++)
-            {
-                int row = y * width;
-                for (int x = 0; x < width; x++)
-                {
-                    Color pixel = pixels[row + x];
-                    if (ColorDistance(pixel, background) <= threshold)
-                        continue;
-
-                    occupiedPixels++;
-                    if (x < minX) minX = x;
-                    if (y < minY) minY = y;
-                    if (x > maxX) maxX = x;
-                    if (y > maxY) maxY = y;
-                }
-            }
-
-            stats.OccupiedPixelRatio = occupiedPixels / (float)(width * height);
-            if (maxX >= minX && maxY >= minY)
-            {
-                int boundsWidth = (maxX - minX) + 1;
-                int boundsHeight = (maxY - minY) + 1;
-                stats.OccupiedBoundsRatio = (boundsWidth * boundsHeight) / (float)(width * height);
-                stats.BoundsSummary = $"{minX},{minY},{boundsWidth},{boundsHeight}";
-            }
-
-            return stats;
-        }
-        catch
-        {
-            return stats;
-        }
-        finally
-        {
-            if (texture != null)
-                UnityEngine.Object.DestroyImmediate(texture);
-        }
-    }
-
-    private static string FindFirstPreviewOutput(List<string> paths)
-    {
-        return FindFirstOutputContaining(paths, "spatialgen_preview");
-    }
-
     private static string FindFirstOutputContaining(List<string> paths, string token)
     {
         if (paths == null || paths.Count == 0 || string.IsNullOrWhiteSpace(token))
@@ -1624,86 +1327,6 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         return string.Empty;
     }
-
-    private static PreviewSimilarityStats ComparePreviewImages(string firstPath, string secondPath)
-    {
-        var stats = new PreviewSimilarityStats();
-        if (string.IsNullOrWhiteSpace(firstPath) || string.IsNullOrWhiteSpace(secondPath) || !File.Exists(firstPath) || !File.Exists(secondPath))
-            return stats;
-
-        Texture2D first = null;
-        Texture2D second = null;
-        try
-        {
-            first = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            second = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            byte[] firstBytes = File.ReadAllBytes(firstPath);
-            byte[] secondBytes = File.ReadAllBytes(secondPath);
-            if (!first.LoadImage(firstBytes) || !second.LoadImage(secondBytes))
-                return stats;
-            if (first.width != second.width || first.height != second.height)
-                return stats;
-
-            Color[] firstPixels = first.GetPixels();
-            Color[] secondPixels = second.GetPixels();
-            if (firstPixels == null || secondPixels == null || firstPixels.Length != secondPixels.Length || firstPixels.Length == 0)
-                return stats;
-
-            float totalDifference = 0f;
-            float maxDifference = 0f;
-            for (int i = 0; i < firstPixels.Length; i++)
-            {
-                Color a = firstPixels[i];
-                Color b = secondPixels[i];
-                float diff =
-                    (Mathf.Abs(a.r - b.r) +
-                     Mathf.Abs(a.g - b.g) +
-                     Mathf.Abs(a.b - b.b)) / 3f;
-                totalDifference += diff;
-                if (diff > maxDifference)
-                    maxDifference = diff;
-            }
-
-            stats.MeanAbsoluteDifference = totalDifference / firstPixels.Length;
-            stats.MaxChannelDifference = maxDifference;
-            return stats;
-        }
-        catch
-        {
-            return stats;
-        }
-        finally
-        {
-            if (first != null)
-                UnityEngine.Object.DestroyImmediate(first);
-            if (second != null)
-                UnityEngine.Object.DestroyImmediate(second);
-        }
-    }
-
-    private static Color EstimateBackgroundColor(Texture2D texture)
-    {
-        int lastX = Mathf.Max(0, texture.width - 1);
-        int lastY = Mathf.Max(0, texture.height - 1);
-        Color c1 = texture.GetPixel(0, 0);
-        Color c2 = texture.GetPixel(lastX, 0);
-        Color c3 = texture.GetPixel(0, lastY);
-        Color c4 = texture.GetPixel(lastX, lastY);
-        return new Color(
-            (c1.r + c2.r + c3.r + c4.r) * 0.25f,
-            (c1.g + c2.g + c3.g + c4.g) * 0.25f,
-            (c1.b + c2.b + c3.b + c4.b) * 0.25f,
-            (c1.a + c2.a + c3.a + c4.a) * 0.25f);
-    }
-
-    private static float ColorDistance(Color a, Color b)
-    {
-        float dr = a.r - b.r;
-        float dg = a.g - b.g;
-        float db = a.b - b.b;
-        return Mathf.Sqrt((dr * dr) + (dg * dg) + (db * db));
-    }
-
     private static List<ImageRef> ExtractOutputImageRefs(string historyJson)
     {
         var refs = new List<ImageRef>();
@@ -1763,6 +1386,152 @@ public class RemoteGenerationBackend : IGenerationBackend
         return refs;
     }
 
+
+    private async Task<List<string>> RunNormalizedTripoSrPassAsync(string normalizedImagePath, string requestId, string outputDir, string outputPrefix)
+    {
+        var saved = new List<string>();
+        if (string.IsNullOrWhiteSpace(normalizedImagePath) || !File.Exists(normalizedImagePath))
+            return saved;
+
+        string uploadedImageName = await UploadImageIfPresentAsync(normalizedImagePath, "/upload/image");
+        if (string.IsNullOrWhiteSpace(uploadedImageName))
+            return saved;
+
+        string workflowJson = BuildTripoSrOnlyWorkflow(uploadedImageName);
+        string promptId = await SubmitPromptAsync(workflowJson);
+        await WaitForPromptCompletionAsync(promptId);
+        List<string> outputs = await DownloadOutputsAsync(promptId, requestId, outputDir, outputPrefix);
+        saved.AddRange(outputs);
+        return saved;
+    }
+
+    private string BuildTripoSrOnlyWorkflow(string uploadedImageName)
+    {
+        string tripoSrModelName = string.IsNullOrWhiteSpace(_settings.comfyTripoSrModelName)
+            ? "model.safetensors"
+            : _settings.comfyTripoSrModelName.Trim();
+        int geometryResolution = Mathf.Clamp(_settings.comfyGeometryResolution, 128, 12288);
+        float tripoSrThreshold = Mathf.Max(0f, _settings.comfyTripoSrThreshold);
+
+        return "{" +
+               "\"1\":{\"inputs\":{\"image\":\"" + EscapeJson(uploadedImageName) + "\"},\"class_type\":\"LoadImage\",\"_meta\":{\"title\":\"Load Normalized TripoSR Input\"}}," +
+               "\"2\":{\"inputs\":{\"filename_prefix\":\"spatialgen_triposr_normalized_input\",\"images\":[\"1\",0]},\"class_type\":\"SaveImage\",\"_meta\":{\"title\":\"Save Normalized TripoSR Input\"}}," +
+               "\"3\":{\"inputs\":{\"model\":\"" + EscapeJson(tripoSrModelName) + "\",\"chunk_size\":8192},\"class_type\":\"TripoSRModelLoader\",\"_meta\":{\"title\":\"TripoSR Model Loader\"}}," +
+               "\"4\":{\"inputs\":{\"geometry_resolution\":" + geometryResolution.ToString(CultureInfo.InvariantCulture) + ",\"threshold\":" + tripoSrThreshold.ToString("0.###", CultureInfo.InvariantCulture) + ",\"model\":[\"3\",0],\"reference_image\":[\"1\",0]},\"class_type\":\"TripoSRSampler\",\"_meta\":{\"title\":\"TripoSR Sampler\"}}," +
+               "\"5\":{\"inputs\":{\"format\":\"glb\",\"mesh\":[\"4\",0]},\"class_type\":\"TripoSRViewer\",\"_meta\":{\"title\":\"TripoSR Viewer\"}}" +
+               "}";
+    }
+
+    private static string NormalizeImageForTripoSr(string sourceImagePath, string maskImagePath, string outputDir, string outputPrefix, int outputSize = 512, float targetFill = 0.82f)
+    {
+        if (string.IsNullOrWhiteSpace(sourceImagePath) || string.IsNullOrWhiteSpace(maskImagePath) || !File.Exists(sourceImagePath) || !File.Exists(maskImagePath))
+            return string.Empty;
+
+        Texture2D source = null;
+        Texture2D mask = null;
+        Texture2D output = null;
+        try
+        {
+            source = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            mask = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            if (!source.LoadImage(File.ReadAllBytes(sourceImagePath)) || !mask.LoadImage(File.ReadAllBytes(maskImagePath)))
+                return string.Empty;
+            if (source.width <= 0 || source.height <= 0 || source.width != mask.width || source.height != mask.height)
+                return string.Empty;
+
+            int width = source.width;
+            int height = source.height;
+            Color[] maskPixels = mask.GetPixels();
+            RectInt maskRect = ComputeMaskBounds(maskPixels, width, height);
+            if (maskRect.width <= 0 || maskRect.height <= 0)
+                return string.Empty;
+
+            RectInt expandedRect = ExpandRect(maskRect, width, height, 1.2f, 12);
+            int cropSize = Mathf.Max(expandedRect.width, expandedRect.height);
+            cropSize = Mathf.Max(1, cropSize);
+            int destSize = Mathf.Clamp(outputSize, 64, 2048);
+            float fill = Mathf.Clamp(targetFill, 0.5f, 0.95f);
+            float scale = (fill * destSize) / cropSize;
+            int destW = Mathf.Clamp(Mathf.RoundToInt(expandedRect.width * scale), 1, destSize);
+            int destH = Mathf.Clamp(Mathf.RoundToInt(expandedRect.height * scale), 1, destSize);
+            int offsetX = (destSize - destW) / 2;
+            int offsetY = (destSize - destH) / 2;
+
+            output = new Texture2D(destSize, destSize, TextureFormat.RGBA32, false);
+            Color[] outPixels = new Color[destSize * destSize];
+            for (int i = 0; i < outPixels.Length; i++)
+                outPixels[i] = Color.white;
+
+            for (int y = 0; y < destH; y++)
+            {
+                float v = (y + 0.5f) / destH;
+                float srcY = expandedRect.y + (v * expandedRect.height) - 0.5f;
+                for (int x = 0; x < destW; x++)
+                {
+                    float u = (x + 0.5f) / destW;
+                    float srcX = expandedRect.x + (u * expandedRect.width) - 0.5f;
+                    Color srcColor = SampleBilinearClamped(source, srcX, srcY);
+                    Color maskColor = SampleBilinearClamped(mask, srcX, srcY);
+                    Color finalColor = Color.Lerp(Color.white, new Color(srcColor.r, srcColor.g, srcColor.b, 1f), Mathf.Clamp01(maskColor.maxColorComponent));
+                    outPixels[(offsetY + y) * destSize + (offsetX + x)] = finalColor;
+                }
+            }
+
+            output.SetPixels(outPixels);
+            output.Apply(false);
+            Directory.CreateDirectory(outputDir);
+            string normalizedPath = Path.Combine(outputDir, $"{outputPrefix}_triposr_normalized_input_local.png");
+            File.WriteAllBytes(normalizedPath, output.EncodeToPNG());
+            return normalizedPath;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+        finally
+        {
+            if (source != null)
+                UnityEngine.Object.DestroyImmediate(source);
+            if (mask != null)
+                UnityEngine.Object.DestroyImmediate(mask);
+            if (output != null)
+                UnityEngine.Object.DestroyImmediate(output);
+        }
+    }
+
+    private static Color SampleBilinearClamped(Texture2D texture, float x, float y)
+    {
+        int width = texture.width;
+        int height = texture.height;
+        float clampedX = Mathf.Clamp(x, 0f, Mathf.Max(0f, width - 1f));
+        float clampedY = Mathf.Clamp(y, 0f, Mathf.Max(0f, height - 1f));
+
+        int x0 = Mathf.FloorToInt(clampedX);
+        int y0 = Mathf.FloorToInt(clampedY);
+        int x1 = Mathf.Min(x0 + 1, width - 1);
+        int y1 = Mathf.Min(y0 + 1, height - 1);
+
+        float tx = clampedX - x0;
+        float ty = clampedY - y0;
+
+        Color c00 = texture.GetPixel(x0, y0);
+        Color c10 = texture.GetPixel(x1, y0);
+        Color c01 = texture.GetPixel(x0, y1);
+        Color c11 = texture.GetPixel(x1, y1);
+
+        Color cx0 = Color.Lerp(c00, c10, tx);
+        Color cx1 = Color.Lerp(c01, c11, tx);
+        return Color.Lerp(cx0, cx1, ty);
+    }
+
+    private static bool IsMeshFile(string path)
+    {
+        string ext = Path.GetExtension(path ?? string.Empty);
+        return ext.Equals(".glb", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".gltf", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".obj", StringComparison.OrdinalIgnoreCase);
+    }
+
     private string ResolveOutputDirectory(string projectRoot)
     {
         string outputPath = _settings.comfyOutputAssetFolder;
@@ -1811,147 +1580,11 @@ public class RemoteGenerationBackend : IGenerationBackend
         return m.Success && m.Groups.Count > 1 ? m.Groups[1].Value : string.Empty;
     }
 
-    private static void AppendDebugLog(string runId, string hypothesisId, string location, string message, string dataJson)
-    {
-        try
-        {
-            string safeRunId = EscapeJson(runId ?? "baseline");
-            string safeHypothesisId = EscapeJson(hypothesisId ?? string.Empty);
-            string safeLocation = EscapeJson(location ?? string.Empty);
-            string safeMessage = EscapeJson(message ?? string.Empty);
-            string safeDataJson = string.IsNullOrWhiteSpace(dataJson) ? "{}" : dataJson;
-            long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            string line =
-                $"{{\"sessionId\":\"{DebugSessionId}\",\"runId\":\"{safeRunId}\",\"hypothesisId\":\"{safeHypothesisId}\",\"location\":\"{safeLocation}\",\"message\":\"{safeMessage}\",\"data\":{safeDataJson},\"timestamp\":{ts.ToString(CultureInfo.InvariantCulture)}}}";
-            File.AppendAllText(DebugLogPath, line + Environment.NewLine);
-        }
-        catch
-        {
-            // Never interrupt generation flow due to debug logging failures.
-        }
-    }
-
-    private static void AppendAgentDebugLog(string runId, string hypothesisId, string location, string message, string dataJson)
-    {
-        try
-        {
-            string safeRunId = EscapeJson(runId ?? "pre-fix");
-            string safeHypothesisId = EscapeJson(hypothesisId ?? string.Empty);
-            string safeLocation = EscapeJson(location ?? string.Empty);
-            string safeMessage = EscapeJson(message ?? string.Empty);
-            string safeDataJson = string.IsNullOrWhiteSpace(dataJson) ? "{}" : dataJson;
-            long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            string line =
-                $"{{\"sessionId\":\"{AgentDebugSessionId}\",\"runId\":\"{safeRunId}\",\"hypothesisId\":\"{safeHypothesisId}\",\"location\":\"{safeLocation}\",\"message\":\"{safeMessage}\",\"data\":{safeDataJson},\"timestamp\":{ts.ToString(CultureInfo.InvariantCulture)}}}";
-            File.AppendAllText(AgentDebugLogPath, line + Environment.NewLine);
-        }
-        catch
-        {
-            // Never interrupt generation flow due to debug logging failures.
-        }
-    }
-
-    private static string SummarizeTextForDebug(string value, int maxChars = 160)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        string normalized = value.Trim().Replace("\r", " ").Replace("\n", " ");
-        normalized = Regex.Replace(normalized, "\\s+", " ");
-        return normalized.Length <= maxChars ? normalized : normalized.Substring(0, maxChars) + "...";
-    }
-
-    private static string SummarizePerProxyPromptsForDebug(NewBackendRequest request)
-    {
-        if (request?.PerProxyAssetPrompts == null || request.PerProxyAssetPrompts.Count == 0)
-            return string.Empty;
-
-        var parts = new List<string>();
-        for (int i = 0; i < request.PerProxyAssetPrompts.Count; i++)
-        {
-            var entry = request.PerProxyAssetPrompts[i];
-            if (entry == null)
-                continue;
-
-            parts.Add($"{entry.ProxyId}:{SummarizeTextForDebug(entry.AssetPrompt, 60)}");
-        }
-
-        return string.Join(";", parts);
-    }
-
-    private static string SummarizeLegacyOccupyProxyIdsForDebug(NewBackendRequest request)
-    {
-        if (request?.LegacyConstraints == null || request.LegacyConstraints.Length == 0)
-            return string.Empty;
-
-        var proxyIds = new List<string>();
-        for (int i = 0; i < request.LegacyConstraints.Length; i++)
-        {
-            Constraint constraint = request.LegacyConstraints[i];
-            if (!string.Equals((constraint?.type ?? string.Empty).Trim(), "occupy", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            proxyIds.Add(constraint?.proxy_id ?? string.Empty);
-        }
-
-        return string.Join(";", proxyIds);
-    }
-
-    private static float CalculateMaskCoverage(string imagePath)
-    {
-        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
-            return 0f;
-
-        Texture2D texture = null;
-        try
-        {
-            texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            byte[] bytes = File.ReadAllBytes(imagePath);
-            if (bytes == null || bytes.Length == 0 || !texture.LoadImage(bytes))
-                return 0f;
-
-            Color[] pixels = texture.GetPixels();
-            if (pixels == null || pixels.Length == 0)
-                return 0f;
-
-            int activePixels = 0;
-            for (int i = 0; i < pixels.Length; i++)
-            {
-                if (pixels[i].maxColorComponent > 0.5f)
-                    activePixels++;
-            }
-
-            return (float)activePixels / pixels.Length;
-        }
-        catch
-        {
-            return 0f;
-        }
-        finally
-        {
-            if (texture != null)
-                UnityEngine.Object.DestroyImmediate(texture);
-        }
-    }
-
     private static void RefreshAssetDatabaseIfNeeded()
     {
 #if UNITY_EDITOR
         AssetDatabase.Refresh();
 #endif
-    }
-
-    private static string BuildSanitizedSnippet(string text, int centerIndex, int radius)
-    {
-        if (string.IsNullOrEmpty(text) || centerIndex < 0)
-            return string.Empty;
-
-        int start = Math.Max(0, centerIndex - Math.Max(10, radius));
-        int length = Math.Min(text.Length - start, Math.Max(20, radius * 2));
-        string snippet = text.Substring(start, length);
-        snippet = snippet.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
-        snippet = Regex.Replace(snippet, "\\s+", " ");
-        return snippet;
     }
 
     private class ImageRef
@@ -1961,16 +1594,4 @@ public class RemoteGenerationBackend : IGenerationBackend
         public string type;
     }
 
-    private class PreviewOccupancyStats
-    {
-        public float OccupiedPixelRatio;
-        public float OccupiedBoundsRatio;
-        public string BoundsSummary = string.Empty;
-    }
-
-    private class PreviewSimilarityStats
-    {
-        public float MeanAbsoluteDifference;
-        public float MaxChannelDifference;
-    }
 }

@@ -26,6 +26,11 @@ public class BackendSettings : ScriptableObject
     public string comfyWorkflowTemplatePath = "SpatialGenHandoff/comfy_workflow_api.json";
     public string comfyInputFolder = "SpatialGenHandoff/comfy_inputs";
     public string comfyCheckpointName = "motiondesignv13dartC4D_v10.safetensors";
+    public string comfyDepthControlNetName = "controlnet-depth/diffusion_pytorch_model.safetensors";
+    public string comfyCannyControlNetName = "controlnet-canny/diffusion_pytorch_model.safetensors";
+    public string comfyTripoSrModelName = "model.safetensors";
+    public int comfyGeometryResolution = 256;
+    public float comfyTripoSrThreshold = 25f;
     public string comfyOutputAssetFolder = "Assets/SpatialGeneration/GeneratedAssets";
     public string comfyLaunchCommand = "/usr/bin/python3";
     public string comfyLaunchArguments = "main.py --listen 127.0.0.1 --port 8000";

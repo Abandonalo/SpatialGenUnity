@@ -8,6 +8,8 @@ using UnityEngine;
 public static class GenerationControllerEditor
 {
     private const string GeneratedRootName = "GeneratedContent";
+    private const string SessionDebugLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-f8f0ec.log";
+    private const string SessionDebugSessionId = "f8f0ec";
     private static bool _isGenerating;
 
     /// <summary>
@@ -138,6 +140,18 @@ public static class GenerationControllerEditor
                  p.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase) ||
                  p.EndsWith(".obj", StringComparison.OrdinalIgnoreCase)) &&
                 File.Exists(p));
+            int pngCount = result.outputFiles.FindAll(p =>
+                !string.IsNullOrWhiteSpace(p) &&
+                p.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(p)).Count;
+            #region agent log
+            AppendSessionDebugLog(
+                "pre-fix",
+                "H4,H5",
+                "GenerationControllerEditor.ApplyResultUndoable:output_classification",
+                "Classified backend outputs before editor application",
+                $"{{\"outputFileCount\":{result.outputFiles.Count},\"meshPathCount\":{meshPaths.Count},\"pngCount\":{pngCount},\"primaryOutputFile\":\"{EscapeJson(result.primaryOutputFile)}\"}}");
+            #endregion
 
             if (meshPaths.Count > 0)
             {
@@ -225,6 +239,14 @@ public static class GenerationControllerEditor
     {
         instance = null;
         string assetPath = StageFileIntoGeneratedAssets(absolutePath);
+        #region agent log
+        AppendSessionDebugLog(
+            "pre-fix",
+            "H4",
+            "GenerationControllerEditor.TryInstantiateMeshOutput:stage_mesh",
+            "Attempted to stage mesh output into Unity assets",
+            $"{{\"absolutePath\":\"{EscapeJson(absolutePath)}\",\"assetPath\":\"{EscapeJson(assetPath)}\",\"sourceExists\":{(File.Exists(absolutePath) ? "true" : "false")}}}");
+        #endregion
         if (string.IsNullOrWhiteSpace(assetPath))
             return false;
 
@@ -236,6 +258,14 @@ public static class GenerationControllerEditor
         if (meshAsset == null)
         {
             UnityEngine.Object loadedAsset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            #region agent log
+            AppendSessionDebugLog(
+                "pre-fix",
+                "H4",
+                "GenerationControllerEditor.TryInstantiateMeshOutput:mesh_import_failed",
+                "Unity imported mesh path but did not expose a GameObject asset",
+                $"{{\"assetPath\":\"{EscapeJson(assetPath)}\",\"loadedAssetType\":\"{EscapeJson(loadedAsset?.GetType().Name ?? "null")}\"}}");
+            #endregion
             Debug.LogWarning(
                 $"Spatial Generation: Imported '{assetPath}', but main asset type is '{loadedAsset?.GetType().Name ?? "null"}'. " +
                 "Install or configure a compatible importer for this mesh format.");
@@ -500,5 +530,30 @@ public static class GenerationControllerEditor
         return type == PrimitiveType.Cylinder
             ? new Vector3(desiredBounds.x, desiredBounds.y * 0.5f, desiredBounds.z)
             : desiredBounds;
+    }
+
+    private static void AppendSessionDebugLog(string runId, string hypothesisId, string location, string message, string dataJson)
+    {
+        try
+        {
+            string safeRunId = EscapeJson(runId ?? "pre-fix");
+            string safeHypothesisId = EscapeJson(hypothesisId ?? string.Empty);
+            string safeLocation = EscapeJson(location ?? string.Empty);
+            string safeMessage = EscapeJson(message ?? string.Empty);
+            string safeDataJson = string.IsNullOrWhiteSpace(dataJson) ? "{}" : dataJson;
+            long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            string line =
+                $"{{\"sessionId\":\"{SessionDebugSessionId}\",\"runId\":\"{safeRunId}\",\"hypothesisId\":\"{safeHypothesisId}\",\"location\":\"{safeLocation}\",\"message\":\"{safeMessage}\",\"data\":{safeDataJson},\"timestamp\":{ts}}}";
+            File.AppendAllText(SessionDebugLogPath, line + Environment.NewLine);
+        }
+        catch
+        {
+            // Never interrupt generation flow due to debug logging failures.
+        }
+    }
+
+    private static string EscapeJson(string value)
+    {
+        return (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"");
     }
 }
