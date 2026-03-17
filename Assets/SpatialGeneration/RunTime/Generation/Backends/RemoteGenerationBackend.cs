@@ -80,42 +80,20 @@ public class RemoteGenerationBackend : IGenerationBackend
             string runOutputPrefix = $"{requestId}_{SanitizeFileToken(occupyProxyId)}";
             List<string> runSavedOutputs = await DownloadOutputsAsync(promptId, requestId, outputDir, runOutputPrefix);
             string runMeshSourcePath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_mesh_source");
-            string runRmbgSourcePath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_rmbg_source");
-            string runRmbgMaskPath = FindFirstOutputContaining(runSavedOutputs, "spatialgen_rmbg_mask");
-            string runNormalizedTripoInputPath = NormalizeImageForTripoSr(runRmbgSourcePath, runRmbgMaskPath, outputDir, runOutputPrefix);
             BuildMaskGuidedMeshSourceImage(runMeshSourcePath, perProxyMaskPath, outputDir, runOutputPrefix);
-            var normalizedTripoOutputs = new List<string>();
-            if (!string.IsNullOrWhiteSpace(runNormalizedTripoInputPath))
-            {
-                normalizedTripoOutputs = await RunNormalizedTripoSrPassAsync(runNormalizedTripoInputPath, requestId, outputDir, $"{runOutputPrefix}_normalized");
-            }
-
-            for (int i = 0; i < runSavedOutputs.Count; i++)
-            {
-                string outputPath = runSavedOutputs[i];
-                if (IsMeshFile(outputPath))
-                    continue;
-                savedOutputs.Add(outputPath);
-            }
-
-            if (!string.IsNullOrWhiteSpace(runNormalizedTripoInputPath) && File.Exists(runNormalizedTripoInputPath))
-                savedOutputs.Add(runNormalizedTripoInputPath);
-
-            savedOutputs.AddRange(normalizedTripoOutputs);
+            savedOutputs.AddRange(runSavedOutputs);
         }
 
         RefreshAssetDatabaseIfNeeded();
 
         var result = new GenerationResult();
         result.outputFiles.AddRange(savedOutputs);
-        result.primaryOutputFile = ChoosePrimaryOutput(savedOutputs);
 
         // If ComfyUI finished but produced no downloadable assets, fall back to proxy primitives.
         if (savedOutputs.Count == 0)
         {
             GenerationResult fallback = ConvertConstraintsToResult(request.LegacyConstraints);
             fallback.outputFiles.AddRange(savedOutputs);
-            fallback.primaryOutputFile = string.Empty;
             return fallback;
         }
 
@@ -324,32 +302,6 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         string sanitized = builder.ToString().Trim('_');
         return string.IsNullOrWhiteSpace(sanitized) ? string.Empty : sanitized;
-    }
-
-    private async Task<string> UploadImageIfPresentAsync(string localPath, string uploadRoute)
-    {
-        if (string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath))
-            return string.Empty;
-
-        using var form = new MultipartFormDataContent();
-        byte[] fileBytes = File.ReadAllBytes(localPath);
-        var fileContent = new ByteArrayContent(fileBytes);
-        form.Add(fileContent, "image", Path.GetFileName(localPath));
-        form.Add(new StringContent("input"), "type");
-        form.Add(new StringContent("true"), "overwrite");
-
-        using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
-        string uploadUrl = $"{GetComfyBaseUrl().TrimEnd('/')}/{uploadRoute.TrimStart('/')}";
-        using HttpResponseMessage response = await Http.PostAsync(uploadUrl, form, cts.Token);
-        string text = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
-            throw new Exception($"ComfyUI {uploadRoute} failed: {(int)response.StatusCode} {text}");
-
-        // The upload API returns a JSON object with "name" on success.
-        string uploadedName = ExtractJsonString(text, "name");
-        if (string.IsNullOrWhiteSpace(uploadedName))
-            return Path.GetFileName(localPath);
-        return uploadedName;
     }
 
     private async Task EnsureComfyRunningAsync()
@@ -929,37 +881,6 @@ public class RemoteGenerationBackend : IGenerationBackend
         return result;
     }
 
-    private static string ChoosePrimaryOutput(List<string> outputPaths)
-    {
-        if (outputPaths == null || outputPaths.Count == 0)
-            return string.Empty;
-
-        for (int i = 0; i < outputPaths.Count; i++)
-        {
-            string path = outputPaths[i];
-            if (string.IsNullOrWhiteSpace(path))
-                continue;
-            string ext = Path.GetExtension(path);
-            if (ext.Equals(".glb", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".gltf", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".obj", StringComparison.OrdinalIgnoreCase))
-            {
-                return path;
-            }
-        }
-
-        for (int i = 0; i < outputPaths.Count; i++)
-        {
-            string path = outputPaths[i];
-            if (string.IsNullOrWhiteSpace(path))
-                continue;
-            if (Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase))
-                return path;
-        }
-
-        return outputPaths[0] ?? string.Empty;
-    }
-
     private async Task<List<string>> DownloadOutputsAsync(string promptId, string requestId, string outputDir, string outputPrefix = null)
     {
         Directory.CreateDirectory(outputDir);
@@ -1124,6 +1045,7 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         return string.Empty;
     }
+
     private static List<ImageRef> ExtractOutputImageRefs(string historyJson)
     {
         var refs = new List<ImageRef>();
@@ -1182,145 +1104,6 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         return refs;
     }
-
-
-    private async Task<List<string>> RunNormalizedTripoSrPassAsync(string normalizedImagePath, string requestId, string outputDir, string outputPrefix)
-    {
-        var saved = new List<string>();
-        if (string.IsNullOrWhiteSpace(normalizedImagePath) || !File.Exists(normalizedImagePath))
-            return saved;
-
-        string uploadedImageName = await UploadImageIfPresentAsync(normalizedImagePath, "/upload/image");
-        if (string.IsNullOrWhiteSpace(uploadedImageName))
-            return saved;
-
-        string workflowJson = BuildTripoSrOnlyWorkflow(uploadedImageName);
-        string promptId = await SubmitPromptAsync(workflowJson);
-        await WaitForPromptCompletionAsync(promptId);
-        List<string> outputs = await DownloadOutputsAsync(promptId, requestId, outputDir, outputPrefix);
-        saved.AddRange(outputs);
-        return saved;
-    }
-
-    private string BuildTripoSrOnlyWorkflow(string uploadedImageName)
-    {
-        string tripoSrModelName = string.IsNullOrWhiteSpace(_settings.comfyTripoSrModelName)
-            ? "model.safetensors"
-            : _settings.comfyTripoSrModelName.Trim();
-        int geometryResolution = Mathf.Clamp(_settings.comfyGeometryResolution, 128, 12288);
-        float tripoSrThreshold = Mathf.Max(0f, _settings.comfyTripoSrThreshold);
-
-        return "{" +
-               "\"1\":{\"inputs\":{\"image\":\"" + EscapeJson(uploadedImageName) + "\"},\"class_type\":\"LoadImage\",\"_meta\":{\"title\":\"Load Normalized TripoSR Input\"}}," +
-               "\"2\":{\"inputs\":{\"filename_prefix\":\"spatialgen_triposr_normalized_input\",\"images\":[\"1\",0]},\"class_type\":\"SaveImage\",\"_meta\":{\"title\":\"Save Normalized TripoSR Input\"}}," +
-               "\"3\":{\"inputs\":{\"model\":\"" + EscapeJson(tripoSrModelName) + "\",\"chunk_size\":8192},\"class_type\":\"TripoSRModelLoader\",\"_meta\":{\"title\":\"TripoSR Model Loader\"}}," +
-               "\"4\":{\"inputs\":{\"geometry_resolution\":" + geometryResolution.ToString(CultureInfo.InvariantCulture) + ",\"threshold\":" + tripoSrThreshold.ToString("0.###", CultureInfo.InvariantCulture) + ",\"model\":[\"3\",0],\"reference_image\":[\"1\",0]},\"class_type\":\"TripoSRSampler\",\"_meta\":{\"title\":\"TripoSR Sampler\"}}," +
-               "\"5\":{\"inputs\":{\"format\":\"glb\",\"mesh\":[\"4\",0]},\"class_type\":\"TripoSRViewer\",\"_meta\":{\"title\":\"TripoSR Viewer\"}}" +
-               "}";
-    }
-
-    private static string NormalizeImageForTripoSr(string sourceImagePath, string maskImagePath, string outputDir, string outputPrefix, int outputSize = 512, float targetFill = 0.82f)
-    {
-        if (string.IsNullOrWhiteSpace(sourceImagePath) || string.IsNullOrWhiteSpace(maskImagePath) || !File.Exists(sourceImagePath) || !File.Exists(maskImagePath))
-            return string.Empty;
-
-        Texture2D source = null;
-        Texture2D mask = null;
-        Texture2D output = null;
-        try
-        {
-            source = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            mask = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            if (!source.LoadImage(File.ReadAllBytes(sourceImagePath)) || !mask.LoadImage(File.ReadAllBytes(maskImagePath)))
-                return string.Empty;
-            if (source.width <= 0 || source.height <= 0 || source.width != mask.width || source.height != mask.height)
-                return string.Empty;
-
-            int width = source.width;
-            int height = source.height;
-            Color[] maskPixels = mask.GetPixels();
-            RectInt maskRect = ComputeMaskBounds(maskPixels, width, height);
-            if (maskRect.width <= 0 || maskRect.height <= 0)
-                return string.Empty;
-
-            RectInt expandedRect = ExpandRect(maskRect, width, height, 1.2f, 12);
-            int cropSize = Mathf.Max(expandedRect.width, expandedRect.height);
-            cropSize = Mathf.Max(1, cropSize);
-            int destSize = Mathf.Clamp(outputSize, 64, 2048);
-            float fill = Mathf.Clamp(targetFill, 0.5f, 0.95f);
-            float scale = (fill * destSize) / cropSize;
-            int destW = Mathf.Clamp(Mathf.RoundToInt(expandedRect.width * scale), 1, destSize);
-            int destH = Mathf.Clamp(Mathf.RoundToInt(expandedRect.height * scale), 1, destSize);
-            int offsetX = (destSize - destW) / 2;
-            int offsetY = (destSize - destH) / 2;
-
-            output = new Texture2D(destSize, destSize, TextureFormat.RGBA32, false);
-            Color[] outPixels = new Color[destSize * destSize];
-            for (int i = 0; i < outPixels.Length; i++)
-                outPixels[i] = Color.white;
-
-            for (int y = 0; y < destH; y++)
-            {
-                float v = (y + 0.5f) / destH;
-                float srcY = expandedRect.y + (v * expandedRect.height) - 0.5f;
-                for (int x = 0; x < destW; x++)
-                {
-                    float u = (x + 0.5f) / destW;
-                    float srcX = expandedRect.x + (u * expandedRect.width) - 0.5f;
-                    Color srcColor = SampleBilinearClamped(source, srcX, srcY);
-                    Color maskColor = SampleBilinearClamped(mask, srcX, srcY);
-                    Color finalColor = Color.Lerp(Color.white, new Color(srcColor.r, srcColor.g, srcColor.b, 1f), Mathf.Clamp01(maskColor.maxColorComponent));
-                    outPixels[(offsetY + y) * destSize + (offsetX + x)] = finalColor;
-                }
-            }
-
-            output.SetPixels(outPixels);
-            output.Apply(false);
-            Directory.CreateDirectory(outputDir);
-            string normalizedPath = Path.Combine(outputDir, $"{outputPrefix}_triposr_normalized_input_local.png");
-            File.WriteAllBytes(normalizedPath, output.EncodeToPNG());
-            return normalizedPath;
-        }
-        catch
-        {
-            return string.Empty;
-        }
-        finally
-        {
-            if (source != null)
-                UnityEngine.Object.DestroyImmediate(source);
-            if (mask != null)
-                UnityEngine.Object.DestroyImmediate(mask);
-            if (output != null)
-                UnityEngine.Object.DestroyImmediate(output);
-        }
-    }
-
-    private static Color SampleBilinearClamped(Texture2D texture, float x, float y)
-    {
-        int width = texture.width;
-        int height = texture.height;
-        float clampedX = Mathf.Clamp(x, 0f, Mathf.Max(0f, width - 1f));
-        float clampedY = Mathf.Clamp(y, 0f, Mathf.Max(0f, height - 1f));
-
-        int x0 = Mathf.FloorToInt(clampedX);
-        int y0 = Mathf.FloorToInt(clampedY);
-        int x1 = Mathf.Min(x0 + 1, width - 1);
-        int y1 = Mathf.Min(y0 + 1, height - 1);
-
-        float tx = clampedX - x0;
-        float ty = clampedY - y0;
-
-        Color c00 = texture.GetPixel(x0, y0);
-        Color c10 = texture.GetPixel(x1, y0);
-        Color c01 = texture.GetPixel(x0, y1);
-        Color c11 = texture.GetPixel(x1, y1);
-
-        Color cx0 = Color.Lerp(c00, c10, tx);
-        Color cx1 = Color.Lerp(c01, c11, tx);
-        return Color.Lerp(cx0, cx1, ty);
-    }
-
     private static bool IsMeshFile(string path)
     {
         string ext = Path.GetExtension(path ?? string.Empty);
