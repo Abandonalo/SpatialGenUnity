@@ -60,10 +60,10 @@ public static class GenerationControllerEditor
             EditorUtility.DisplayProgressBar("Spatial Generation", $"Generating via {backend.Name}…", 0.3f);
 
             string resolvedPrompt = string.IsNullOrWhiteSpace(promptOverride)
-                ? settings.prompt
+                ? string.Empty
                 : promptOverride.Trim();
             string resolvedNegativePrompt = string.IsNullOrWhiteSpace(negativePromptOverride)
-                ? settings.negativePrompt
+                ? string.Empty
                 : negativePromptOverride.Trim();
 
             GenerationResult result = await GenerationPipeline.GenerateAsync(
@@ -383,9 +383,9 @@ public static class GenerationControllerEditor
         if (proxy == null)
             return;
 
-        generatedObject.transform.position = proxy.position;
         generatedObject.transform.rotation = proxy.rotation;
         FitObjectToTargetSize(generatedObject, proxy.size);
+        AlignObjectBoundsCenterToTarget(generatedObject, proxy.position);
     }
 
     private static void PlacePreviewQuad(GameObject quad, Camera captureCamera, SceneIntent intent)
@@ -471,6 +471,26 @@ public static class GenerationControllerEditor
         float uniformScale = Mathf.Max(axisRatios.x, Mathf.Max(axisRatios.y, axisRatios.z));
         Vector3 multiplier = new(uniformScale, uniformScale, uniformScale);
         generatedObject.transform.localScale = Vector3.Scale(generatedObject.transform.localScale, multiplier);
+    }
+
+    private static void AlignObjectBoundsCenterToTarget(GameObject generatedObject, Vector3 targetCenter)
+    {
+        if (generatedObject == null)
+            return;
+
+        Renderer[] renderers = generatedObject.GetComponentsInChildren<Renderer>();
+        if (renderers == null || renderers.Length == 0)
+        {
+            generatedObject.transform.position = targetCenter;
+            return;
+        }
+
+        Bounds combined = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+            combined.Encapsulate(renderers[i].bounds);
+
+        Vector3 offset = targetCenter - combined.center;
+        generatedObject.transform.position += offset;
     }
 
     private static bool MeshHasVertexColors(GameObject root)

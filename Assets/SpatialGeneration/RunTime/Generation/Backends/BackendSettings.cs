@@ -5,47 +5,44 @@ public enum BackendKind { Mock, LocalFile, RemoteHttp }
 [CreateAssetMenu(menuName = "Spatial Generation/Backend Settings", fileName = "SpatialGenerationBackendSettings")]
 public class BackendSettings : ScriptableObject
 {
-    public BackendKind backendKind = BackendKind.LocalFile;
+    // Keep runtime defaults minimal; editable values live in Resources/SpatialGenerationBackendSettings.asset.
+    public BackendKind backendKind;
 
     [Header("Local File Handoff")]
-    public string handoffFolder = "SpatialGenHandoff";
-    public string requestFileName = "request.json";
-    public string responseFileName = "response.json";
-    public float pollIntervalSeconds = 0.25f;
-    public float maxWaitSeconds = 120f;
+    public string handoffFolder;
+    public string requestFileName;
+    public string responseFileName;
+    public float pollIntervalSeconds;
+    public float maxWaitSeconds;
 
     [Header("Remote HTTP (Legacy/Fallback)")]
-    public string remoteUrl = "http://127.0.0.1:8000/generate";
-    public int remoteTimeoutSeconds = 60;
+    public string remoteUrl;
+    public int remoteTimeoutSeconds;
 
     [Header("ComfyUI Integration")]
-    public bool comfyAutoStart = false;
-    public string comfyBaseUrl = "http://127.0.0.1:8000";
-    public string comfyWsUrl = "ws://127.0.0.1:8000/ws";
-    public string comfyClientId = "spatialgen-unity-client";
-    public string comfyWorkflowTemplatePath = "SpatialGenHandoff/comfy_workflow_api.json";
-    public string comfyInputFolder = "SpatialGenHandoff/comfy_inputs";
-    public string comfyCheckpointName = "motiondesignv13dartC4D_v10.safetensors";
-    public string comfyDepthControlNetName = "controlnet-depth/diffusion_pytorch_model.safetensors";
-    public string comfyCannyControlNetName = "controlnet-canny/diffusion_pytorch_model.safetensors";
-    public string comfyTripoSrModelName = "model.safetensors";
-    public int comfyGeometryResolution = 256;
-    public float comfyTripoSrThreshold = 25f;
-    public string comfyOutputAssetFolder = "Assets/SpatialGeneration/GeneratedAssets";
-    public string comfyLaunchCommand = "/usr/bin/python3";
-    public string comfyLaunchArguments = "main.py --listen 127.0.0.1 --port 8000";
-    public string comfyWorkingDirectory = "";
-    public int comfyBootTimeoutSeconds = 25;
-    public int comfyExecutionTimeoutSeconds = 180;
+    public bool comfyAutoStart;
+    public string comfyBaseUrl;
+    public string comfyWsUrl;
+    public string comfyClientId;
+    public string comfyWorkflowTemplatePath;
+    public string comfyInputFolder;
+    public string comfyCheckpointName;
+    public string comfyTripoSrModelName;
+    public int comfyGeometryResolution;
+    public float comfyTripoSrThreshold;
+    public string comfyOutputAssetFolder;
+    public string comfyLaunchCommand;
+    public string comfyLaunchArguments;
+    public string comfyWorkingDirectory;
+    public int comfyBootTimeoutSeconds;
+    public int comfyExecutionTimeoutSeconds;
 
     [Header("Generation Defaults")]
-    public string prompt = "high quality 3d scene";
-    public string negativePrompt = "low quality, blurry, artifacts";
-    public int seed = -1;
-    public int steps = 30;
-    public float cfg = 7.0f;
-    public string sampler = "euler";
-    public int captureWidth = 512;
-    public int captureHeight = 512;
-    public bool blockOnValidationErrors = true;
+    public int seed;
+    public int steps;
+    public float cfg;
+    public string sampler;
+    public int captureWidth;
+    public int captureHeight;
+    public bool blockOnValidationErrors;
 }

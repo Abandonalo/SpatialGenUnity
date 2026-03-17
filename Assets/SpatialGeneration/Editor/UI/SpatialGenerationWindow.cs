@@ -68,8 +68,8 @@ public class SpatialGenerationWindow : EditorWindow
             string snapshotPath = WriteSceneIntentSnapshot(snapshotJson);
 
             var intent = SceneIntentBuilder.Build();
-            string combinedPrompt = ComposePrompt(BackendRegistry.Settings?.prompt, _globalStylePrompt);
-            string combinedNegativePrompt = ComposePrompt(BackendRegistry.Settings?.negativePrompt, _globalNegativeStylePrompt);
+            string combinedPrompt = ComposePrompt(string.Empty, _globalStylePrompt);
+            string combinedNegativePrompt = ComposePrompt(string.Empty, _globalNegativeStylePrompt);
 
             // If you're using the Undoable controller:
             GenerationControllerEditor.RegenerateFromIntent(intent, combinedPrompt, combinedNegativePrompt);

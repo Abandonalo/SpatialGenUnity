@@ -14,8 +14,11 @@ public static class BackendRegistry
                 _settings = Resources.Load<BackendSettings>("SpatialGenerationBackendSettings");
                 if (_settings == null)
                 {
+                    Debug.LogError(
+                        "Spatial Generation: Missing Resources/SpatialGenerationBackendSettings.asset. " +
+                        "Using a temporary Mock backend until the asset is restored.");
                     _settings = ScriptableObject.CreateInstance<BackendSettings>();
-                    _settings.backendKind = BackendKind.LocalFile;
+                    _settings.backendKind = BackendKind.Mock;
                 }
             }
             return _settings;

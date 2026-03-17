@@ -26,9 +26,20 @@ MonoBehaviour:
   comfyClientId: spatialgen-unity-client
   comfyWorkflowTemplatePath: SpatialGenHandoff/comfy_workflow_api.json
   comfyInputFolder: SpatialGenHandoff/comfy_inputs
+  comfyCheckpointName: v1-5-pruned-emaonly.safetensors
+  comfyTripoSrModelName: TripoSRmodel.ckpt
+  comfyGeometryResolution: 512
+  comfyTripoSrThreshold: 25
   comfyOutputAssetFolder: Assets/SpatialGeneration/GeneratedAssets
   comfyLaunchCommand: /Applications/ComfyUI.app/Contents/MacOS/ComfyUI
   comfyLaunchArguments: 
   comfyWorkingDirectory: /Applications/ComfyUI.app/Contents/MacOS
   comfyBootTimeoutSeconds: 25
   comfyExecutionTimeoutSeconds: 180
+  seed: -1
+  steps: 30
+  cfg: 7
+  sampler: euler
+  captureWidth: 512
+  captureHeight: 512
+  blockOnValidationErrors: 1

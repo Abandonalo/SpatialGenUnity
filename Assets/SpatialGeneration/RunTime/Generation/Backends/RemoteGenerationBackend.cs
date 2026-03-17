@@ -464,13 +464,13 @@ public class RemoteGenerationBackend : IGenerationBackend
         int steps = Mathf.Max(1, request?.Payload?.Generation?.Steps ?? _settings.steps);
         float cfg = Mathf.Max(0f, request?.Payload?.Generation?.Cfg ?? _settings.cfg);
         string prompt = string.IsNullOrWhiteSpace(promptOverride)
-            ? request?.Prompt ?? _settings.prompt ?? string.Empty
+            ? request?.Prompt ?? string.Empty
             : promptOverride;
-        string negativePrompt = request?.NegativePrompt ?? _settings.negativePrompt ?? string.Empty;
+        string negativePrompt = request?.NegativePrompt ?? string.Empty;
         string meshPrompt = string.IsNullOrWhiteSpace(meshPromptOverride) ? prompt : meshPromptOverride;
         string meshNegativePrompt = string.IsNullOrWhiteSpace(meshNegativePromptOverride) ? negativePrompt : meshNegativePromptOverride;
         string checkpointName = string.IsNullOrWhiteSpace(_settings.comfyCheckpointName)
-            ? "v1-5-pruned.safetensors"
+            ? "v1-5-pruned-emaonly.safetensors"
             : _settings.comfyCheckpointName.Trim();
         string tripoSrModelName = string.IsNullOrWhiteSpace(_settings.comfyTripoSrModelName)
             ? "TripoSRmodel.ckpt"
@@ -494,16 +494,16 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private static string ResolveRunPrompt(NewBackendRequest request, string occupyProxyId)
     {
-        string basePrompt = StripUnwantedPromptPhrases(request?.Prompt ?? string.Empty);
-        string assetPrompt = StripUnwantedPromptPhrases(ResolvePerProxyAssetPrompt(request, occupyProxyId));
+        string basePrompt = NormalizePrompt(request?.Prompt);
+        string assetPrompt = NormalizePrompt(ResolvePerProxyAssetPrompt(request, occupyProxyId));
         return JoinPromptParts(new[] { assetPrompt, basePrompt });
     }
 
     private static string BuildMeshSourcePrompt(string runPrompt, string occupyProxyId, NewBackendRequest request)
     {
-        string globalPrompt = NormalizePrompt(StripUnwantedPromptPhrases(runPrompt));
-        string assetPrompt = NormalizePrompt(StripUnwantedPromptPhrases(ResolvePerProxyAssetPrompt(request, occupyProxyId)));
-        string stylePrompt = NormalizePrompt(StripUnwantedPromptPhrases(BuildMeshStylePrompt(runPrompt, assetPrompt)));
+        string globalPrompt = NormalizePrompt(runPrompt);
+        string assetPrompt = NormalizePrompt(ResolvePerProxyAssetPrompt(request, occupyProxyId));
+        string stylePrompt = NormalizePrompt(BuildMeshStylePrompt(runPrompt, assetPrompt));
 
         var parts = new List<string>();
 
@@ -526,7 +526,7 @@ public class RemoteGenerationBackend : IGenerationBackend
             "plain background, flat white background, solid white background"
         );
 
-        return StripUnwantedPromptPhrases(JoinPromptParts(parts));
+        return JoinPromptParts(parts);
     }
 
     private static string BuildMeshSourceNegativePrompt(NewBackendRequest request)
@@ -565,17 +565,6 @@ public class RemoteGenerationBackend : IGenerationBackend
             return string.Empty;
 
         return Regex.Replace(text, "\\s+", " ").Trim().Trim(',');
-    }
-
-    private static string StripUnwantedPromptPhrases(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return string.Empty;
-
-        string cleaned = Regex.Replace(text, "\\bhigh\\s+quality\\s+3d\\s+scene\\b", " ", RegexOptions.IgnoreCase);
-        cleaned = Regex.Replace(cleaned, "\\s+", " ");
-        cleaned = Regex.Replace(cleaned, "\\s*,\\s*", ", ");
-        return cleaned.Trim().Trim(',');
     }
 
     private static string BuildMeshStylePrompt(string runPrompt, string assetPrompt)
