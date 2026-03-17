@@ -542,13 +542,9 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private static string ResolveRunPrompt(NewBackendRequest request, string occupyProxyId)
     {
-        string basePrompt = request?.Prompt ?? string.Empty;
-        string assetPrompt = ResolvePerProxyAssetPrompt(request, occupyProxyId);
-        if (string.IsNullOrWhiteSpace(assetPrompt))
-            return StripUnwantedPromptPhrases(basePrompt);
-        if (string.IsNullOrWhiteSpace(basePrompt))
-            return StripUnwantedPromptPhrases(assetPrompt);
-        return StripUnwantedPromptPhrases($"{assetPrompt}, {basePrompt}");
+        string basePrompt = StripUnwantedPromptPhrases(request?.Prompt ?? string.Empty);
+        string assetPrompt = StripUnwantedPromptPhrases(ResolvePerProxyAssetPrompt(request, occupyProxyId));
+        return JoinPromptParts(new[] { assetPrompt, basePrompt });
     }
 
     private static string BuildMeshSourcePrompt(string runPrompt, string occupyProxyId, NewBackendRequest request)
@@ -575,9 +571,7 @@ public class RemoteGenerationBackend : IGenerationBackend
         parts.Add(
             "single main object, single centered asset, close-up, full object in frame, " +
             "clean silhouette, isolated object render, studio cutout, product render, " +
-            "plain background, no floor, no ground, no pedestal, no support, no platform, " +
-            "no base, no slab, no table, no shelf, no environment, no scenery, no extra objects, " +
-            "no contact shadow"
+            "plain background, flat white background, solid white background"
         );
 
         return StripUnwantedPromptPhrases(JoinPromptParts(parts));
@@ -593,9 +587,9 @@ public class RemoteGenerationBackend : IGenerationBackend
             parts.Add(negativePrompt);
 
         parts.Add(
-            "background, ground, floor, ground plane, pedestal, stand, platform, base, slab, " +
-            "support, support plane, table, shelf, road, fence, trees, sky, shadow, contact shadow, " +
-            "environment, scenery, landscape, room, multiple objects, clutter"
+            "floor, ground plane, pedestal, stand, platform, base, slab, " +
+            "support, support plane, table, shelf, road, trees, sky, shadow, contact shadow, " +
+            "environment, landscape, multiple objects, clutter"
         );
 
         return JoinPromptParts(parts);
