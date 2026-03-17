@@ -46,70 +46,9 @@ public class RemoteGenerationBackend : IGenerationBackend
         Directory.CreateDirectory(runInputDir);
         File.WriteAllText(Path.Combine(runInputDir, "request.json"), JsonUtility.ToJson(request, true));
 
-        string depthStagedPath = WriteBase64PngIfPresent(request?.Payload?.DepthBase64, runInputDir, "depth");
-        string cannyStagedPath = WriteBase64PngIfPresent(request?.Payload?.EdgesBase64, runInputDir, "canny");
-        string maskOccupyStagedPath = WriteBase64PngIfPresent(request?.Payload?.MaskOccupyBase64, runInputDir, "mask_occupy");
-        string maskAvoidStagedPath = WriteBase64PngIfPresent(request?.Payload?.MaskAvoidBase64, runInputDir, "mask_avoid");
-        string maskFocusStagedPath = WriteBase64PngIfPresent(request?.Payload?.MaskFocusBase64, runInputDir, "mask_focus");
-        List<string> maskStagedPaths = new List<string>();
-        if (!string.IsNullOrWhiteSpace(maskOccupyStagedPath)) maskStagedPaths.Add(maskOccupyStagedPath);
-        if (!string.IsNullOrWhiteSpace(maskAvoidStagedPath)) maskStagedPaths.Add(maskAvoidStagedPath);
-        if (!string.IsNullOrWhiteSpace(maskFocusStagedPath)) maskStagedPaths.Add(maskFocusStagedPath);
-
         await EnsureComfyRunningAsync();
 
-        string depthName = await UploadImageIfPresentAsync(depthStagedPath, "/upload/image");
-        string cannyName = await UploadImageIfPresentAsync(cannyStagedPath, "/upload/image");
-        List<string> maskNames = await UploadMaskImagesAsync(maskStagedPaths);
-        string maskOccupyName = await UploadMaskIfPresentAsync(maskOccupyStagedPath);
-        string maskAvoidName = await UploadMaskIfPresentAsync(maskAvoidStagedPath);
-        string maskFocusName = await UploadMaskIfPresentAsync(maskFocusStagedPath);
-
-        // Backward compatibility: if named mask paths are not set, fall back to generic mask array order.
-        if (string.IsNullOrWhiteSpace(maskOccupyName) && maskNames.Count > 0) maskOccupyName = maskNames[0];
-        if (string.IsNullOrWhiteSpace(maskAvoidName) && maskNames.Count > 1) maskAvoidName = maskNames[1];
-        if (string.IsNullOrWhiteSpace(maskFocusName) && maskNames.Count > 2) maskFocusName = maskNames[2];
-
-        // Temporary adapter fallback: legacy generation path may not provide depth/canny images yet.
-        if (string.IsNullOrWhiteSpace(depthName))
-            depthName = FirstNonEmpty(maskFocusName, maskOccupyName, maskAvoidName);
-
-        if (string.IsNullOrWhiteSpace(cannyName))
-            cannyName = FirstNonEmpty(maskAvoidName, maskOccupyName, maskFocusName, depthName);
-
-        // If depth/canny are still missing, synthesize neutral fallback images so template placeholders are satisfied.
-        if (string.IsNullOrWhiteSpace(depthName))
-        {
-            string fallbackDepthPath = CreateFallbackImage(runInputDir, "depth_fallback.png", 512, 512, new Color(0.5f, 0.5f, 0.5f, 1f));
-            depthName = await UploadImageIfPresentAsync(fallbackDepthPath, "/upload/image");
-        }
-
-        if (string.IsNullOrWhiteSpace(cannyName))
-        {
-            string fallbackCannyPath = CreateFallbackImage(runInputDir, "canny_fallback.png", 512, 512, Color.black);
-            cannyName = await UploadImageIfPresentAsync(fallbackCannyPath, "/upload/image");
-        }
-
-        // Ensure named masks exist when workflow expects them.
-        if (string.IsNullOrWhiteSpace(maskOccupyName))
-        {
-            string fallbackMaskOccupyPath = CreateFallbackImage(runInputDir, "mask_occupy_fallback.png", 512, 512, Color.white);
-            maskOccupyName = await UploadMaskIfPresentAsync(fallbackMaskOccupyPath);
-        }
-
-        if (string.IsNullOrWhiteSpace(maskAvoidName))
-        {
-            string fallbackMaskAvoidPath = CreateFallbackImage(runInputDir, "mask_avoid_fallback.png", 512, 512, Color.black);
-            maskAvoidName = await UploadMaskIfPresentAsync(fallbackMaskAvoidPath);
-        }
-
-        if (string.IsNullOrWhiteSpace(maskFocusName))
-        {
-            string fallbackMaskFocusPath = CreateFallbackImage(runInputDir, "mask_focus_fallback.png", 512, 512, new Color(0.5f, 0.5f, 0.5f, 1f));
-            maskFocusName = await UploadMaskIfPresentAsync(fallbackMaskFocusPath);
-        }
-
-        if (!CanRunWorkflowWithProvidedInputs(projectRoot, depthName, cannyName, maskNames, maskOccupyName, maskAvoidName, maskFocusName, out _))
+        if (!CanRunWorkflowWithProvidedInputs(projectRoot, out _))
             return ConvertConstraintsToResult(request.LegacyConstraints);
 
         List<Constraint> occupyConstraints = ExtractConstraintsByType(request?.LegacyConstraints, "occupy");
@@ -126,21 +65,15 @@ public class RemoteGenerationBackend : IGenerationBackend
             string runPrompt = ResolveRunPrompt(request, occupyProxyId);
             string meshSourcePrompt = BuildMeshSourcePrompt(runPrompt, occupyProxyId, request);
             string meshSourceNegativePrompt = BuildMeshSourceNegativePrompt(request);
-            string runMaskOccupyName = maskOccupyName;
             string perProxyMaskPath = string.Empty;
 
             if (occupy != null)
             {
                 perProxyMaskPath = BuildPerProxyOccupyMaskPath(occupy, request, runInputDir, runIndex);
-                if (!string.IsNullOrWhiteSpace(perProxyMaskPath))
-                {
-                    string uploadedPerProxyMaskName = await UploadMaskIfPresentAsync(perProxyMaskPath);
-                    if (!string.IsNullOrWhiteSpace(uploadedPerProxyMaskName))
-                        runMaskOccupyName = uploadedPerProxyMaskName;
-                }
             }
 
-            string workflowJson = LoadAndBindWorkflow(projectRoot, depthName, cannyName, maskNames, runMaskOccupyName, maskAvoidName, maskFocusName, request, runPrompt, meshSourcePrompt, meshSourceNegativePrompt);
+            string workflowJson = LoadAndBindWorkflow(projectRoot, request, runPrompt, meshSourcePrompt, meshSourceNegativePrompt);
+            WriteRunDebugArtifacts(runInputDir, runIndex, occupyProxyId, runPrompt, meshSourcePrompt, meshSourceNegativePrompt, workflowJson);
             string promptId = await SubmitPromptAsync(workflowJson);
             await WaitForPromptCompletionAsync(promptId);
 
@@ -189,58 +122,52 @@ public class RemoteGenerationBackend : IGenerationBackend
         return result;
     }
 
-    private string StageInputFile(string sourcePath, string runInputDir, string label)
+    [Serializable]
+    private sealed class EffectivePromptDebugArtifact
     {
-        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
-            return string.Empty;
-
-        string ext = Path.GetExtension(sourcePath);
-        string fileName = $"{label}{ext}";
-        string destPath = Path.Combine(runInputDir, fileName);
-        File.Copy(sourcePath, destPath, overwrite: true);
-        return destPath;
+        public int run_index;
+        public string proxy_id;
+        public string run_prompt;
+        public string mesh_source_prompt;
+        public string mesh_source_negative_prompt;
     }
 
-    private string WriteBase64PngIfPresent(string base64, string runInputDir, string label)
+    private static void WriteRunDebugArtifacts(
+        string runInputDir,
+        int runIndex,
+        string occupyProxyId,
+        string runPrompt,
+        string meshSourcePrompt,
+        string meshSourceNegativePrompt,
+        string workflowJson)
     {
-        if (string.IsNullOrWhiteSpace(base64))
-            return string.Empty;
+        if (string.IsNullOrWhiteSpace(runInputDir))
+            return;
 
         try
         {
-            byte[] bytes = Convert.FromBase64String(base64);
-            if (bytes == null || bytes.Length == 0)
-                return string.Empty;
+            string token = SanitizeFileToken(occupyProxyId);
+            if (string.IsNullOrWhiteSpace(token))
+                token = $"run_{runIndex}";
 
-            string destPath = Path.Combine(runInputDir, $"{label}.png");
-            File.WriteAllBytes(destPath, bytes);
-            return destPath;
+            var artifact = new EffectivePromptDebugArtifact
+            {
+                run_index = runIndex,
+                proxy_id = occupyProxyId ?? string.Empty,
+                run_prompt = runPrompt ?? string.Empty,
+                mesh_source_prompt = meshSourcePrompt ?? string.Empty,
+                mesh_source_negative_prompt = meshSourceNegativePrompt ?? string.Empty
+            };
+
+            string effectivePromptPath = Path.Combine(runInputDir, $"effective_prompt_{token}.json");
+            string boundWorkflowPath = Path.Combine(runInputDir, $"bound_workflow_{token}.json");
+            File.WriteAllText(effectivePromptPath, JsonUtility.ToJson(artifact, true));
+            File.WriteAllText(boundWorkflowPath, workflowJson ?? string.Empty);
         }
         catch
         {
-            return string.Empty;
+            // Best-effort debug dump; generation must continue.
         }
-    }
-
-    private List<string> StageMaskFiles(string[] maskPaths, string runInputDir)
-    {
-        var stagedPaths = new List<string>();
-        if (maskPaths == null) return stagedPaths;
-
-        for (int i = 0; i < maskPaths.Length; i++)
-        {
-            string sourcePath = maskPaths[i];
-            if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
-                continue;
-
-            string ext = Path.GetExtension(sourcePath);
-            string fileName = $"mask_{i}{ext}";
-            string destPath = Path.Combine(runInputDir, fileName);
-            File.Copy(sourcePath, destPath, overwrite: true);
-            stagedPaths.Add(destPath);
-        }
-
-        return stagedPaths;
     }
 
     private static List<Constraint> ExtractConstraintsByType(Constraint[] constraints, string type)
@@ -425,34 +352,6 @@ public class RemoteGenerationBackend : IGenerationBackend
         return uploadedName;
     }
 
-    private async Task<List<string>> UploadMaskImagesAsync(List<string> stagedMaskPaths)
-    {
-        var names = new List<string>();
-        if (stagedMaskPaths == null)
-            return names;
-
-        for (int i = 0; i < stagedMaskPaths.Count; i++)
-        {
-            string uploadedName = await UploadMaskIfPresentAsync(stagedMaskPaths[i]);
-            if (!string.IsNullOrWhiteSpace(uploadedName))
-                names.Add(uploadedName);
-        }
-
-        return names;
-    }
-
-    private async Task<string> UploadMaskIfPresentAsync(string localPath)
-    {
-        try
-        {
-            return await UploadImageIfPresentAsync(localPath, "/upload/mask");
-        }
-        catch
-        {
-            return await UploadImageIfPresentAsync(localPath, "/upload/image");
-        }
-    }
-
     private async Task EnsureComfyRunningAsync()
     {
         if (await IsComfyHealthyAsync())
@@ -595,12 +494,6 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private string LoadAndBindWorkflow(
         string projectRoot,
-        string depthName,
-        string cannyName,
-        List<string> maskNames,
-        string maskOccupyName,
-        string maskAvoidName,
-        string maskFocusName,
         NewBackendRequest request,
         string promptOverride = null,
         string meshPromptOverride = null,
@@ -625,16 +518,10 @@ public class RemoteGenerationBackend : IGenerationBackend
         string meshPrompt = string.IsNullOrWhiteSpace(meshPromptOverride) ? prompt : meshPromptOverride;
         string meshNegativePrompt = string.IsNullOrWhiteSpace(meshNegativePromptOverride) ? negativePrompt : meshNegativePromptOverride;
         string checkpointName = string.IsNullOrWhiteSpace(_settings.comfyCheckpointName)
-            ? "motiondesignv13dartC4D_v10.safetensors"
+            ? "v1-5-pruned.safetensors"
             : _settings.comfyCheckpointName.Trim();
-        string depthControlNetName = string.IsNullOrWhiteSpace(_settings.comfyDepthControlNetName)
-            ? "controlnet-depth/diffusion_pytorch_model.safetensors"
-            : _settings.comfyDepthControlNetName.Trim();
-        string cannyControlNetName = string.IsNullOrWhiteSpace(_settings.comfyCannyControlNetName)
-            ? "controlnet-canny/diffusion_pytorch_model.safetensors"
-            : _settings.comfyCannyControlNetName.Trim();
         string tripoSrModelName = string.IsNullOrWhiteSpace(_settings.comfyTripoSrModelName)
-            ? "model.safetensors"
+            ? "TripoSRmodel.ckpt"
             : _settings.comfyTripoSrModelName.Trim();
         int geometryResolution = Mathf.Clamp(_settings.comfyGeometryResolution, 128, 12288);
         float tripoSrThreshold = Mathf.Max(0f, _settings.comfyTripoSrThreshold);
@@ -644,27 +531,11 @@ public class RemoteGenerationBackend : IGenerationBackend
         workflow = workflow.Replace("__STEPS__", steps.ToString(System.Globalization.CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__CFG__", cfg.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__CHECKPOINT__", EscapeJson(checkpointName));
-        workflow = workflow.Replace("__PROMPT__", EscapeJson(prompt));
-        workflow = workflow.Replace("__NEG_PROMPT__", EscapeJson(negativePrompt));
         workflow = workflow.Replace("__MESH_PROMPT__", EscapeJson(meshPrompt));
         workflow = workflow.Replace("__MESH_NEG_PROMPT__", EscapeJson(meshNegativePrompt));
-        workflow = workflow.Replace("__DEPTH_IMAGE__", EscapeJson(depthName));
-        workflow = workflow.Replace("__DEPTH_CONTROLNET__", EscapeJson(depthControlNetName));
-        workflow = workflow.Replace("__CANNY_CONTROLNET__", EscapeJson(cannyControlNetName));
-        workflow = workflow.Replace("__CANNY_IMAGE__", EscapeJson(cannyName));
         workflow = workflow.Replace("__TRIPOSR_MODEL__", EscapeJson(tripoSrModelName));
         workflow = workflow.Replace("__GEOMETRY_RESOLUTION__", geometryResolution.ToString(CultureInfo.InvariantCulture));
         workflow = workflow.Replace("__TRIPOSR_THRESHOLD__", tripoSrThreshold.ToString("0.###", CultureInfo.InvariantCulture));
-        workflow = workflow.Replace("__MASK_IMAGE_COUNT__", maskNames.Count.ToString());
-        workflow = workflow.Replace("__MASK_OCCUPY_IMAGE__", EscapeJson(maskOccupyName));
-        workflow = workflow.Replace("__MASK_AVOID_IMAGE__", EscapeJson(maskAvoidName));
-        workflow = workflow.Replace("__MASK_FOCUS_IMAGE__", EscapeJson(maskFocusName));
-        workflow = workflow.Replace("__MASK_OCCUPY_WEIGHT__", Mathf.Clamp01(request?.MaskOccupyWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
-        workflow = workflow.Replace("__MASK_AVOID_WEIGHT__", Mathf.Clamp01(request?.MaskAvoidWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
-        workflow = workflow.Replace("__MASK_FOCUS_WEIGHT__", Mathf.Clamp01(request?.MaskFocusWeight ?? 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
-
-        for (int i = 0; i < maskNames.Count; i++)
-            workflow = workflow.Replace($"__MASK_IMAGE_{i}__", EscapeJson(maskNames[i]));
 
         return workflow;
     }
@@ -674,17 +545,17 @@ public class RemoteGenerationBackend : IGenerationBackend
         string basePrompt = request?.Prompt ?? string.Empty;
         string assetPrompt = ResolvePerProxyAssetPrompt(request, occupyProxyId);
         if (string.IsNullOrWhiteSpace(assetPrompt))
-            return basePrompt;
+            return StripUnwantedPromptPhrases(basePrompt);
         if (string.IsNullOrWhiteSpace(basePrompt))
-            return assetPrompt;
-        return $"{basePrompt}, {assetPrompt}";
+            return StripUnwantedPromptPhrases(assetPrompt);
+        return StripUnwantedPromptPhrases($"{basePrompt}, {assetPrompt}");
     }
 
     private static string BuildMeshSourcePrompt(string runPrompt, string occupyProxyId, NewBackendRequest request)
     {
-        string globalPrompt = NormalizePrompt(runPrompt);
-        string assetPrompt = NormalizePrompt(ResolvePerProxyAssetPrompt(request, occupyProxyId));
-        string stylePrompt = NormalizePrompt(BuildMeshStylePrompt(runPrompt, assetPrompt));
+        string globalPrompt = NormalizePrompt(StripUnwantedPromptPhrases(runPrompt));
+        string assetPrompt = NormalizePrompt(StripUnwantedPromptPhrases(ResolvePerProxyAssetPrompt(request, occupyProxyId)));
+        string stylePrompt = NormalizePrompt(StripUnwantedPromptPhrases(BuildMeshStylePrompt(runPrompt, assetPrompt)));
 
         var parts = new List<string>();
 
@@ -709,7 +580,7 @@ public class RemoteGenerationBackend : IGenerationBackend
             "no contact shadow"
         );
 
-        return JoinPromptParts(parts);
+        return StripUnwantedPromptPhrases(JoinPromptParts(parts));
     }
 
     private static string BuildMeshSourceNegativePrompt(NewBackendRequest request)
@@ -748,6 +619,17 @@ public class RemoteGenerationBackend : IGenerationBackend
             return string.Empty;
 
         return Regex.Replace(text, "\\s+", " ").Trim().Trim(',');
+    }
+
+    private static string StripUnwantedPromptPhrases(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        string cleaned = Regex.Replace(text, "\\bhigh\\s+quality\\s+3d\\s+scene\\b", " ", RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(cleaned, "\\s+", " ");
+        cleaned = Regex.Replace(cleaned, "\\s*,\\s*", ", ");
+        return cleaned.Trim().Trim(',');
     }
 
     private static string BuildMeshStylePrompt(string runPrompt, string assetPrompt)
@@ -837,12 +719,6 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private bool CanRunWorkflowWithProvidedInputs(
         string projectRoot,
-        string depthName,
-        string cannyName,
-        List<string> maskNames,
-        string maskOccupyName,
-        string maskAvoidName,
-        string maskFocusName,
         out string reason)
     {
         reason = string.Empty;
@@ -852,45 +728,6 @@ public class RemoteGenerationBackend : IGenerationBackend
         if (!File.Exists(workflowPath))
         {
             reason = $"workflow file not found: {workflowPath}";
-            return false;
-        }
-
-        string template = File.ReadAllText(workflowPath);
-
-        if (template.Contains("__DEPTH_IMAGE__") && string.IsNullOrWhiteSpace(depthName))
-        {
-            reason = "workflow requires __DEPTH_IMAGE__ but request.depthImagePath is empty";
-            return false;
-        }
-
-        if (template.Contains("__CANNY_IMAGE__") && string.IsNullOrWhiteSpace(cannyName))
-        {
-            reason = "workflow requires __CANNY_IMAGE__ but request.cannyImagePath is empty";
-            return false;
-        }
-
-        MatchCollection maskPlaceholders = Regex.Matches(template, "__MASK_IMAGE_\\d+__");
-        if (maskPlaceholders.Count > 0 && (maskNames == null || maskNames.Count == 0))
-        {
-            reason = "workflow requires __MASK_IMAGE_n__ placeholders but request.maskImagePaths is empty";
-            return false;
-        }
-
-        if (template.Contains("__MASK_OCCUPY_IMAGE__") && string.IsNullOrWhiteSpace(maskOccupyName))
-        {
-            reason = "workflow requires __MASK_OCCUPY_IMAGE__ but no occupy mask was provided";
-            return false;
-        }
-
-        if (template.Contains("__MASK_AVOID_IMAGE__") && string.IsNullOrWhiteSpace(maskAvoidName))
-        {
-            reason = "workflow requires __MASK_AVOID_IMAGE__ but no avoid mask was provided";
-            return false;
-        }
-
-        if (template.Contains("__MASK_FOCUS_IMAGE__") && string.IsNullOrWhiteSpace(maskFocusName))
-        {
-            reason = "workflow requires __MASK_FOCUS_IMAGE__ but no focus mask was provided";
             return false;
         }
 
@@ -913,40 +750,6 @@ public class RemoteGenerationBackend : IGenerationBackend
             throw new Exception($"ComfyUI /prompt response missing prompt_id: {responseText}");
 
         return promptId;
-    }
-
-    private static string FirstNonEmpty(params string[] values)
-    {
-        if (values == null) return string.Empty;
-        for (int i = 0; i < values.Length; i++)
-        {
-            if (!string.IsNullOrWhiteSpace(values[i]))
-                return values[i];
-        }
-        return string.Empty;
-    }
-
-    private static string CreateFallbackImage(string outputDir, string fileName, int width, int height, Color color)
-    {
-        Texture2D texture = null;
-        try
-        {
-            texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
-            Color[] pixels = new Color[width * height];
-            for (int i = 0; i < pixels.Length; i++) pixels[i] = color;
-            texture.SetPixels(pixels);
-            texture.Apply(false);
-
-            byte[] png = texture.EncodeToPNG();
-            string path = Path.Combine(outputDir, fileName);
-            File.WriteAllBytes(path, png);
-            return path;
-        }
-        finally
-        {
-            if (texture != null)
-                UnityEngine.Object.DestroyImmediate(texture);
-        }
     }
 
     private async Task TrackExecutionViaWebSocketAsync(string promptId)

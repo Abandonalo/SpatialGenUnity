@@ -4,20 +4,20 @@
       "seed": "__SEED__",
       "steps": "__STEPS__",
       "cfg": "__CFG__",
-      "sampler_name": "dpmpp_2m_sde",
-      "scheduler": "karras",
+      "sampler_name": "euler",
+      "scheduler": "normal",
       "denoise": 1,
       "model": [
-        "18",
+        "4",
         0
       ],
       "positive": [
-        "34",
+        "6",
         0
       ],
       "negative": [
-        "34",
-        1
+        "7",
+        0
       ],
       "latent_image": [
         "5",
@@ -51,28 +51,28 @@
   },
   "6": {
     "inputs": {
-      "text": "__PROMPT__",
+      "text": "__MESH_PROMPT__",
       "clip": [
-        "18",
+        "4",
         1
       ]
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
-      "title": "CLIP Text Encode (Prompt)"
+      "title": "CLIP Text Encode (Mesh Source Prompt)"
     }
   },
   "7": {
     "inputs": {
-      "text": "__NEG_PROMPT__",
+      "text": "__MESH_NEG_PROMPT__",
       "clip": [
-        "18",
+        "4",
         1
       ]
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
-      "title": "CLIP Text Encode (Prompt)"
+      "title": "CLIP Text Encode (Mesh Source Negative Prompt)"
     }
   },
   "8": {
@@ -91,419 +91,11 @@
       "title": "VAE Decode"
     }
   },
-  "11": {
-    "inputs": {
-      "image": "__DEPTH_IMAGE__"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Load Image"
-    }
-  },
-  "13": {
-    "inputs": {
-      "control_net_name": "__DEPTH_CONTROLNET__"
-    },
-    "class_type": "ControlNetLoader",
-    "_meta": {
-      "title": "Load ControlNet Model"
-    }
-  },
-  "14": {
-    "inputs": {
-      "strength": 1,
-      "start_percent": 0,
-      "end_percent": 1,
-      "positive": [
-        "6",
-        0
-      ],
-      "negative": [
-        "7",
-        0
-      ],
-      "control_net": [
-        "13",
-        0
-      ],
-      "image": [
-        "11",
-        0
-      ]
-    },
-    "class_type": "ControlNetApplyAdvanced",
-    "_meta": {
-      "title": "Apply ControlNet"
-    }
-  },
-  "15": {
-    "inputs": {
-      "control_net_name": "__CANNY_CONTROLNET__"
-    },
-    "class_type": "ControlNetLoader",
-    "_meta": {
-      "title": "Load ControlNet Model"
-    }
-  },
-  "16": {
-    "inputs": {
-      "image": "__CANNY_IMAGE__"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Load Image"
-    }
-  },
-  "17": {
-    "inputs": {
-      "strength": 0.8,
-      "start_percent": 0,
-      "end_percent": 1,
-      "positive": [
-        "14",
-        0
-      ],
-      "negative": [
-        "14",
-        1
-      ],
-      "control_net": [
-        "15",
-        0
-      ],
-      "image": [
-        "16",
-        0
-      ]
-    },
-    "class_type": "ControlNetApplyAdvanced",
-    "_meta": {
-      "title": "Apply ControlNet"
-    }
-  },
-  "18": {
-    "inputs": {
-      "PowerLoraLoaderHeaderWidget": {
-        "type": "PowerLoraLoaderHeaderWidget"
-      },
-      "lora_1": {
-        "on": false,
-        "lora": "small_scene_V2.safetensors",
-        "strength": 0.0
-      },
-      "\u2795 Add Lora": "",
-      "model": [
-        "4",
-        0
-      ],
-      "clip": [
-        "4",
-        1
-      ]
-    },
-    "class_type": "Power Lora Loader (rgthree)",
-    "_meta": {
-      "title": "Power Lora Loader (rgthree)"
-    }
-  },
-  "19": {
-    "inputs": {
-      "image": "__MASK_OCCUPY_IMAGE__"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Load Occupy Mask"
-    }
-  },
-  "20": {
-    "inputs": {
-      "image": "__MASK_AVOID_IMAGE__"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Load Avoid Mask"
-    }
-  },
-  "21": {
-    "inputs": {
-      "image": "__MASK_FOCUS_IMAGE__"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Load Focus Mask"
-    }
-  },
-  "22": {
-    "inputs": {
-      "model": "__TRIPOSR_MODEL__",
-      "chunk_size": 8192
-    },
-    "class_type": "TripoSRModelLoader",
-    "_meta": {
-      "title": "TripoSR Model Loader"
-    }
-  },
-  "23": {
-    "inputs": {
-      "geometry_resolution": "__GEOMETRY_RESOLUTION__",
-      "threshold": "__TRIPOSR_THRESHOLD__",
-      "model": [
-        "22",
-        0
-      ],
-      "reference_image": [
-        "25",
-        0
-      ]
-    },
-    "class_type": "TripoSRSampler",
-    "_meta": {
-      "title": "TripoSR Sampler"
-    }
-  },
-  "24": {
-    "inputs": {
-      "format": "glb",
-      "mesh": [
-        "23",
-        0
-      ]
-    },
-    "class_type": "TripoSRViewer",
-    "_meta": {
-      "title": "TripoSR Viewer"
-    }
-  },
-  "32": {
-    "inputs": {
-      "strength": "__MASK_OCCUPY_WEIGHT__",
-      "start_percent": 0,
-      "end_percent": 1,
-      "positive": [
-        "17",
-        0
-      ],
-      "negative": [
-        "17",
-        1
-      ],
-      "control_net": [
-        "15",
-        0
-      ],
-      "image": [
-        "19",
-        0
-      ]
-    },
-    "class_type": "ControlNetApplyAdvanced",
-    "_meta": {
-      "title": "Apply Occupy Mask Guidance"
-    }
-  },
-  "33": {
-    "inputs": {
-      "strength": "__MASK_AVOID_WEIGHT__",
-      "start_percent": 0,
-      "end_percent": 1,
-      "positive": [
-        "32",
-        0
-      ],
-      "negative": [
-        "32",
-        1
-      ],
-      "control_net": [
-        "15",
-        0
-      ],
-      "image": [
-        "20",
-        0
-      ]
-    },
-    "class_type": "ControlNetApplyAdvanced",
-    "_meta": {
-      "title": "Apply Avoid Mask Guidance"
-    }
-  },
-  "34": {
-    "inputs": {
-      "strength": "__MASK_FOCUS_WEIGHT__",
-      "start_percent": 0,
-      "end_percent": 1,
-      "positive": [
-        "33",
-        0
-      ],
-      "negative": [
-        "33",
-        1
-      ],
-      "control_net": [
-        "15",
-        0
-      ],
-      "image": [
-        "21",
-        0
-      ]
-    },
-    "class_type": "ControlNetApplyAdvanced",
-    "_meta": {
-      "title": "Apply Focus Mask Guidance"
-    }
-  },
-  "35": {
-    "inputs": {
-      "filename_prefix": "spatialgen_conditioned_source",
-      "images": [
-        "8",
-        0
-      ]
-    },
-    "class_type": "SaveImage",
-    "_meta": {
-      "title": "Save Preview Image"
-    }
-  },
-  "36": {
-    "inputs": {
-      "seed": "__SEED__",
-      "steps": "__STEPS__",
-      "cfg": "__CFG__",
-      "sampler_name": "dpmpp_2m_sde",
-      "scheduler": "karras",
-      "denoise": 1,
-      "model": [
-        "18",
-        0
-      ],
-      "positive": [
-        "6",
-        0
-      ],
-      "negative": [
-        "7",
-        0
-      ],
-      "latent_image": [
-        "5",
-        0
-      ]
-    },
-    "class_type": "KSampler",
-    "_meta": {
-      "title": "Prompt Only KSampler"
-    }
-  },
-  "37": {
-    "inputs": {
-      "samples": [
-        "36",
-        0
-      ],
-      "vae": [
-        "4",
-        2
-      ]
-    },
-    "class_type": "VAEDecode",
-    "_meta": {
-      "title": "Prompt Only VAE Decode"
-    }
-  },
-  "38": {
-    "inputs": {
-      "filename_prefix": "spatialgen_prompt_only",
-      "images": [
-        "37",
-        0
-      ]
-    },
-    "class_type": "SaveImage",
-    "_meta": {
-      "title": "Save Prompt Only Image"
-    }
-  },
-  "39": {
-    "inputs": {
-      "text": "__MESH_PROMPT__",
-      "clip": [
-        "18",
-        1
-      ]
-    },
-    "class_type": "CLIPTextEncode",
-    "_meta": {
-      "title": "CLIP Text Encode (Mesh Source Prompt)"
-    }
-  },
-  "40": {
-    "inputs": {
-      "text": "__MESH_NEG_PROMPT__",
-      "clip": [
-        "18",
-        1
-      ]
-    },
-    "class_type": "CLIPTextEncode",
-    "_meta": {
-      "title": "CLIP Text Encode (Mesh Source Negative Prompt)"
-    }
-  },
-  "41": {
-    "inputs": {
-      "seed": "__SEED__",
-      "steps": "__STEPS__",
-      "cfg": "__CFG__",
-      "sampler_name": "dpmpp_2m_sde",
-      "scheduler": "karras",
-      "denoise": 1,
-      "model": [
-        "18",
-        0
-      ],
-      "positive": [
-        "39",
-        0
-      ],
-      "negative": [
-        "40",
-        0
-      ],
-      "latent_image": [
-        "5",
-        0
-      ]
-    },
-    "class_type": "KSampler",
-    "_meta": {
-      "title": "Mesh Source KSampler"
-    }
-  },
-  "42": {
-    "inputs": {
-      "samples": [
-        "41",
-        0
-      ],
-      "vae": [
-        "4",
-        2
-      ]
-    },
-    "class_type": "VAEDecode",
-    "_meta": {
-      "title": "Mesh Source VAE Decode"
-    }
-  },
   "43": {
     "inputs": {
       "filename_prefix": "spatialgen_mesh_source",
       "images": [
-        "42",
+        "8",
         0
       ]
     },
@@ -512,29 +104,65 @@
       "title": "Save Mesh Source Image"
     }
   },
-  "25": {
-  "inputs": {
-    "image": ["42", 0],
-    "model": "RMBG-2.0",
-    "sensitivity": 1.0,
-    "process_res": 1024,
-    "mask_blur": 1,
-    "mask_offset": 2,
-    "invert_output": false,
-    "refine_foreground": true,
-    "background": "Color",
-    "background_color": "#FFFFFF"
+  "50": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "width": 512,
+      "height": 512,
+      "crop": "center",
+      "image": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "Upscale Image"
+    }
   },
-  "class_type": "RMBG",
-  "_meta": {
-    "title": "Remove Background (RMBG)"
-  }
-},
+  "65": {
+    "inputs": {
+      "model": "u2net: general purpose",
+      "providers": "CPU"
+    },
+    "class_type": "RemBGSession+",
+    "_meta": {
+      "title": "RemBG Session"
+    }
+  },
+  "64": {
+    "inputs": {
+      "rembg_session": [
+        "65",
+        0
+      ],
+      "image": [
+        "50",
+        0
+      ]
+    },
+    "class_type": "ImageRemoveBackground+",
+    "_meta": {
+      "title": "Image Remove Background"
+    }
+  },
+  "53": {
+    "inputs": {
+      "mask": [
+        "64",
+        1
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Mask To Image"
+    }
+  },
   "26": {
     "inputs": {
       "filename_prefix": "spatialgen_rmbg_source",
       "images": [
-        "25",
+        "64",
         0
       ]
     },
@@ -547,13 +175,58 @@
     "inputs": {
       "filename_prefix": "spatialgen_rmbg_mask",
       "images": [
-        "25",
-        2
+        "53",
+        0
       ]
     },
     "class_type": "SaveImage",
     "_meta": {
-      "title": "Save RMBG Mask Preview"
+      "title": "Save RMBG Mask Image"
+    }
+  },
+  "67": {
+    "inputs": {
+      "model": "__TRIPOSR_MODEL__",
+      "chunk_size": 8192
+    },
+    "class_type": "TripoSRModelLoader",
+    "_meta": {
+      "title": "TripoSR Model Loader"
+    }
+  },
+  "66": {
+    "inputs": {
+      "geometry_resolution": "__GEOMETRY_RESOLUTION__",
+      "threshold": "__TRIPOSR_THRESHOLD__",
+      "model": [
+        "67",
+        0
+      ],
+      "reference_image": [
+        "64",
+        0
+      ],
+      "reference_mask": [
+        "64",
+        1
+      ]
+    },
+    "class_type": "TripoSRSampler",
+    "_meta": {
+      "title": "TripoSR Sampler"
+    }
+  },
+  "68": {
+    "inputs": {
+      "format": "glb",
+      "mesh": [
+        "66",
+        0
+      ]
+    },
+    "class_type": "TripoSRViewer",
+    "_meta": {
+      "title": "TripoSR Viewer"
     }
   }
 }
