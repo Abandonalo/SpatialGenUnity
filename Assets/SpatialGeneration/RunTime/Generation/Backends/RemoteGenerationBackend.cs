@@ -548,7 +548,7 @@ public class RemoteGenerationBackend : IGenerationBackend
             return StripUnwantedPromptPhrases(basePrompt);
         if (string.IsNullOrWhiteSpace(basePrompt))
             return StripUnwantedPromptPhrases(assetPrompt);
-        return StripUnwantedPromptPhrases($"{basePrompt}, {assetPrompt}");
+        return StripUnwantedPromptPhrases($"{assetPrompt}, {basePrompt}");
     }
 
     private static string BuildMeshSourcePrompt(string runPrompt, string occupyProxyId, NewBackendRequest request)
@@ -559,13 +559,13 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         var parts = new List<string>();
 
-        // Keep the global prompt as the main semantic driver.
-        if (!string.IsNullOrWhiteSpace(globalPrompt))
-            parts.Add(globalPrompt);
-
-        // Add per-asset semantics as an extra constraint, not a replacement.
+        // Keep per-asset semantics first so they are higher priority.
         if (!string.IsNullOrWhiteSpace(assetPrompt))
             parts.Add(assetPrompt);
+
+        // Keep the global prompt as secondary context.
+        if (!string.IsNullOrWhiteSpace(globalPrompt))
+            parts.Add(globalPrompt);
 
         // Keep style as supplemental only.
         if (!string.IsNullOrWhiteSpace(stylePrompt))
