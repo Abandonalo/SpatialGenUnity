@@ -72,9 +72,13 @@ public class RemoteGenerationBackend : IGenerationBackend
                 perProxyMaskPath = BuildPerProxyOccupyMaskPath(occupy, request, runInputDir, runIndex);
             }
 
-            string workflowJson = LoadAndBindWorkflow(projectRoot, request, runPrompt, meshSourcePrompt, meshSourceNegativePrompt);
+            string workflowJson = string.Empty;
+            if (HasWorkflowTemplate(projectRoot))
+            {
+                workflowJson = LoadAndBindWorkflow(projectRoot, request, runPrompt, meshSourcePrompt, meshSourceNegativePrompt);
+            }
             WriteRunDebugArtifacts(runInputDir, runIndex, occupyProxyId, runPrompt, meshSourcePrompt, meshSourceNegativePrompt, workflowJson);
-            string promptId = await SubmitPromptAsync(workflowJson);
+            string promptId = await SubmitPromptAsync(workflowJson, runPrompt, meshSourceNegativePrompt, request, occupy);
             await WaitForPromptCompletionAsync(promptId);
 
             string runOutputPrefix = $"{requestId}_{SanitizeFileToken(occupyProxyId)}";
@@ -306,6 +310,14 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private async Task EnsureComfyRunningAsync()
     {
+        if (UsesFastApiProxy())
+        {
+            if (await IsComfyHealthyAsync())
+                return;
+
+            throw new Exception($"FastAPI proxy is not reachable at {GetComfyBaseUrl()}");
+        }
+
         if (await IsComfyHealthyAsync())
             return;
 
@@ -345,7 +357,9 @@ public class RemoteGenerationBackend : IGenerationBackend
     {
         try
         {
-            string url = $"{GetComfyBaseUrl().TrimEnd('/')}/system_stats";
+            string url = UsesFastApiProxy()
+                ? $"{GetComfyBaseUrl().TrimEnd('/')}/health"
+                : $"{GetComfyBaseUrl().TrimEnd('/')}/system_stats";
             using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
             using HttpResponseMessage response = await Http.GetAsync(url, cts.Token);
             return response.IsSuccessStatusCode;
@@ -490,6 +504,15 @@ public class RemoteGenerationBackend : IGenerationBackend
         workflow = workflow.Replace("__TRIPOSR_THRESHOLD__", tripoSrThreshold.ToString("0.###", CultureInfo.InvariantCulture));
 
         return workflow;
+    }
+
+    private bool HasWorkflowTemplate(string projectRoot)
+    {
+        string workflowPath = _settings.comfyWorkflowTemplatePath;
+        if (!Path.IsPathRooted(workflowPath))
+            workflowPath = Path.Combine(projectRoot, workflowPath);
+
+        return File.Exists(workflowPath);
     }
 
     private static string ResolveRunPrompt(NewBackendRequest request, string occupyProxyId)
@@ -657,6 +680,9 @@ public class RemoteGenerationBackend : IGenerationBackend
         out string reason)
     {
         reason = string.Empty;
+        if (UsesFastApiProxy())
+            return true;
+
         string workflowPath = _settings.comfyWorkflowTemplatePath;
         if (!Path.IsPathRooted(workflowPath))
             workflowPath = Path.Combine(projectRoot, workflowPath);
@@ -669,8 +695,34 @@ public class RemoteGenerationBackend : IGenerationBackend
         return true;
     }
 
-    private async Task<string> SubmitPromptAsync(string workflowJson)
+    private async Task<string> SubmitPromptAsync(
+        string workflowJson,
+        string prompt,
+        string negativePrompt,
+        NewBackendRequest request,
+        Constraint occupyConstraint)
     {
+        if (UsesFastApiProxy())
+        {
+            string url = _settings.remoteUrl;
+            string proxyRequestBody = BuildProxyGenerateRequestBody(workflowJson, prompt, negativePrompt, request, occupyConstraint);
+            using var proxyContent = new StringContent(proxyRequestBody, Encoding.UTF8, "application/json");
+            using var proxyCts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
+            using HttpResponseMessage proxyResponse = await Http.PostAsync(url, proxyContent, proxyCts.Token);
+
+            string proxyResponseText = await proxyResponse.Content.ReadAsStringAsync();
+            if (!proxyResponse.IsSuccessStatusCode)
+                throw new Exception($"FastAPI /generate failed: {(int)proxyResponse.StatusCode} {proxyResponseText}");
+
+            string proxyPromptId = ExtractJsonString(proxyResponseText, "prompt_id");
+            if (string.IsNullOrWhiteSpace(proxyPromptId))
+                proxyPromptId = ExtractJsonString(proxyResponseText, "id");
+            if (string.IsNullOrWhiteSpace(proxyPromptId))
+                throw new Exception($"FastAPI /generate response missing prompt_id: {proxyResponseText}");
+
+            return proxyPromptId;
+        }
+
         string body = $"{{\"prompt\":{workflowJson},\"client_id\":\"{EscapeJson(_settings.comfyClientId)}\"}}";
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
         using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
@@ -685,6 +737,91 @@ public class RemoteGenerationBackend : IGenerationBackend
             throw new Exception($"ComfyUI /prompt response missing prompt_id: {responseText}");
 
         return promptId;
+    }
+
+    private string BuildProxyGenerateRequestBody(
+        string workflowJson,
+        string prompt,
+        string negativePrompt,
+        NewBackendRequest request,
+        Constraint occupyConstraint)
+    {
+        string workflowValue = string.IsNullOrWhiteSpace(workflowJson) ? "null" : workflowJson;
+        string proxyJson = BuildProxyJson(occupyConstraint, request);
+        string constraintSetJsonValue = ToJsonStringOrNull(request?.ConstraintSetJson);
+
+        return
+            "{" +
+            $"\"request_id\":\"{EscapeJson(request?.RequestId ?? string.Empty)}\"," +
+            $"\"prompt\":\"{EscapeJson(prompt ?? string.Empty)}\"," +
+            $"\"negative_prompt\":\"{EscapeJson(negativePrompt ?? string.Empty)}\"," +
+            $"\"workflow\":{workflowValue}," +
+            $"\"constraint_set_json\":{constraintSetJsonValue}," +
+            $"\"proxy\":{proxyJson}," +
+            $"\"generation\":{BuildGenerationJson(request?.Payload?.Generation)}" +
+            "}";
+    }
+
+    private string BuildProxyJson(Constraint occupyConstraint, NewBackendRequest request)
+    {
+        if (occupyConstraint == null)
+            return "null";
+
+        string assetPrompt = ResolvePerProxyAssetPrompt(request, occupyConstraint.proxy_id);
+        return
+            "{" +
+            $"\"id\":\"{EscapeJson(occupyConstraint.proxy_id ?? string.Empty)}\"," +
+            $"\"role\":\"{EscapeJson(occupyConstraint.type ?? string.Empty)}\"," +
+            $"\"shape\":\"{EscapeJson(occupyConstraint.shape ?? string.Empty)}\"," +
+            $"\"label\":{ToJsonStringOrNull(assetPrompt)}," +
+            $"\"position\":{BuildVector3Json(occupyConstraint.position)}," +
+            $"\"rotation\":{BuildQuaternionJson(occupyConstraint.rotation)}," +
+            $"\"size\":{BuildVector3Json(occupyConstraint.size)}" +
+            "}";
+    }
+
+    private static string BuildGenerationJson(SpatialGeneration.Generation.Intent.GenerationParams generation)
+    {
+        if (generation == null)
+            return "null";
+
+        return
+            "{" +
+            $"\"seed\":{generation.Seed.ToString(CultureInfo.InvariantCulture)}," +
+            $"\"steps\":{generation.Steps.ToString(CultureInfo.InvariantCulture)}," +
+            $"\"cfg\":{generation.Cfg.ToString("0.###", CultureInfo.InvariantCulture)}," +
+            $"\"sampler\":\"{EscapeJson(generation.Sampler ?? string.Empty)}\"," +
+            $"\"width\":{generation.Width.ToString(CultureInfo.InvariantCulture)}," +
+            $"\"height\":{generation.Height.ToString(CultureInfo.InvariantCulture)}" +
+            "}";
+    }
+
+    private static string BuildVector3Json(Vector3 value)
+    {
+        return
+            "{" +
+            $"\"x\":{value.x.ToString("0.###", CultureInfo.InvariantCulture)}," +
+            $"\"y\":{value.y.ToString("0.###", CultureInfo.InvariantCulture)}," +
+            $"\"z\":{value.z.ToString("0.###", CultureInfo.InvariantCulture)}" +
+            "}";
+    }
+
+    private static string BuildQuaternionJson(Quaternion value)
+    {
+        return
+            "{" +
+            $"\"x\":{value.x.ToString("0.###", CultureInfo.InvariantCulture)}," +
+            $"\"y\":{value.y.ToString("0.###", CultureInfo.InvariantCulture)}," +
+            $"\"z\":{value.z.ToString("0.###", CultureInfo.InvariantCulture)}," +
+            $"\"w\":{value.w.ToString("0.###", CultureInfo.InvariantCulture)}" +
+            "}";
+    }
+
+    private static string ToJsonStringOrNull(string value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "null"
+            : $"\"{EscapeJson(value)}\"";
     }
 
     private async Task TrackExecutionViaWebSocketAsync(string promptId)
@@ -741,6 +878,12 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private async Task WaitForPromptCompletionAsync(string promptId)
     {
+        if (UsesFastApiProxy())
+        {
+            await WaitForCompletionByHistoryPollingAsync(promptId);
+            return;
+        }
+
         if (_preferHistoryPolling)
         {
             await WaitForCompletionByHistoryPollingAsync(promptId);
@@ -764,7 +907,9 @@ public class RemoteGenerationBackend : IGenerationBackend
     {
         int timeoutMs = Math.Max(1000, _settings.comfyExecutionTimeoutSeconds * 1000);
         using var cts = new CancellationTokenSource(timeoutMs);
-        string historyUrl = $"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}";
+        string historyUrl = UsesFastApiProxy()
+            ? $"{GetComfyBaseUrl().TrimEnd('/')}/result/{promptId}"
+            : $"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}";
 
         while (!cts.IsCancellationRequested)
         {
@@ -776,12 +921,16 @@ public class RemoteGenerationBackend : IGenerationBackend
                 {
                     int refs = ExtractOutputImageRefs(json).Count;
                     bool hasOutputRefs = refs > 0;
-                    bool completed = IsHistoryCompleted(json);
-                    if (IsHistoryError(json))
+                    bool completed = UsesFastApiProxy() ? IsProxyResultCompleted(json) : IsHistoryCompleted(json);
+                    if (UsesFastApiProxy() ? IsProxyResultError(json) : IsHistoryError(json))
                     {
                         string errorMessage = ExtractJsonString(json, "exception_message");
                         if (string.IsNullOrWhiteSpace(errorMessage))
-                            errorMessage = "unknown ComfyUI execution error";
+                            errorMessage = ExtractJsonString(json, "message");
+                        if (string.IsNullOrWhiteSpace(errorMessage))
+                            errorMessage = UsesFastApiProxy()
+                                ? "unknown FastAPI proxy execution error"
+                                : "unknown ComfyUI execution error";
                         throw new Exception($"ComfyUI prompt failed for {promptId}: {errorMessage}");
                     }
 
@@ -820,6 +969,17 @@ public class RemoteGenerationBackend : IGenerationBackend
     private static bool IsHistoryCompleted(string json)
     {
         return Regex.IsMatch(json ?? string.Empty, "\"completed\"\\s*:\\s*true");
+    }
+
+    private static bool IsProxyResultError(string json)
+    {
+        return Regex.IsMatch(json ?? string.Empty, "\"status\"\\s*:\\s*\"error\"");
+    }
+
+    private static bool IsProxyResultCompleted(string json)
+    {
+        return Regex.IsMatch(json ?? string.Empty, "\"completed\"\\s*:\\s*true")
+            || Regex.IsMatch(json ?? string.Empty, "\"status\"\\s*:\\s*\"success\"");
     }
 
     private static bool HasOutputImageRefs(string json)
@@ -874,10 +1034,13 @@ public class RemoteGenerationBackend : IGenerationBackend
     {
         Directory.CreateDirectory(outputDir);
         using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
-        using HttpResponseMessage response = await Http.GetAsync($"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}", cts.Token);
+        string outputsUrl = UsesFastApiProxy()
+            ? $"{GetComfyBaseUrl().TrimEnd('/')}/result/{promptId}"
+            : $"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}";
+        using HttpResponseMessage response = await Http.GetAsync(outputsUrl, cts.Token);
         string historyJson = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
-            throw new Exception($"ComfyUI /history/{promptId} failed: {(int)response.StatusCode} {historyJson}");
+            throw new Exception($"ComfyUI output lookup failed for {promptId}: {(int)response.StatusCode} {historyJson}");
 
         var outputs = ExtractOutputImageRefs(historyJson);
         var saved = new List<string>();
@@ -1042,6 +1205,40 @@ public class RemoteGenerationBackend : IGenerationBackend
         if (string.IsNullOrWhiteSpace(historyJson))
             return refs;
 
+        // Proxy mode can flatten outputs to a top-level images array so Unity does not need
+        // to parse raw ComfyUI history payloads.
+        MatchCollection imageListMatches = Regex.Matches(
+            historyJson,
+            "\"images\"\\s*:\\s*\\[(.*?)\\]",
+            RegexOptions.Singleline);
+        foreach (Match listMatch in imageListMatches)
+        {
+            if (!listMatch.Success || listMatch.Groups.Count < 2)
+                continue;
+
+            foreach (Match imageMatch in Regex.Matches(
+                listMatch.Groups[1].Value,
+                "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\""))
+            {
+                if (!imageMatch.Success || imageMatch.Groups.Count < 4)
+                    continue;
+
+                string filename = imageMatch.Groups[1].Value;
+                string subfolder = imageMatch.Groups[2].Value;
+                string type = imageMatch.Groups[3].Value;
+                string key = $"{filename}|{subfolder}|{type}";
+                if (!seen.Add(key))
+                    continue;
+
+                refs.Add(new ImageRef
+                {
+                    filename = filename,
+                    subfolder = subfolder,
+                    type = type
+                });
+            }
+        }
+
         // Support both field orders observed in ComfyUI history payloads.
         var patterns = new[]
         {
@@ -1120,6 +1317,11 @@ public class RemoteGenerationBackend : IGenerationBackend
         return "http://127.0.0.1:8000";
     }
 
+    private bool UsesFastApiProxy()
+    {
+        return !string.IsNullOrWhiteSpace(_settings?.remoteUrl);
+    }
+
     private Uri BuildWsUri()
     {
         if (!string.IsNullOrWhiteSpace(_settings.comfyWsUrl))
@@ -1140,7 +1342,17 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private static string EscapeJson(string value)
     {
-        return (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"");
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\r", "\\r")
+            .Replace("\n", "\\n")
+            .Replace("\t", "\\t")
+            .Replace("\b", "\\b")
+            .Replace("\f", "\\f");
     }
 
     private static string ExtractJsonString(string json, string fieldName)

@@ -2,11 +2,14 @@ using UnityEditor;
 using UnityEngine;
 using System;
 using System.IO;
+using System.Net.Http;
+using System.Threading.Tasks;
 
 public class SpatialGenerationWindow : EditorWindow
 {
     private const string GlobalStylePromptPrefsKey = "SpatialGenerationWindow.GlobalStylePrompt";
     private const string GlobalNegativeStylePromptPrefsKey = "SpatialGenerationWindow.GlobalNegativeStylePrompt";
+    private static readonly HttpClient Http = new();
     private string _globalStylePrompt = string.Empty;
     private string _globalNegativeStylePrompt = string.Empty;
 
@@ -84,6 +87,11 @@ public class SpatialGenerationWindow : EditorWindow
             Debug.Log($"Spatial Generation: SceneIntent snapshot saved to {snapshotPath}");
         }
 
+        if (GUILayout.Button("Check Backend Health"))
+        {
+            _ = CheckBackendHealthAsync();
+        }
+
         if (GUILayout.Button("Cleanup GeneratedContent"))
         {
             GenerationControllerEditor.CleanupGeneratedContent();
@@ -126,5 +134,39 @@ public class SpatialGenerationWindow : EditorWindow
             return trimmedStylePrompt;
 
         return $"{trimmedBasePrompt}, {trimmedStylePrompt}";
+    }
+
+    private static async Task CheckBackendHealthAsync()
+    {
+        BackendSettings settings = BackendRegistry.Settings;
+        string baseUrl = string.IsNullOrWhiteSpace(settings.comfyBaseUrl)
+            ? settings.remoteUrl?.Replace("/generate", string.Empty)
+            : settings.comfyBaseUrl;
+
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            Debug.LogError("Spatial Generation: No backend base URL is configured.");
+            return;
+        }
+
+        string healthUrl = $"{baseUrl.TrimEnd('/')}/health";
+
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync(healthUrl);
+            string body = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                Debug.Log($"Spatial Generation backend health OK: {healthUrl}\n{body}");
+                return;
+            }
+
+            Debug.LogError($"Spatial Generation backend health failed: {(int)response.StatusCode} {response.ReasonPhrase}\n{healthUrl}\n{body}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Spatial Generation backend health request failed: {healthUrl}\n{ex.Message}");
+        }
     }
 }

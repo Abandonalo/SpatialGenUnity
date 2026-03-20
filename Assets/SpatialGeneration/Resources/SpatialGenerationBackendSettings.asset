@@ -18,15 +18,15 @@ MonoBehaviour:
   responseFileName: response.json
   pollIntervalSeconds: 0.25
   maxWaitSeconds: 120
-  remoteUrl: http://127.0.0.1:8000/generate
+  remoteUrl: https://comfyuitunnel.share.zrok.io/generate
   remoteTimeoutSeconds: 60
-  comfyAutoStart: 1
-  comfyBaseUrl: http://127.0.0.1:8000
-  comfyWsUrl: ws://127.0.0.1:8000/ws
+  comfyAutoStart: 0
+  comfyBaseUrl: https://comfyuitunnel.share.zrok.io
+  comfyWsUrl: 
   comfyClientId: spatialgen-unity-client
   comfyWorkflowTemplatePath: SpatialGenHandoff/comfy_workflow_api.json
   comfyInputFolder: SpatialGenHandoff/comfy_inputs
-  comfyCheckpointName: v1-5-pruned-emaonly.safetensors
+  comfyCheckpointName: sd_xl_base_1.0.safetensors
   comfyTripoSrModelName: TripoSRmodel.ckpt
   comfyGeometryResolution: 512
   comfyTripoSrThreshold: 25
