@@ -544,8 +544,10 @@ public class RemoteGenerationBackend : IGenerationBackend
 
         // Strong object-isolation constraints for TripoSR-friendly source images.
         parts.Add(
-            "single main object, single centered asset, close-up, full object in frame, " +
-            "clean silhouette, isolated object render, studio cutout, product render, " +
+            "centered, full in frame, isolated, clean silhouette, sharp edges, uniform lighting, " +
+            "studio lighting, soft shadows, no occlusion,  " +
+            "front view, orthographic feel, product render, " + 
+            "high detail geometry, consistent surface, " + 
             "plain background, flat white background, solid white background"
         );
 
@@ -562,9 +564,12 @@ public class RemoteGenerationBackend : IGenerationBackend
             parts.Add(negativePrompt);
 
         parts.Add(
-            "floor, ground plane, pedestal, stand, platform, base, slab, " +
-            "support, support plane, table, shelf, road, trees, sky, shadow, contact shadow, " +
-            "environment, landscape, multiple objects, clutter"
+            "ground, floor, pedestal, base, platform, " +
+            "shadow on ground, contact shadow, " +
+            "background scene, environment, sky, landscape, " +
+            "multiple objects, clutter, occlusion, " + 
+            "cut off, cropped, incomplete object, " + 
+            "blurry, noisy, messy geometry, asymmetry"
         );
 
         return JoinPromptParts(parts);
@@ -708,19 +713,26 @@ public class RemoteGenerationBackend : IGenerationBackend
             string proxyRequestBody = BuildProxyGenerateRequestBody(workflowJson, prompt, negativePrompt, request, occupyConstraint);
             using var proxyContent = new StringContent(proxyRequestBody, Encoding.UTF8, "application/json");
             using var proxyCts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
-            using HttpResponseMessage proxyResponse = await Http.PostAsync(url, proxyContent, proxyCts.Token);
+            try
+            {
+                using HttpResponseMessage proxyResponse = await Http.PostAsync(url, proxyContent, proxyCts.Token);
 
-            string proxyResponseText = await proxyResponse.Content.ReadAsStringAsync();
-            if (!proxyResponse.IsSuccessStatusCode)
-                throw new Exception($"FastAPI /generate failed: {(int)proxyResponse.StatusCode} {proxyResponseText}");
+                string proxyResponseText = await proxyResponse.Content.ReadAsStringAsync();
+                if (!proxyResponse.IsSuccessStatusCode)
+                    throw new Exception($"FastAPI /generate failed: {(int)proxyResponse.StatusCode} {proxyResponseText}");
 
-            string proxyPromptId = ExtractJsonString(proxyResponseText, "prompt_id");
-            if (string.IsNullOrWhiteSpace(proxyPromptId))
-                proxyPromptId = ExtractJsonString(proxyResponseText, "id");
-            if (string.IsNullOrWhiteSpace(proxyPromptId))
-                throw new Exception($"FastAPI /generate response missing prompt_id: {proxyResponseText}");
+                string proxyPromptId = ExtractJsonString(proxyResponseText, "prompt_id");
+                if (string.IsNullOrWhiteSpace(proxyPromptId))
+                    proxyPromptId = ExtractJsonString(proxyResponseText, "id");
+                if (string.IsNullOrWhiteSpace(proxyPromptId))
+                    throw new Exception($"FastAPI /generate response missing prompt_id: {proxyResponseText}");
 
-            return proxyPromptId;
+                return proxyPromptId;
+            }
+            catch (OperationCanceledException ex)
+            {
+                throw;
+            }
         }
 
         string body = $"{{\"prompt\":{workflowJson},\"client_id\":\"{EscapeJson(_settings.comfyClientId)}\"}}";
@@ -910,19 +922,38 @@ public class RemoteGenerationBackend : IGenerationBackend
         string historyUrl = UsesFastApiProxy()
             ? $"{GetComfyBaseUrl().TrimEnd('/')}/result/{promptId}"
             : $"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}";
+        string proxyHistoryFallbackUrl = $"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}";
 
         while (!cts.IsCancellationRequested)
         {
             try
             {
-                using HttpResponseMessage response = await Http.GetAsync(historyUrl, cts.Token);
+                bool payloadIsProxyResult = UsesFastApiProxy();
+                string activeUrl = historyUrl;
+                bool responseIsSuccessStatusCode;
+                using HttpResponseMessage response = await Http.GetAsync(activeUrl, cts.Token);
                 string json = await response.Content.ReadAsStringAsync();
-                if (response.IsSuccessStatusCode && ContainsPromptInHistory(json, promptId))
+                responseIsSuccessStatusCode = response.IsSuccessStatusCode;
+                bool matchesPrompt = UsesFastApiProxy()
+                    ? ProxyResultMatchesPrompt(json, promptId)
+                    : ContainsPromptInHistory(json, promptId);
+                if (UsesFastApiProxy() && (!response.IsSuccessStatusCode || !matchesPrompt))
+                {
+                    activeUrl = proxyHistoryFallbackUrl;
+                    payloadIsProxyResult = false;
+                    using HttpResponseMessage fallbackResponse = await Http.GetAsync(activeUrl, cts.Token);
+                    json = await fallbackResponse.Content.ReadAsStringAsync();
+                    responseIsSuccessStatusCode = fallbackResponse.IsSuccessStatusCode;
+                    matchesPrompt = fallbackResponse.IsSuccessStatusCode && ContainsPromptInHistory(json, promptId);
+                    if (!fallbackResponse.IsSuccessStatusCode)
+                        continue;
+                }
+                if (responseIsSuccessStatusCode && matchesPrompt)
                 {
                     int refs = ExtractOutputImageRefs(json).Count;
                     bool hasOutputRefs = refs > 0;
-                    bool completed = UsesFastApiProxy() ? IsProxyResultCompleted(json) : IsHistoryCompleted(json);
-                    if (UsesFastApiProxy() ? IsProxyResultError(json) : IsHistoryError(json))
+                    bool completed = payloadIsProxyResult ? IsProxyResultCompleted(json) : IsHistoryCompleted(json);
+                    if (payloadIsProxyResult ? IsProxyResultError(json) : IsHistoryError(json))
                     {
                         string errorMessage = ExtractJsonString(json, "exception_message");
                         if (string.IsNullOrWhiteSpace(errorMessage))
@@ -947,10 +978,18 @@ public class RemoteGenerationBackend : IGenerationBackend
                 // Keep polling through transient HTTP failures.
             }
 
-            await Task.Delay(500, cts.Token);
+            try
+            {
+                await Task.Delay(1000, cts.Token);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                break;
+            }
         }
 
-        throw new TimeoutException($"ComfyUI history polling timed out for prompt_id={promptId}");
+        throw new TimeoutException(
+            $"ComfyUI history polling timed out after {_settings.comfyExecutionTimeoutSeconds}s for prompt_id={promptId}");
     }
 
     private static bool ContainsPromptInHistory(string json, string promptId)
@@ -959,6 +998,14 @@ public class RemoteGenerationBackend : IGenerationBackend
             return false;
 
         return Regex.IsMatch(json, $"\"{Regex.Escape(promptId)}\"\\s*:");
+    }
+
+    private static bool ProxyResultMatchesPrompt(string json, string promptId)
+    {
+        if (string.IsNullOrWhiteSpace(json) || string.IsNullOrWhiteSpace(promptId))
+            return false;
+
+        return string.Equals(ExtractJsonString(json, "prompt_id"), promptId, StringComparison.Ordinal);
     }
 
     private static bool IsHistoryError(string json)
@@ -1037,12 +1084,25 @@ public class RemoteGenerationBackend : IGenerationBackend
         string outputsUrl = UsesFastApiProxy()
             ? $"{GetComfyBaseUrl().TrimEnd('/')}/result/{promptId}"
             : $"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}";
-        using HttpResponseMessage response = await Http.GetAsync(outputsUrl, cts.Token);
+        string proxyHistoryFallbackUrl = $"{GetComfyBaseUrl().TrimEnd('/')}/history/{promptId}";
+        string activeUrl = outputsUrl;
+        using HttpResponseMessage response = await Http.GetAsync(activeUrl, cts.Token);
         string historyJson = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
+        if (UsesFastApiProxy() && !response.IsSuccessStatusCode)
+        {
+            activeUrl = proxyHistoryFallbackUrl;
+            using HttpResponseMessage fallbackResponse = await Http.GetAsync(activeUrl, cts.Token);
+            historyJson = await fallbackResponse.Content.ReadAsStringAsync();
+            if (!fallbackResponse.IsSuccessStatusCode)
+                throw new Exception($"ComfyUI output lookup failed for {promptId}: {(int)fallbackResponse.StatusCode} {historyJson}");
+        }
+        else if (!response.IsSuccessStatusCode)
+        {
             throw new Exception($"ComfyUI output lookup failed for {promptId}: {(int)response.StatusCode} {historyJson}");
+        }
 
         var outputs = ExtractOutputImageRefs(historyJson);
+        outputs.Sort(CompareOutputRefsForImportPriority);
         var saved = new List<string>();
 
         foreach (var output in outputs)
@@ -1060,6 +1120,36 @@ public class RemoteGenerationBackend : IGenerationBackend
         }
 
         return saved;
+    }
+
+    private static int CompareOutputRefsForImportPriority(ImageRef a, ImageRef b)
+    {
+        int rankA = GetOutputImportPriority(a);
+        int rankB = GetOutputImportPriority(b);
+        if (rankA != rankB)
+            return rankA.CompareTo(rankB);
+
+        return string.Compare(a?.filename, b?.filename, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int GetOutputImportPriority(ImageRef output)
+    {
+        string filename = output?.filename ?? string.Empty;
+        string ext = Path.GetExtension(filename).ToLowerInvariant();
+
+        if (filename.IndexOf("Final_Output", StringComparison.OrdinalIgnoreCase) >= 0 &&
+            (ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".fbx"))
+        {
+            return 0;
+        }
+
+        if (ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".fbx")
+            return 1;
+
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp")
+            return 2;
+
+        return 3;
     }
 
     private static string BuildMaskGuidedMeshSourceImage(string meshSourcePath, string maskPath, string outputDir, string outputPrefix)
@@ -1205,37 +1295,41 @@ public class RemoteGenerationBackend : IGenerationBackend
         if (string.IsNullOrWhiteSpace(historyJson))
             return refs;
 
-        // Proxy mode can flatten outputs to a top-level images array so Unity does not need
+        // Proxy mode can flatten outputs to top-level files/images arrays so Unity does not need
         // to parse raw ComfyUI history payloads.
-        MatchCollection imageListMatches = Regex.Matches(
-            historyJson,
-            "\"images\"\\s*:\\s*\\[(.*?)\\]",
-            RegexOptions.Singleline);
-        foreach (Match listMatch in imageListMatches)
+        string[] flattenedArrayNames = { "files", "meshes", "images" };
+        foreach (string arrayName in flattenedArrayNames)
         {
-            if (!listMatch.Success || listMatch.Groups.Count < 2)
-                continue;
-
-            foreach (Match imageMatch in Regex.Matches(
-                listMatch.Groups[1].Value,
-                "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\""))
+            MatchCollection flattenedMatches = Regex.Matches(
+                historyJson,
+                $"\"{Regex.Escape(arrayName)}\"\\s*:\\s*\\[(.*?)\\]",
+                RegexOptions.Singleline);
+            foreach (Match listMatch in flattenedMatches)
             {
-                if (!imageMatch.Success || imageMatch.Groups.Count < 4)
+                if (!listMatch.Success || listMatch.Groups.Count < 2)
                     continue;
 
-                string filename = imageMatch.Groups[1].Value;
-                string subfolder = imageMatch.Groups[2].Value;
-                string type = imageMatch.Groups[3].Value;
-                string key = $"{filename}|{subfolder}|{type}";
-                if (!seen.Add(key))
-                    continue;
-
-                refs.Add(new ImageRef
+                foreach (Match imageMatch in Regex.Matches(
+                    listMatch.Groups[1].Value,
+                    "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"subfolder\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"type\"\\s*:\\s*\"([^\"]+)\""))
                 {
-                    filename = filename,
-                    subfolder = subfolder,
-                    type = type
-                });
+                    if (!imageMatch.Success || imageMatch.Groups.Count < 4)
+                        continue;
+
+                    string filename = imageMatch.Groups[1].Value;
+                    string subfolder = imageMatch.Groups[2].Value;
+                    string type = imageMatch.Groups[3].Value;
+                    string key = $"{filename}|{subfolder}|{type}";
+                    if (!seen.Add(key))
+                        continue;
+
+                    refs.Add(new ImageRef
+                    {
+                        filename = filename,
+                        subfolder = subfolder,
+                        type = type
+                    });
+                }
             }
         }
 
@@ -1275,6 +1369,46 @@ public class RemoteGenerationBackend : IGenerationBackend
                 if (!type.Equals("output", StringComparison.OrdinalIgnoreCase))
                     continue;
 
+                string key = $"{filename}|{subfolder}|{type}";
+                if (!seen.Add(key))
+                    continue;
+
+                refs.Add(new ImageRef
+                {
+                    filename = filename,
+                    subfolder = subfolder,
+                    type = type
+                });
+            }
+        }
+
+        MatchCollection resultArrayMatches = Regex.Matches(
+            historyJson,
+            "\"result\"\\s*:\\s*\\[(.*?)\\]",
+            RegexOptions.Singleline);
+        foreach (Match resultArrayMatch in resultArrayMatches)
+        {
+            if (!resultArrayMatch.Success || resultArrayMatch.Groups.Count < 2)
+                continue;
+
+            foreach (Match stringMatch in Regex.Matches(resultArrayMatch.Groups[1].Value, "\"([^\"]+)\""))
+            {
+                if (!stringMatch.Success || stringMatch.Groups.Count < 2)
+                    continue;
+
+                string rawPath = stringMatch.Groups[1].Value;
+                string ext = Path.GetExtension(rawPath).ToLowerInvariant();
+                if (ext != ".glb" && ext != ".gltf" && ext != ".obj" && ext != ".fbx" &&
+                    ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp")
+                {
+                    continue;
+                }
+
+                string normalizedPath = rawPath.Replace("\\", "/");
+                int slashIndex = normalizedPath.LastIndexOf('/');
+                string subfolder = slashIndex >= 0 ? normalizedPath.Substring(0, slashIndex) : string.Empty;
+                string filename = slashIndex >= 0 ? normalizedPath[(slashIndex + 1)..] : normalizedPath;
+                string type = "output";
                 string key = $"{filename}|{subfolder}|{type}";
                 if (!seen.Add(key))
                     continue;
