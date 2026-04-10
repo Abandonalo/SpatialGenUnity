@@ -19,6 +19,7 @@ public class SpatialProxy : MonoBehaviour
     public SpatialProxyRole role = SpatialProxyRole.Occupy;
     public string label = "";
     [TextArea(2, 5)] public string assetPrompt = "";
+    public Texture2D assetImage;
     [Range(0f, 1f)] public float strength = 1f;
     public int priority = 0;
     public Vector3 size = Vector3.one;

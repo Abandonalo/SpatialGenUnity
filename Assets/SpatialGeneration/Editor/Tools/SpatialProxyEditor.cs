@@ -40,6 +40,13 @@ public class SpatialProxyEditor : Editor
         var newLabel = EditorGUILayout.TextField("Label", proxy.label);
         EditorGUILayout.LabelField("Asset Prompt");
         var newAssetPrompt = EditorGUILayout.TextArea(proxy.assetPrompt, GUILayout.MinHeight(48f));
+        var newAssetImage = (Texture2D)EditorGUILayout.ObjectField("Asset Image", proxy.assetImage, typeof(Texture2D), false);
+        if (newAssetImage != null)
+        {
+            EditorGUILayout.HelpBox(
+                "When an asset image is assigned, this proxy uses the image-to-3D workflow. The text prompt remains available as fallback metadata.",
+                MessageType.Info);
+        }
         var newStrength = EditorGUILayout.Slider("Strength", proxy.strength, 0f, 1f);
         var newPriority = EditorGUILayout.IntField("Priority", proxy.priority);
         var newSize = EditorGUILayout.Vector3Field("Size", proxy.size);
@@ -57,6 +64,7 @@ public class SpatialProxyEditor : Editor
             bool roleChanged = newRole != proxy.role;
             bool labelChanged = newLabel != proxy.label;
             bool assetPromptChanged = newAssetPrompt != proxy.assetPrompt;
+            bool assetImageChanged = newAssetImage != proxy.assetImage;
             bool strengthChanged = !Mathf.Approximately(newStrength, proxy.strength);
             bool priorityChanged = newPriority != proxy.priority;
             bool sizeChanged = newSize != proxy.size;
@@ -64,6 +72,7 @@ public class SpatialProxyEditor : Editor
             proxy.role = newRole;
             proxy.label = newLabel;
             proxy.assetPrompt = newAssetPrompt;
+            proxy.assetImage = newAssetImage;
             proxy.strength = Mathf.Clamp01(newStrength);
             proxy.priority = newPriority;
             proxy.size = newSize;
@@ -82,6 +91,11 @@ public class SpatialProxyEditor : Editor
             if (assetPromptChanged)
             {
                 InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_asset_prompt_change"));
+            }
+
+            if (assetImageChanged)
+            {
+                InteractionLogger.Log(CreateProxyEvent(proxy, "proxy_asset_image_change", newAssetImage != null ? "assigned" : "cleared"));
             }
 
             if (strengthChanged)

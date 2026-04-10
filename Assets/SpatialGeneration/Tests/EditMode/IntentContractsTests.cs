@@ -168,6 +168,7 @@ public class IntentContractsTests
         Assert.AreEqual(4, request.Payload.Generation.Width);
         Assert.AreEqual(4, request.Payload.Generation.Height);
         Assert.IsNotNull(request.PerProxyAssetPrompts);
+        Assert.IsNotNull(request.PerProxyAssetImages);
 
         Object.DestroyImmediate(depth);
         Object.DestroyImmediate(occupy);

@@ -95,6 +95,7 @@ public static class GenerationPipeline
             prompt, negativePrompt, depthTexture, edgesTexture, compiledConstraints,
             seed, steps, cfg, sampler, constraintSet);
         request.PerProxyAssetPrompts = BuildPerProxyAssetPrompts(sceneIntent);
+        request.PerProxyAssetImages = BuildPerProxyAssetImages(sceneIntent);
 
         string artifactDir = EnsureRunArtifactDirectory();
         string requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId;
@@ -249,6 +250,120 @@ public static class GenerationPipeline
         }
 
         return prompts;
+    }
+
+    private static List<SpatialGeneration.Generation.Intent.PerProxyAssetImage> BuildPerProxyAssetImages(NewSceneIntent sceneIntent)
+    {
+        List<SpatialGeneration.Generation.Intent.PerProxyAssetImage> images = new();
+        if (sceneIntent?.Proxies == null || sceneIntent.Proxies.Count == 0)
+            return images;
+
+        SpatialProxy[] liveProxies = UnityEngine.Object.FindObjectsByType<SpatialProxy>(FindObjectsSortMode.None);
+        Dictionary<string, SpatialProxy> proxiesById = new();
+        for (int i = 0; i < liveProxies.Length; i++)
+        {
+            SpatialProxy liveProxy = liveProxies[i];
+            if (liveProxy == null || string.IsNullOrWhiteSpace(liveProxy.ProxyId) || liveProxy.assetImage == null)
+                continue;
+
+            proxiesById[liveProxy.ProxyId] = liveProxy;
+        }
+
+        for (int i = 0; i < sceneIntent.Proxies.Count; i++)
+        {
+            var proxy = sceneIntent.Proxies[i];
+            if (proxy == null ||
+                proxy.Role != SpatialGeneration.Generation.Intent.ProxyRole.Occupy ||
+                string.IsNullOrWhiteSpace(proxy.Id) ||
+                !proxiesById.TryGetValue(proxy.Id, out SpatialProxy liveProxy) ||
+                liveProxy.assetImage == null)
+            {
+                continue;
+            }
+
+            string imageBase64 = EncodeTextureToPngBase64(liveProxy.assetImage);
+            if (string.IsNullOrWhiteSpace(imageBase64))
+                continue;
+
+            images.Add(new SpatialGeneration.Generation.Intent.PerProxyAssetImage
+            {
+                ProxyId = proxy.Id,
+                FileName = BuildProxyImageFileName(proxy.Id, liveProxy.assetImage.name),
+                ImageBase64 = imageBase64
+            });
+        }
+
+        return images;
+    }
+
+    private static string EncodeTextureToPngBase64(Texture sourceTexture)
+    {
+        if (sourceTexture == null)
+            return string.Empty;
+
+        RenderTexture tempRt = null;
+        RenderTexture previousActive = null;
+        Texture2D readable = null;
+
+        try
+        {
+            int width = Mathf.Max(1, sourceTexture.width);
+            int height = Mathf.Max(1, sourceTexture.height);
+            tempRt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(sourceTexture, tempRt);
+
+            previousActive = RenderTexture.active;
+            RenderTexture.active = tempRt;
+
+            readable = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            readable.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+            readable.Apply(false, false);
+
+            byte[] pngBytes = readable.EncodeToPNG();
+            return pngBytes == null || pngBytes.Length == 0
+                ? string.Empty
+                : Convert.ToBase64String(pngBytes);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"Failed to encode proxy asset image '{sourceTexture.name}' as PNG. {ex.Message}");
+            return string.Empty;
+        }
+        finally
+        {
+            if (previousActive != null || RenderTexture.active != null)
+                RenderTexture.active = previousActive;
+            if (readable != null)
+                UnityEngine.Object.DestroyImmediate(readable);
+            if (tempRt != null)
+                RenderTexture.ReleaseTemporary(tempRt);
+        }
+    }
+
+    private static string BuildProxyImageFileName(string proxyId, string textureName)
+    {
+        string safeProxyId = SanitizeFileToken(proxyId);
+        string safeTextureName = SanitizeFileToken(textureName);
+        string baseName = string.IsNullOrWhiteSpace(safeTextureName) ? safeProxyId : $"{safeProxyId}_{safeTextureName}";
+        if (string.IsNullOrWhiteSpace(baseName))
+            baseName = "proxy_image";
+        return $"{baseName}.png";
+    }
+
+    private static string SanitizeFileToken(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        char[] chars = value.Trim().ToCharArray();
+        for (int i = 0; i < chars.Length; i++)
+        {
+            char ch = chars[i];
+            if (!(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-'))
+                chars[i] = '_';
+        }
+
+        return new string(chars).Trim('_');
     }
 
     [Serializable]

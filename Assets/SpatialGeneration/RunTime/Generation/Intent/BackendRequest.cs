@@ -19,6 +19,7 @@ namespace SpatialGeneration.Generation.Intent
         public float MaskFocusWeight = 1f;
 
         public List<PerProxyAssetPrompt> PerProxyAssetPrompts = new();
+        public List<PerProxyAssetImage> PerProxyAssetImages = new();
 
         // Transitional bridge so legacy backends can still materialize proxy meshes.
         public global::Constraint[] LegacyConstraints;
@@ -64,5 +65,15 @@ namespace SpatialGeneration.Generation.Intent
         public string ProxyId = string.Empty;
 
         public string AssetPrompt = string.Empty;
+    }
+
+    [Serializable]
+    public class PerProxyAssetImage
+    {
+        public string ProxyId = string.Empty;
+
+        public string FileName = string.Empty;
+
+        public string ImageBase64 = string.Empty;
     }
 }

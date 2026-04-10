@@ -62,6 +62,7 @@ public class RemoteGenerationBackend : IGenerationBackend
             string occupyProxyId = !string.IsNullOrWhiteSpace(occupy?.proxy_id)
                 ? occupy.proxy_id
                 : $"occupy_{runIndex}";
+            SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage = ResolvePerProxyAssetImage(request, occupyProxyId);
             string runPrompt = ResolveRunPrompt(request, occupyProxyId);
             string meshSourcePrompt = BuildMeshSourcePrompt(runPrompt, occupyProxyId, request);
             string meshSourceNegativePrompt = BuildMeshSourceNegativePrompt(request);
@@ -73,12 +74,12 @@ public class RemoteGenerationBackend : IGenerationBackend
             }
 
             string workflowJson = string.Empty;
-            if (HasWorkflowTemplate(projectRoot))
+            if (!UsesFastApiProxy() && HasWorkflowTemplate(projectRoot))
             {
                 workflowJson = LoadAndBindWorkflow(projectRoot, request, runPrompt, meshSourcePrompt, meshSourceNegativePrompt);
             }
             WriteRunDebugArtifacts(runInputDir, runIndex, occupyProxyId, runPrompt, meshSourcePrompt, meshSourceNegativePrompt, workflowJson);
-            string promptId = await SubmitPromptAsync(workflowJson, runPrompt, meshSourceNegativePrompt, request, occupy);
+            string promptId = await SubmitPromptAsync(workflowJson, runPrompt, meshSourceNegativePrompt, request, occupy, assetImage);
             await WaitForPromptCompletionAsync(promptId);
 
             string runOutputPrefix = $"{requestId}_{SanitizeFileToken(occupyProxyId)}";
@@ -680,6 +681,27 @@ public class RemoteGenerationBackend : IGenerationBackend
         return string.Empty;
     }
 
+    private static SpatialGeneration.Generation.Intent.PerProxyAssetImage ResolvePerProxyAssetImage(NewBackendRequest request, string occupyProxyId)
+    {
+        if (request?.PerProxyAssetImages == null || request.PerProxyAssetImages.Count == 0 || string.IsNullOrWhiteSpace(occupyProxyId))
+            return null;
+
+        for (int i = 0; i < request.PerProxyAssetImages.Count; i++)
+        {
+            var entry = request.PerProxyAssetImages[i];
+            if (entry == null ||
+                !string.Equals(entry.ProxyId, occupyProxyId, StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(entry.ImageBase64))
+            {
+                continue;
+            }
+
+            return entry;
+        }
+
+        return null;
+    }
+
     private bool CanRunWorkflowWithProvidedInputs(
         string projectRoot,
         out string reason)
@@ -705,12 +727,13 @@ public class RemoteGenerationBackend : IGenerationBackend
         string prompt,
         string negativePrompt,
         NewBackendRequest request,
-        Constraint occupyConstraint)
+        Constraint occupyConstraint,
+        SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage)
     {
         if (UsesFastApiProxy())
         {
             string url = _settings.remoteUrl;
-            string proxyRequestBody = BuildProxyGenerateRequestBody(workflowJson, prompt, negativePrompt, request, occupyConstraint);
+            string proxyRequestBody = BuildProxyGenerateRequestBody(workflowJson, prompt, negativePrompt, request, occupyConstraint, assetImage);
             using var proxyContent = new StringContent(proxyRequestBody, Encoding.UTF8, "application/json");
             using var proxyCts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
             try
@@ -729,7 +752,7 @@ public class RemoteGenerationBackend : IGenerationBackend
 
                 return proxyPromptId;
             }
-            catch (OperationCanceledException ex)
+            catch (OperationCanceledException)
             {
                 throw;
             }
@@ -756,20 +779,25 @@ public class RemoteGenerationBackend : IGenerationBackend
         string prompt,
         string negativePrompt,
         NewBackendRequest request,
-        Constraint occupyConstraint)
+        Constraint occupyConstraint,
+        SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage)
     {
         string workflowValue = string.IsNullOrWhiteSpace(workflowJson) ? "null" : workflowJson;
         string proxyJson = BuildProxyJson(occupyConstraint, request);
         string constraintSetJsonValue = ToJsonStringOrNull(request?.ConstraintSetJson);
+        string assetImageJson = BuildAssetImageJson(assetImage);
+        string inputMode = assetImage != null ? "image" : "prompt";
 
         return
             "{" +
             $"\"request_id\":\"{EscapeJson(request?.RequestId ?? string.Empty)}\"," +
             $"\"prompt\":\"{EscapeJson(prompt ?? string.Empty)}\"," +
             $"\"negative_prompt\":\"{EscapeJson(negativePrompt ?? string.Empty)}\"," +
+            $"\"input_mode\":\"{inputMode}\"," +
             $"\"workflow\":{workflowValue}," +
             $"\"constraint_set_json\":{constraintSetJsonValue}," +
             $"\"proxy\":{proxyJson}," +
+            $"\"asset_image\":{assetImageJson}," +
             $"\"generation\":{BuildGenerationJson(request?.Payload?.Generation)}" +
             "}";
     }
@@ -805,6 +833,18 @@ public class RemoteGenerationBackend : IGenerationBackend
             $"\"sampler\":\"{EscapeJson(generation.Sampler ?? string.Empty)}\"," +
             $"\"width\":{generation.Width.ToString(CultureInfo.InvariantCulture)}," +
             $"\"height\":{generation.Height.ToString(CultureInfo.InvariantCulture)}" +
+            "}";
+    }
+
+    private static string BuildAssetImageJson(SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage)
+    {
+        if (assetImage == null || string.IsNullOrWhiteSpace(assetImage.ImageBase64))
+            return "null";
+
+        return
+            "{" +
+            $"\"file_name\":{ToJsonStringOrNull(assetImage.FileName)}," +
+            $"\"image_base64\":\"{EscapeJson(assetImage.ImageBase64)}\"" +
             "}";
     }
 
