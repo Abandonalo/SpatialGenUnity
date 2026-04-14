@@ -1,6 +1,7 @@
 using UnityEditor;
 using UnityEngine;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -9,9 +10,18 @@ public class SpatialGenerationWindow : EditorWindow
 {
     private const string GlobalStylePromptPrefsKey = "SpatialGenerationWindow.GlobalStylePrompt";
     private const string GlobalNegativeStylePromptPrefsKey = "SpatialGenerationWindow.GlobalNegativeStylePrompt";
+    private const string DefaultLocalComfyBaseUrl = "http://127.0.0.1:8188";
+    private const string DefaultColabBaseUrl = "https://comfyuitunnel.share.zrok.io";
     private static readonly HttpClient Http = new();
     private string _globalStylePrompt = string.Empty;
     private string _globalNegativeStylePrompt = string.Empty;
+    private string[] _workflowTemplateOptions = Array.Empty<string>();
+
+    private enum BackendConnectionPreset
+    {
+        LocalComfyApi,
+        Colab
+    }
 
     [MenuItem("Tools/Spatial Generation")]
     public static void Open()
@@ -25,11 +35,14 @@ public class SpatialGenerationWindow : EditorWindow
     {
         _globalStylePrompt = EditorPrefs.GetString(GlobalStylePromptPrefsKey, string.Empty);
         _globalNegativeStylePrompt = EditorPrefs.GetString(GlobalNegativeStylePromptPrefsKey, string.Empty);
+        RefreshWorkflowTemplateOptions();
     }
 
     private void OnGUI()
     {
         GUILayout.Label("Spatial Generation", EditorStyles.boldLabel);
+
+        DrawBackendConfiguration();
 
         GUILayout.Space(6);
         GUILayout.Label("Global Style Prompt", EditorStyles.label);
@@ -111,6 +124,69 @@ public class SpatialGenerationWindow : EditorWindow
         }
     }
 
+    private void DrawBackendConfiguration()
+    {
+        BackendSettings settings = BackendRegistry.Settings;
+        if (settings == null)
+            return;
+
+        GUILayout.Space(4);
+        GUILayout.Label("Backend Configuration", EditorStyles.boldLabel);
+
+        EditorGUI.BeginChangeCheck();
+        BackendConnectionPreset selectedPreset = (BackendConnectionPreset)EditorGUILayout.EnumPopup(
+            "Backend Preset",
+            GetCurrentPreset(settings));
+        if (EditorGUI.EndChangeCheck())
+        {
+            ApplyBackendPreset(settings, selectedPreset);
+            PersistBackendSettings(settings);
+        }
+
+        RefreshWorkflowTemplateOptions();
+        int selectedWorkflowIndex = GetSelectedWorkflowIndex(settings.comfyWorkflowTemplatePath);
+        EditorGUI.BeginChangeCheck();
+        int updatedWorkflowIndex = EditorGUILayout.Popup("Workflow Template", selectedWorkflowIndex, _workflowTemplateOptions);
+        if (EditorGUI.EndChangeCheck() && updatedWorkflowIndex >= 0 && updatedWorkflowIndex < _workflowTemplateOptions.Length)
+        {
+            settings.comfyWorkflowTemplatePath = _workflowTemplateOptions[updatedWorkflowIndex];
+            PersistBackendSettings(settings);
+        }
+
+        BackendConnectionPreset activePreset = GetCurrentPreset(settings);
+        string configuredBaseUrl = activePreset == BackendConnectionPreset.Colab
+            ? GetConfiguredColabBaseUrl(settings)
+            : GetConfiguredLocalBaseUrl(settings);
+        string endpointLabel = activePreset == BackendConnectionPreset.Colab ? "Colab Base URL" : "Local Base URL";
+
+        EditorGUI.BeginChangeCheck();
+        string updatedBaseUrl = EditorGUILayout.TextField(endpointLabel, configuredBaseUrl);
+        if (EditorGUI.EndChangeCheck())
+        {
+            ApplyEndpointOverride(settings, activePreset, updatedBaseUrl);
+            PersistBackendSettings(settings);
+        }
+
+        if (activePreset == BackendConnectionPreset.LocalComfyApi)
+        {
+            EditorGUI.BeginChangeCheck();
+            bool updatedAutoStart = EditorGUILayout.Toggle("Auto Start Local ComfyUI", settings.comfyAutoStart);
+            if (EditorGUI.EndChangeCheck())
+            {
+                settings.comfyAutoStart = updatedAutoStart;
+                PersistBackendSettings(settings);
+            }
+        }
+
+        string workflowPath = string.IsNullOrWhiteSpace(settings.comfyWorkflowTemplatePath)
+            ? "(none)"
+            : settings.comfyWorkflowTemplatePath;
+        string summary = activePreset == BackendConnectionPreset.Colab
+            ? $"Using Colab FastAPI proxy at {settings.remoteUrl}\nWorkflow template: {workflowPath}"
+            : $"Using local ComfyUI API at {settings.comfyBaseUrl}\nAuto start: {(settings.comfyAutoStart ? "enabled" : "disabled")}\nWorkflow template: {workflowPath}";
+        EditorGUILayout.HelpBox(summary, MessageType.None);
+    }
+
     private static string WriteSceneIntentSnapshot(string json)
     {
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
@@ -168,5 +244,158 @@ public class SpatialGenerationWindow : EditorWindow
         {
             Debug.LogError($"Spatial Generation backend health request failed: {healthUrl}\n{ex.Message}");
         }
+    }
+
+    private void RefreshWorkflowTemplateOptions()
+    {
+        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string handoffDirectory = Path.Combine(projectRoot, "SpatialGenHandoff");
+        var options = new List<string>();
+
+        if (Directory.Exists(handoffDirectory))
+        {
+            string[] files = Directory.GetFiles(handoffDirectory, "*.json", SearchOption.TopDirectoryOnly);
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < files.Length; i++)
+            {
+                string relativePath = MakeProjectRelativePath(projectRoot, files[i]);
+                if (!string.IsNullOrWhiteSpace(relativePath))
+                    options.Add(relativePath);
+            }
+        }
+
+        if (options.Count == 0)
+            options.Add("SpatialGenHandoff/comfy_workflow_api.json");
+
+        _workflowTemplateOptions = options.ToArray();
+    }
+
+    private int GetSelectedWorkflowIndex(string currentWorkflowPath)
+    {
+        if (_workflowTemplateOptions == null || _workflowTemplateOptions.Length == 0)
+            return 0;
+
+        string normalizedCurrent = NormalizePath(currentWorkflowPath);
+        for (int i = 0; i < _workflowTemplateOptions.Length; i++)
+        {
+            if (NormalizePath(_workflowTemplateOptions[i]) == normalizedCurrent)
+                return i;
+        }
+
+        return 0;
+    }
+
+    private static BackendConnectionPreset GetCurrentPreset(BackendSettings settings)
+    {
+        return string.IsNullOrWhiteSpace(settings?.remoteUrl)
+            ? BackendConnectionPreset.LocalComfyApi
+            : BackendConnectionPreset.Colab;
+    }
+
+    private static void ApplyBackendPreset(BackendSettings settings, BackendConnectionPreset preset)
+    {
+        settings.backendKind = BackendKind.RemoteHttp;
+
+        switch (preset)
+        {
+            case BackendConnectionPreset.LocalComfyApi:
+                settings.remoteUrl = string.Empty;
+                settings.comfyBaseUrl = GetConfiguredLocalBaseUrl(settings);
+                settings.comfyWsUrl = BuildWebSocketUrl(settings.comfyBaseUrl);
+                break;
+
+            case BackendConnectionPreset.Colab:
+                settings.comfyBaseUrl = GetConfiguredColabBaseUrl(settings);
+                settings.remoteUrl = $"{settings.comfyBaseUrl.TrimEnd('/')}/generate";
+                settings.comfyWsUrl = string.Empty;
+                break;
+        }
+    }
+
+    private static void ApplyEndpointOverride(BackendSettings settings, BackendConnectionPreset preset, string baseUrl)
+    {
+        string normalizedBaseUrl = NormalizeBaseUrl(baseUrl, preset == BackendConnectionPreset.Colab ? DefaultColabBaseUrl : DefaultLocalComfyBaseUrl);
+        settings.comfyBaseUrl = normalizedBaseUrl;
+
+        if (preset == BackendConnectionPreset.Colab)
+        {
+            settings.remoteUrl = $"{normalizedBaseUrl.TrimEnd('/')}/generate";
+            settings.comfyWsUrl = string.Empty;
+            return;
+        }
+
+        settings.remoteUrl = string.Empty;
+        settings.comfyWsUrl = BuildWebSocketUrl(normalizedBaseUrl);
+    }
+
+    private static string GetConfiguredLocalBaseUrl(BackendSettings settings)
+    {
+        if (!string.IsNullOrWhiteSpace(settings?.comfyBaseUrl) && IsLocalUrl(settings.comfyBaseUrl))
+            return NormalizeBaseUrl(settings.comfyBaseUrl, DefaultLocalComfyBaseUrl);
+
+        return DefaultLocalComfyBaseUrl;
+    }
+
+    private static string GetConfiguredColabBaseUrl(BackendSettings settings)
+    {
+        if (!string.IsNullOrWhiteSpace(settings?.remoteUrl) && Uri.TryCreate(settings.remoteUrl, UriKind.Absolute, out Uri remoteUri))
+            return $"{remoteUri.Scheme}://{remoteUri.Authority}";
+
+        if (!string.IsNullOrWhiteSpace(settings?.comfyBaseUrl) && !IsLocalUrl(settings.comfyBaseUrl))
+            return NormalizeBaseUrl(settings.comfyBaseUrl, DefaultColabBaseUrl);
+
+        return DefaultColabBaseUrl;
+    }
+
+    private static string NormalizeBaseUrl(string baseUrl, string fallback)
+    {
+        string normalized = string.IsNullOrWhiteSpace(baseUrl) ? fallback : baseUrl.Trim();
+        return normalized.TrimEnd('/');
+    }
+
+    private static string BuildWebSocketUrl(string httpUrl)
+    {
+        if (string.IsNullOrWhiteSpace(httpUrl))
+            return string.Empty;
+
+        if (!Uri.TryCreate(httpUrl, UriKind.Absolute, out Uri uri))
+            return string.Empty;
+
+        string scheme = uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws";
+        return $"{scheme}://{uri.Authority}/ws";
+    }
+
+    private static bool IsLocalUrl(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        return value.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               value.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static void PersistBackendSettings(BackendSettings settings)
+    {
+        EditorUtility.SetDirty(settings);
+        AssetDatabase.SaveAssets();
+        BackendRegistry.Reload();
+    }
+
+    private static string MakeProjectRelativePath(string projectRoot, string absolutePath)
+    {
+        if (string.IsNullOrWhiteSpace(projectRoot) || string.IsNullOrWhiteSpace(absolutePath))
+            return string.Empty;
+
+        string relativePath = absolutePath.StartsWith(projectRoot, StringComparison.OrdinalIgnoreCase)
+            ? absolutePath.Substring(projectRoot.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            : absolutePath;
+        return NormalizePath(relativePath);
+    }
+
+    private static string NormalizePath(string path)
+    {
+        return string.IsNullOrWhiteSpace(path)
+            ? string.Empty
+            : path.Replace('\\', '/');
     }
 }

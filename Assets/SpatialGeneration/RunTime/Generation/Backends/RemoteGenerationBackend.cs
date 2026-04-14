@@ -325,19 +325,18 @@ public class RemoteGenerationBackend : IGenerationBackend
         if (!_settings.comfyAutoStart)
             throw new Exception("ComfyUI is not reachable and comfyAutoStart is disabled.");
 
-        bool desktopAlreadyRunning = IsComfyDesktopProcessRunning();
-        if (!desktopAlreadyRunning)
-            StartComfyProcess();
+        StartComfyProcess();
 
         float waited = 0f;
         while (waited < _settings.comfyBootTimeoutSeconds)
         {
             await Task.Delay(500);
             waited += 0.5f;
+            if (_comfyProcess != null && _comfyProcess.HasExited)
+                throw new Exception($"ComfyUI exited during startup with exit code {_comfyProcess.ExitCode}.");
             if (await IsComfyHealthyAsync())
                 return;
         }
-
         throw new Exception($"Timed out waiting for ComfyUI at {GetComfyBaseUrl()}");
     }
 
@@ -387,60 +386,189 @@ public class RemoteGenerationBackend : IGenerationBackend
 
     private Process TryStartComfyProcess(string workingDirectory)
     {
-        var commands = BuildLaunchCommandCandidates(_settings.comfyLaunchCommand);
+        List<LaunchCommandSpec> commands = BuildLaunchCommandCandidates(workingDirectory);
         Exception lastError = null;
 
-        foreach (string command in commands)
+        foreach (LaunchCommandSpec command in commands)
         {
             try
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = command,
-                    Arguments = _settings.comfyLaunchArguments,
+                    FileName = command.fileName,
+                    Arguments = command.arguments,
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
-                if (!string.IsNullOrWhiteSpace(workingDirectory))
-                    psi.WorkingDirectory = workingDirectory;
+                string candidateWorkingDirectory = string.IsNullOrWhiteSpace(command.workingDirectory)
+                    ? workingDirectory
+                    : command.workingDirectory;
+                if (!string.IsNullOrWhiteSpace(candidateWorkingDirectory))
+                    psi.WorkingDirectory = candidateWorkingDirectory;
 
                 Process process = Process.Start(psi);
                 if (process != null)
                     return process;
             }
-            catch (Win32Exception ex)
+            catch (Exception ex) when (ex is Win32Exception || ex is InvalidOperationException)
             {
                 lastError = ex;
                 // Continue to fallback candidates if executable is missing.
             }
         }
 
-        string tried = string.Join(", ", commands);
+        string tried = string.Join(", ", commands.Select(c => c.DisplayText));
         throw new Exception(
             $"Unable to launch ComfyUI. Tried commands: {tried}. " +
             "Set BackendSettings.comfyLaunchCommand to a valid interpreter path (for macOS usually /usr/bin/python3).",
             lastError);
     }
 
-    private static List<string> BuildLaunchCommandCandidates(string configuredCommand)
+    private List<LaunchCommandSpec> BuildLaunchCommandCandidates(string configuredWorkingDirectory)
     {
-        var candidates = new List<string>();
+        var candidates = new List<LaunchCommandSpec>();
         string comfyDesktopBinary = "/Applications/ComfyUI.app/Contents/MacOS/ComfyUI";
+        string configuredCommand = (_settings.comfyLaunchCommand ?? string.Empty).Trim();
+        string configuredArguments = (_settings.comfyLaunchArguments ?? string.Empty).Trim();
         string primary = string.IsNullOrWhiteSpace(configuredCommand)
             ? (File.Exists(comfyDesktopBinary) ? comfyDesktopBinary : "python3")
-            : configuredCommand.Trim();
-        candidates.Add(primary);
+            : configuredCommand;
+
+        LaunchCommandSpec embeddedApiLauncher = TryBuildEmbeddedApiLauncher(primary);
+        if (embeddedApiLauncher != null)
+            candidates.Add(embeddedApiLauncher);
+
+        AddLaunchCandidate(candidates, primary, configuredArguments, configuredWorkingDirectory);
 
         // Common fallback on macOS/Linux when "python" is unavailable.
         if (primary.Equals("python", StringComparison.OrdinalIgnoreCase))
         {
-            if (!candidates.Contains("python3"))
-                candidates.Add("python3");
-            if (!candidates.Contains("/usr/bin/python3"))
-                candidates.Add("/usr/bin/python3");
+            AddLaunchCandidate(candidates, "python3", configuredArguments, configuredWorkingDirectory);
+            AddLaunchCandidate(candidates, "/usr/bin/python3", configuredArguments, configuredWorkingDirectory);
         }
 
         return candidates;
+    }
+
+    private void AddLaunchCandidate(List<LaunchCommandSpec> candidates, string fileName, string arguments, string workingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return;
+
+        string normalizedFileName = fileName.Trim();
+        string normalizedArguments = string.IsNullOrWhiteSpace(arguments) ? string.Empty : arguments.Trim();
+        string normalizedWorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? string.Empty : workingDirectory.Trim();
+
+        bool alreadyAdded = candidates.Any(c =>
+            string.Equals(c.fileName, normalizedFileName, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(c.arguments, normalizedArguments, StringComparison.Ordinal));
+        if (alreadyAdded)
+            return;
+
+        candidates.Add(new LaunchCommandSpec
+        {
+            fileName = normalizedFileName,
+            arguments = normalizedArguments,
+            workingDirectory = normalizedWorkingDirectory
+        });
+    }
+
+    private LaunchCommandSpec TryBuildEmbeddedApiLauncher(string command)
+    {
+        string comfyDesktopBinary = "/Applications/ComfyUI.app/Contents/MacOS/ComfyUI";
+        if (!string.Equals(command, comfyDesktopBinary, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        string embeddedMain = "/Applications/ComfyUI.app/Contents/Resources/ComfyUI/main.py";
+        string embeddedWorkingDirectory = Path.GetDirectoryName(embeddedMain);
+        if (!File.Exists(embeddedMain) || string.IsNullOrWhiteSpace(embeddedWorkingDirectory))
+            return null;
+
+        Uri baseUri = new Uri(GetComfyBaseUrl());
+        string host = string.IsNullOrWhiteSpace(baseUri.Host) ? "127.0.0.1" : baseUri.Host;
+        int port = baseUri.IsDefaultPort
+            ? (baseUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? 443 : 80)
+            : baseUri.Port;
+
+        string baseDirectory = TryResolveDesktopBaseDirectory();
+        string desktopPython = TryResolveDesktopPython(baseDirectory);
+        if (string.IsNullOrWhiteSpace(desktopPython))
+            return null;
+
+        string baseDirectoryArgument = string.IsNullOrWhiteSpace(baseDirectory)
+            ? string.Empty
+            : $" --base-directory \"{baseDirectory}\"";
+        return new LaunchCommandSpec
+        {
+            fileName = desktopPython,
+            arguments = $"\"{embeddedMain}\" --listen {host} --port {port} --disable-auto-launch{baseDirectoryArgument}",
+            workingDirectory = embeddedWorkingDirectory
+        };
+    }
+
+    private static string TryResolveDesktopBaseDirectory()
+    {
+        try
+        {
+            string[] appSupportCandidates =
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Personal), "Library", "Application Support"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support")
+            };
+
+            for (int i = 0; i < appSupportCandidates.Length; i++)
+            {
+                string appSupportPath = appSupportCandidates[i];
+                if (string.IsNullOrWhiteSpace(appSupportPath))
+                    continue;
+
+                string configPath = Path.Combine(appSupportPath, "ComfyUI", "config.json");
+                bool configExists = File.Exists(configPath);
+                if (!configExists)
+                    continue;
+
+                string json = File.ReadAllText(configPath);
+                string basePath = ExtractJsonString(json, "basePath");
+                bool baseDirectoryExists = Directory.Exists(basePath);
+                return baseDirectoryExists ? basePath : string.Empty;
+            }
+            return string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string TryResolveDesktopPython(string baseDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+            return string.Empty;
+
+        string[] candidates =
+        {
+            Path.Combine(baseDirectory, ".venv", "bin", "python3"),
+            Path.Combine(baseDirectory, ".venv", "bin", "python")
+        };
+
+        for (int i = 0; i < candidates.Length; i++)
+        {
+            if (File.Exists(candidates[i]))
+                return candidates[i];
+        }
+        return string.Empty;
+    }
+
+    private sealed class LaunchCommandSpec
+    {
+        public string fileName;
+        public string arguments;
+        public string workingDirectory;
+
+        public string DisplayText => string.IsNullOrWhiteSpace(arguments)
+            ? fileName ?? string.Empty
+            : $"{fileName} {arguments}";
     }
 
     private string ResolveWorkingDirectory()
