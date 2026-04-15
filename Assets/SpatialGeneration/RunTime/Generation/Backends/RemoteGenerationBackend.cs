@@ -24,6 +24,7 @@ public class RemoteGenerationBackend : IGenerationBackend
     private static Process _comfyProcess;
     private static readonly HttpClient Http = new HttpClient();
     private static bool _preferHistoryPolling;
+    private const string ComfySessionProcessIdKey = "SpatialGeneration.RemoteGenerationBackend.ComfyProcessId";
 
     public string Name => "ComfyUI";
 
@@ -319,12 +320,25 @@ public class RemoteGenerationBackend : IGenerationBackend
             throw new Exception($"FastAPI proxy is not reachable at {GetComfyBaseUrl()}");
         }
 
-        if (await IsComfyHealthyAsync())
-            return;
+        bool comfyHealthy = await IsComfyHealthyAsync();
+        if (comfyHealthy)
+        {
+            if (_comfyProcess == null &&
+                (TryGetPersistedRunningComfyProcess(out Process persistedProcess) ||
+                 TryGetUnityOwnedComfyProcessForConfiguredPort(out persistedProcess)))
+            {
+                TryStopPersistedComfyProcess(persistedProcess);
+                comfyHealthy = await IsComfyHealthyAsync();
+            }
 
+            if (!comfyHealthy)
+                goto LaunchComfyProcess;
+            return;
+        }
+
+LaunchComfyProcess:
         if (!_settings.comfyAutoStart)
             throw new Exception("ComfyUI is not reachable and comfyAutoStart is disabled.");
-
         StartComfyProcess();
 
         float waited = 0f;
@@ -398,7 +412,9 @@ public class RemoteGenerationBackend : IGenerationBackend
                     FileName = command.fileName,
                     Arguments = command.arguments,
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
                 };
                 string candidateWorkingDirectory = string.IsNullOrWhiteSpace(command.workingDirectory)
                     ? workingDirectory
@@ -408,7 +424,14 @@ public class RemoteGenerationBackend : IGenerationBackend
 
                 Process process = Process.Start(psi);
                 if (process != null)
+                {
+                    PersistComfyProcessId(process.Id);
+                    process.OutputDataReceived += (_, _) => { };
+                    process.ErrorDataReceived += (_, _) => { };
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
                     return process;
+                }
             }
             catch (Exception ex) when (ex is Win32Exception || ex is InvalidOperationException)
             {
@@ -498,10 +521,17 @@ public class RemoteGenerationBackend : IGenerationBackend
         string baseDirectoryArgument = string.IsNullOrWhiteSpace(baseDirectory)
             ? string.Empty
             : $" --base-directory \"{baseDirectory}\"";
+        string wrappedMainInvocation =
+            "import sys, runpy, comfy.options; " +
+            "comfy.options.enable_args_parsing(); " +
+            "import comfy.utils; " +
+            "comfy.utils.set_progress_bar_enabled(False); " +
+            "sys.argv=['main.py'] + sys.argv[1:]; " +
+            $"runpy.run_path(r'{embeddedMain}', run_name='__main__')";
         return new LaunchCommandSpec
         {
             fileName = desktopPython,
-            arguments = $"\"{embeddedMain}\" --listen {host} --port {port} --disable-auto-launch{baseDirectoryArgument}",
+            arguments = $"-c \"{wrappedMainInvocation}\" --listen {host} --port {port} --disable-auto-launch --dont-print-server{baseDirectoryArgument}",
             workingDirectory = embeddedWorkingDirectory
         };
     }
@@ -1655,6 +1685,147 @@ public class RemoteGenerationBackend : IGenerationBackend
             .Replace("\t", "\\t")
             .Replace("\b", "\\b")
             .Replace("\f", "\\f");
+    }
+
+    private static bool TryGetPersistedRunningComfyProcess(out Process process)
+    {
+        process = null;
+        int persistedProcessId = GetPersistedComfyProcessId();
+        if (persistedProcessId <= 0)
+            return false;
+
+        try
+        {
+            Process candidate = Process.GetProcessById(persistedProcessId);
+            if (candidate.HasExited)
+            {
+                ClearPersistedComfyProcessId();
+                candidate.Dispose();
+                return false;
+            }
+
+            process = candidate;
+            return true;
+        }
+        catch
+        {
+            ClearPersistedComfyProcessId();
+            return false;
+        }
+    }
+
+    private bool TryGetUnityOwnedComfyProcessForConfiguredPort(out Process process)
+    {
+        process = null;
+
+        if (!Uri.TryCreate(GetComfyBaseUrl(), UriKind.Absolute, out Uri baseUri))
+            return false;
+
+        int port = baseUri.Port;
+        if (port <= 0)
+            return false;
+
+        int listenerPid = RunProcessForSingleInteger("lsof", $"-nP -iTCP:{port} -sTCP:LISTEN -t");
+        if (listenerPid <= 0 || listenerPid == Process.GetCurrentProcess().Id)
+            return false;
+
+        int parentPid = RunProcessForSingleInteger("ps", $"-o ppid= -p {listenerPid}");
+        if (parentPid != Process.GetCurrentProcess().Id)
+            return false;
+
+        try
+        {
+            Process candidate = Process.GetProcessById(listenerPid);
+            if (candidate.HasExited)
+            {
+                candidate.Dispose();
+                return false;
+            }
+
+            process = candidate;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void TryStopPersistedComfyProcess(Process process)
+    {
+        try
+        {
+            if (process != null && !process.HasExited)
+            {
+                process.Kill();
+                process.WaitForExit(5000);
+            }
+        }
+        catch
+        {
+            // Ignore cleanup failures and fall back to the current health check.
+        }
+        finally
+        {
+            process?.Dispose();
+            ClearPersistedComfyProcessId();
+            _comfyProcess = null;
+        }
+    }
+
+    private static int GetPersistedComfyProcessId()
+    {
+#if UNITY_EDITOR
+        return SessionState.GetInt(ComfySessionProcessIdKey, 0);
+#else
+        return 0;
+#endif
+    }
+
+    private static void PersistComfyProcessId(int processId)
+    {
+#if UNITY_EDITOR
+        SessionState.SetInt(ComfySessionProcessIdKey, processId);
+#endif
+    }
+
+    private static void ClearPersistedComfyProcessId()
+    {
+#if UNITY_EDITOR
+        SessionState.EraseInt(ComfySessionProcessIdKey);
+#endif
+    }
+
+    private static int RunProcessForSingleInteger(string fileName, string arguments)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using Process process = Process.Start(psi);
+            if (process == null)
+                return 0;
+
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit(2000);
+
+            string firstLine = output
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault();
+            return int.TryParse(firstLine?.Trim(), out int value) ? value : 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private static string ExtractJsonString(string json, string fieldName)
