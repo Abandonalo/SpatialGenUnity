@@ -1,4 +1,5 @@
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using System;
 using System.Collections.Generic;
@@ -10,11 +11,13 @@ public class SpatialGenerationWindow : EditorWindow
 {
     private const string GlobalStylePromptPrefsKey = "SpatialGenerationWindow.GlobalStylePrompt";
     private const string GlobalNegativeStylePromptPrefsKey = "SpatialGenerationWindow.GlobalNegativeStylePrompt";
+    private const string LocalRefinementPromptPrefsKey = "SpatialGenerationWindow.LocalRefinementPrompt";
     private const string DefaultLocalComfyBaseUrl = "http://127.0.0.1:8188";
     private const string DefaultColabBaseUrl = "https://comfyuitunnel.share.zrok.io";
     private static readonly HttpClient Http = new();
     private string _globalStylePrompt = string.Empty;
     private string _globalNegativeStylePrompt = string.Empty;
+    private string _localRefinementPrompt = string.Empty;
     private string[] _workflowTemplateOptions = Array.Empty<string>();
 
     private enum BackendConnectionPreset
@@ -35,6 +38,7 @@ public class SpatialGenerationWindow : EditorWindow
     {
         _globalStylePrompt = EditorPrefs.GetString(GlobalStylePromptPrefsKey, string.Empty);
         _globalNegativeStylePrompt = EditorPrefs.GetString(GlobalNegativeStylePromptPrefsKey, string.Empty);
+        _localRefinementPrompt = EditorPrefs.GetString(LocalRefinementPromptPrefsKey, string.Empty);
         RefreshWorkflowTemplateOptions();
     }
 
@@ -99,6 +103,8 @@ public class SpatialGenerationWindow : EditorWindow
 
             Debug.Log($"Spatial Generation: SceneIntent snapshot saved to {snapshotPath}");
         }
+
+        DrawRefinementTools();
 
         if (GUILayout.Button("Check Backend Health"))
         {
@@ -185,6 +191,85 @@ public class SpatialGenerationWindow : EditorWindow
             ? $"Using Colab FastAPI proxy at {settings.remoteUrl}\nWorkflow template: {workflowPath}"
             : $"Using local ComfyUI API at {settings.comfyBaseUrl}\nAuto start: {(settings.comfyAutoStart ? "enabled" : "disabled")}\nWorkflow template: {workflowPath}";
         EditorGUILayout.HelpBox(summary, MessageType.None);
+    }
+
+    private void DrawRefinementTools()
+    {
+        GUILayout.Space(8);
+        GUILayout.Label("Local Region Refinement", EditorStyles.boldLabel);
+
+        EditorGUI.BeginChangeCheck();
+        string updatedLocalPrompt = EditorGUILayout.TextArea(_localRefinementPrompt, GUILayout.MinHeight(52f));
+        if (EditorGUI.EndChangeCheck())
+        {
+            _localRefinementPrompt = updatedLocalPrompt;
+            EditorPrefs.SetString(LocalRefinementPromptPrefsKey, _localRefinementPrompt);
+        }
+
+        EditorGUILayout.HelpBox(
+            "Select a region in the Scene view, describe the local change, then send RGB/depth/mask inputs to the refinement backend.",
+            MessageType.Info);
+
+        RefinementController controller = FindFirstObjectByType<RefinementController>();
+        if (controller == null)
+        {
+            if (GUILayout.Button("Setup Refinement Rig"))
+            {
+                controller = EnsureRefinementRig();
+                Selection.activeGameObject = controller != null ? controller.gameObject : null;
+            }
+
+            EditorGUILayout.HelpBox(
+                "Create the refinement rig to enable region selection and local refinement requests.",
+                MessageType.None);
+            return;
+        }
+
+        RegionSelectionManager selectionManager = controller.selectionManager != null
+            ? controller.selectionManager
+            : controller.GetComponent<RegionSelectionManager>();
+        RegionMaskRenderer maskRenderer = controller.maskRenderer != null
+            ? controller.maskRenderer
+            : controller.GetComponent<RegionMaskRenderer>();
+        controller.selectionManager = selectionManager;
+        controller.maskRenderer = maskRenderer;
+
+        if (selectionManager == null || maskRenderer == null)
+        {
+            EditorGUILayout.HelpBox(
+                "The refinement rig is missing required components. Recreate the rig or reassign the references.",
+                MessageType.Error);
+            return;
+        }
+
+        string selectionSummary = selectionManager?.CurrentSelection == null
+            ? "No active region selection."
+            : $"Selection: center={selectionManager.CurrentSelection.center}, size={selectionManager.CurrentSelection.size}";
+        EditorGUILayout.HelpBox(selectionSummary, MessageType.None);
+
+        if (GUILayout.Button("Reset Selection"))
+        {
+            Undo.RecordObject(selectionManager, "Reset Region Selection");
+            if (!selectionManager.TryInitializeFromSceneGeometry(0.7f))
+                selectionManager.BeginSelection();
+            selectionManager.ConfirmSelection();
+            EditorUtility.SetDirty(selectionManager);
+            SceneView.RepaintAll();
+        }
+
+        using (new EditorGUI.DisabledScope(selectionManager == null || selectionManager.CurrentSelection == null || controller.IsRunning))
+        {
+            if (GUILayout.Button(controller.IsRunning ? "Refining..." : "Refine Selected Region"))
+            {
+                controller.RunRefinement(_globalStylePrompt, _localRefinementPrompt);
+
+                InteractionLogger.Log(new InteractionEvent
+                {
+                    type = "refine_region",
+                    extra = $"selection={selectionManager.CurrentSelection.selectionId}, global_prompt={_globalStylePrompt}, local_prompt={_localRefinementPrompt}"
+                });
+            }
+        }
     }
 
     private static string WriteSceneIntentSnapshot(string json)
@@ -379,6 +464,30 @@ public class SpatialGenerationWindow : EditorWindow
         EditorUtility.SetDirty(settings);
         AssetDatabase.SaveAssets();
         BackendRegistry.Reload();
+    }
+
+    private static RefinementController EnsureRefinementRig()
+    {
+        RefinementController existing = FindFirstObjectByType<RefinementController>();
+        if (existing != null)
+            return existing;
+
+        GameObject root = new GameObject("SpatialGenerationRefinement");
+        Undo.RegisterCreatedObjectUndo(root, "Create Refinement Rig");
+
+        RegionSelectionManager selectionManager = root.AddComponent<RegionSelectionManager>();
+        RegionMaskRenderer maskRenderer = root.AddComponent<RegionMaskRenderer>();
+        RefinementController controller = root.AddComponent<RefinementController>();
+
+        maskRenderer.renderCamera = Camera.main != null ? Camera.main : FindFirstObjectByType<Camera>();
+        controller.selectionManager = selectionManager;
+        controller.maskRenderer = maskRenderer;
+        selectionManager.TryInitializeFromSceneGeometry(0.7f);
+        selectionManager.ConfirmSelection();
+
+        EditorUtility.SetDirty(root);
+        EditorSceneManager.MarkSceneDirty(root.scene);
+        return controller;
     }
 
     private static string MakeProjectRelativePath(string projectRoot, string absolutePath)

@@ -198,6 +198,52 @@ public class IntentContractsTests
         Object.DestroyImmediate(compiled.MaskFocus);
     }
 
+    [Test]
+    public void RefinementRequestBuilder_PackagesAlignedRgbDepthAndMask()
+    {
+        Texture2D rgb = SolidTexture(4, 4, Color.white);
+        Texture2D depth = SolidTexture(4, 4, Color.gray);
+        Texture2D mask = SolidTexture(4, 4, Color.black);
+        RegionSelection selection = new RegionSelection
+        {
+            selectionId = "selection_001",
+            center = new Vector3(1f, 2f, 3f),
+            size = new Vector3(4f, 5f, 6f),
+            rotation = Quaternion.Euler(0f, 45f, 0f)
+        };
+
+        RefinementRequest request = RefinementRequestBuilder.Build(
+            "cohesive sci-fi hallway",
+            "replace wall panel with glowing terminal",
+            rgb,
+            depth,
+            mask,
+            selection,
+            "session_test",
+            0.55f,
+            18,
+            7.5f);
+
+        Assert.IsFalse(string.IsNullOrWhiteSpace(request.requestId));
+        Assert.AreEqual("cohesive sci-fi hallway", request.globalPrompt);
+        Assert.AreEqual("replace wall panel with glowing terminal", request.localPrompt);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(request.rgbImageBase64));
+        Assert.IsFalse(string.IsNullOrWhiteSpace(request.depthImageBase64));
+        Assert.IsFalse(string.IsNullOrWhiteSpace(request.maskImageBase64));
+        Assert.AreEqual("session_test", request.sessionId);
+        Assert.AreEqual(0.55f, request.denoiseStrength);
+        Assert.AreEqual(18, request.steps);
+        Assert.AreEqual(7.5f, request.cfgScale);
+        Assert.AreEqual(selection.selectionId, request.selection.selectionId);
+        Assert.AreEqual(selection.center, request.selection.center);
+        Assert.AreEqual(selection.size, request.selection.size);
+        Assert.AreEqual(selection.rotation, request.selection.rotation);
+
+        Object.DestroyImmediate(rgb);
+        Object.DestroyImmediate(depth);
+        Object.DestroyImmediate(mask);
+    }
+
     private static Texture2D SolidTexture(int width, int height, Color color)
     {
         Texture2D texture = new(width, height, TextureFormat.RGBA32, false);

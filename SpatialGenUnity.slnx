@@ -1,5 +1,5 @@
 ﻿<Solution>
-  <Project Path="SpatialGeneration.Runtime.csproj" />
   <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="SpatialGeneration.Runtime.csproj" />
   <Project Path="SpatialGeneration.Tests.EditMode.csproj" />
 </Solution>
