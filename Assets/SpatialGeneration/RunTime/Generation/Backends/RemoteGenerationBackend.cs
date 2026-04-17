@@ -940,6 +940,12 @@ LaunchComfyProcess:
         Constraint occupyConstraint,
         SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage)
     {
+        string mode = IsRefinement(request) ? "refine" : "generate";
+        string positivePrompt = ResolveProxyPositivePrompt(request, prompt);
+        string negativePromptValue = ResolveProxyNegativePrompt(request, negativePrompt);
+        string rgbImageBase64 = ResolveProxyRgbImageBase64(request, assetImage);
+        string depthImageBase64 = ResolveProxyDepthImageBase64(request);
+        string maskImageBase64 = ResolveProxyMaskImageBase64(request);
         string workflowValue = string.IsNullOrWhiteSpace(workflowJson) ? "null" : workflowJson;
         string proxyJson = BuildProxyJson(occupyConstraint, request);
         string constraintSetJsonValue = ToJsonStringOrNull(request?.ConstraintSetJson);
@@ -949,8 +955,13 @@ LaunchComfyProcess:
         return
             "{" +
             $"\"request_id\":\"{EscapeJson(request?.RequestId ?? string.Empty)}\"," +
-            $"\"prompt\":\"{EscapeJson(prompt ?? string.Empty)}\"," +
-            $"\"negative_prompt\":\"{EscapeJson(negativePrompt ?? string.Empty)}\"," +
+            $"\"mode\":\"{mode}\"," +
+            $"\"prompt\":\"{EscapeJson(positivePrompt ?? string.Empty)}\"," +
+            $"\"positive_prompt\":\"{EscapeJson(positivePrompt ?? string.Empty)}\"," +
+            $"\"negative_prompt\":\"{EscapeJson(negativePromptValue ?? string.Empty)}\"," +
+            $"\"rgb_image\":{ToJsonStringOrNull(rgbImageBase64)}," +
+            $"\"depth_image\":{ToJsonStringOrNull(depthImageBase64)}," +
+            $"\"mask_image\":{ToJsonStringOrNull(maskImageBase64)}," +
             $"\"input_mode\":\"{inputMode}\"," +
             $"\"workflow\":{workflowValue}," +
             $"\"constraint_set_json\":{constraintSetJsonValue}," +
@@ -958,6 +969,68 @@ LaunchComfyProcess:
             $"\"asset_image\":{assetImageJson}," +
             $"\"generation\":{BuildGenerationJson(request?.Payload?.Generation)}" +
             "}";
+    }
+
+    private static bool IsRefinement(NewBackendRequest request)
+    {
+        return request != null && request.Mode == SpatialGeneration.Generation.Intent.GenerationMode.Refine;
+    }
+
+    private static string ResolveProxyPositivePrompt(NewBackendRequest request, string fallbackPrompt)
+    {
+        if (IsRefinement(request) && !string.IsNullOrWhiteSpace(request?.Prompt))
+            return request.Prompt;
+
+        if (!string.IsNullOrWhiteSpace(fallbackPrompt))
+            return fallbackPrompt;
+
+        return request?.Prompt ?? string.Empty;
+    }
+
+    private static string ResolveProxyNegativePrompt(NewBackendRequest request, string fallbackPrompt)
+    {
+        if (IsRefinement(request) && !string.IsNullOrWhiteSpace(request?.NegativePrompt))
+            return request.NegativePrompt;
+
+        if (!string.IsNullOrWhiteSpace(fallbackPrompt))
+            return fallbackPrompt;
+
+        return request?.NegativePrompt ?? string.Empty;
+    }
+
+    private static string ResolveProxyRgbImageBase64(
+        NewBackendRequest request,
+        SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage)
+    {
+        if (!string.IsNullOrWhiteSpace(request?.RgbImageBase64))
+            return request.RgbImageBase64;
+
+        if (!string.IsNullOrWhiteSpace(assetImage?.ImageBase64))
+            return assetImage.ImageBase64;
+
+        return string.Empty;
+    }
+
+    private static string ResolveProxyDepthImageBase64(NewBackendRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request?.DepthImageBase64))
+            return request.DepthImageBase64;
+
+        if (!string.IsNullOrWhiteSpace(request?.Payload?.DepthBase64))
+            return request.Payload.DepthBase64;
+
+        return string.Empty;
+    }
+
+    private static string ResolveProxyMaskImageBase64(NewBackendRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request?.MaskImageBase64))
+            return request.MaskImageBase64;
+
+        if (!string.IsNullOrWhiteSpace(request?.Payload?.MaskOccupyBase64))
+            return request.Payload.MaskOccupyBase64;
+
+        return string.Empty;
     }
 
     private string BuildProxyJson(Constraint occupyConstraint, NewBackendRequest request)

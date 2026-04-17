@@ -350,7 +350,7 @@ public class SpatialGenerationWindow : EditorWindow
         }
 
         if (options.Count == 0)
-            options.Add("SpatialGenHandoff/comfy_workflow_api.json");
+            options.Add("SpatialGenHandoff/generation.json");
 
         _workflowTemplateOptions = options.ToArray();
     }

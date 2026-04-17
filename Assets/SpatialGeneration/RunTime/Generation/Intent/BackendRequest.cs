@@ -3,14 +3,29 @@ using System.Collections.Generic;
 
 namespace SpatialGeneration.Generation.Intent
 {
+    public enum GenerationMode
+    {
+        Generate,
+        Refine
+    }
+
     [Serializable]
     public class BackendRequest
     {
         public string RequestId = string.Empty;
 
+        public GenerationMode Mode = GenerationMode.Generate;
+
         public string Prompt = string.Empty;
 
         public string NegativePrompt = string.Empty;
+
+        // Refine mode inputs. Generation mode ignores these fields.
+        public string RgbImageBase64 = string.Empty;
+
+        public string DepthImageBase64 = string.Empty;
+
+        public string MaskImageBase64 = string.Empty;
 
         public string ConstraintSetJson = string.Empty;
 

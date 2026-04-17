@@ -1,0 +1,221 @@
+{
+  "1": {
+    "inputs": {
+      "image": "__RGB_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Load RGB Image" }
+  },
+
+  "2": {
+    "inputs": {
+      "image": "__MASK_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Load Mask Image" }
+  },
+
+  "12": {
+    "inputs": {
+      "image": ["2", 0],
+      "channel": "red"
+    },
+    "class_type": "ImageToMask",
+    "_meta": { "title": "Image To Mask" }
+  },
+
+  "11": {
+    "inputs": {
+      "image": "__DEPTH_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Load Depth Image" }
+  },
+
+  "4": {
+    "inputs": {
+      "ckpt_name": "__CHECKPOINT__"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": { "title": "Load Checkpoint" }
+  },
+
+  "6": {
+    "inputs": {
+      "text": "__POSITIVE_PROMPT__",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Positive Prompt" }
+  },
+
+  "7": {
+    "inputs": {
+      "text": "__NEGATIVE_PROMPT__",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Negative Prompt" }
+  },
+
+  "13": {
+    "inputs": {
+      "control_net_name": "controlnet-depth/diffusion_pytorch_model.safetensors"
+    },
+    "class_type": "ControlNetLoader",
+    "_meta": { "title": "Load Depth ControlNet" }
+  },
+
+  "14": {
+    "inputs": {
+      "strength": 0.9,
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "control_net": ["13", 0],
+      "image": ["11", 0]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": { "title": "Apply Depth ControlNet" }
+  },
+
+  "9": {
+    "inputs": {
+      "pixels": ["1", 0],
+      "vae": ["4", 2]
+    },
+    "class_type": "VAEEncode",
+    "_meta": { "title": "VAE Encode (RGB → Latent)" }
+  },
+
+  "10": {
+    "inputs": {
+      "samples": ["9", 0],
+      "mask": ["12", 0]
+    },
+    "class_type": "SetLatentNoiseMask",
+    "_meta": { "title": "Apply Latent Mask" }
+  },
+
+  "3": {
+    "inputs": {
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "cfg": "__CFG__",
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.55,
+      "model": ["4", 0],
+      "positive": ["14", 0],
+      "negative": ["14", 1],
+      "latent_image": ["10", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": { "title": "Masked Inpainting Sampler" }
+  },
+
+  "8": {
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    },
+    "class_type": "VAEDecode",
+    "_meta": { "title": "Decode Image" }
+  },
+
+  "43": {
+    "inputs": {
+      "filename_prefix": "spatialgen_refined",
+      "images": ["8", 0]
+    },
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save Refined Image" }
+  },
+
+  "50": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "width": 512,
+      "height": 512,
+      "crop": "center",
+      "image": ["8", 0]
+    },
+    "class_type": "ImageScale",
+    "_meta": { "title": "Upscale Image" }
+  },
+
+  "65": {
+    "inputs": {
+      "model": "u2net: general purpose",
+      "providers": "CPU"
+    },
+    "class_type": "RemBGSession+",
+    "_meta": { "title": "RemBG Session" }
+  },
+
+  "64": {
+    "inputs": {
+      "rembg_session": ["65", 0],
+      "image": ["50", 0]
+    },
+    "class_type": "ImageRemoveBackground+",
+    "_meta": { "title": "Remove Background" }
+  },
+
+  "53": {
+    "inputs": {
+      "mask": ["64", 1]
+    },
+    "class_type": "MaskToImage",
+    "_meta": { "title": "Mask To Image" }
+  },
+
+  "26": {
+    "inputs": {
+      "filename_prefix": "spatialgen_rmbg_refined",
+      "images": ["64", 0]
+    },
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save RMBG Image" }
+  },
+
+  "27": {
+    "inputs": {
+      "filename_prefix": "spatialgen_rmbg_mask_refined",
+      "images": ["53", 0]
+    },
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save RMBG Mask" }
+  },
+
+  "67": {
+    "inputs": {
+      "model": "__TRIPOSR_MODEL__",
+      "chunk_size": 8192
+    },
+    "class_type": "TripoSRModelLoader",
+    "_meta": { "title": "Load TripoSR Model" }
+  },
+
+  "66": {
+    "inputs": {
+      "geometry_resolution": "__GEOMETRY_RESOLUTION__",
+      "threshold": "__TRIPOSR_THRESHOLD__",
+      "model": ["67", 0],
+      "reference_image": ["64", 0],
+      "reference_mask": ["64", 1]
+    },
+    "class_type": "TripoSRSampler",
+    "_meta": { "title": "Generate 3D Mesh" }
+  },
+
+  "68": {
+    "inputs": {
+      "format": "glb",
+      "mesh": ["66", 0]
+    },
+    "class_type": "TripoSRViewer",
+    "_meta": { "title": "Output Mesh" }
+  }
+}

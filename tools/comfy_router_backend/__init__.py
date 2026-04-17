@@ -1,0 +1,1 @@
+"""SpatialGen ComfyUI backend router."""

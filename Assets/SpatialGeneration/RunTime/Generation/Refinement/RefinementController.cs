@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -108,14 +109,15 @@ public class RefinementController : MonoBehaviour
         int timeoutSeconds = 30;
         if (settings != null)
         {
-            timeoutSeconds = settings.remoteTimeoutSeconds > 0
-                ? settings.remoteTimeoutSeconds
-                : Mathf.Max(30, settings.comfyExecutionTimeoutSeconds);
+            timeoutSeconds = Mathf.Max(
+                30,
+                settings.remoteTimeoutSeconds,
+                settings.comfyExecutionTimeoutSeconds);
         }
-        Http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
         using var content = new StringContent(json ?? string.Empty, Encoding.UTF8, "application/json");
-        using HttpResponseMessage response = await Http.PostAsync(endpoint, content);
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using HttpResponseMessage response = await Http.PostAsync(endpoint, content, timeoutCts.Token);
         string responseBody = await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
