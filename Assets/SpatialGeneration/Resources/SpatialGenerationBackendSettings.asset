@@ -18,11 +18,11 @@ MonoBehaviour:
   responseFileName: response.json
   pollIntervalSeconds: 0.25
   maxWaitSeconds: 120
-  remoteUrl: 
+  remoteUrl: http://127.0.0.1:8001/generate
   remoteTimeoutSeconds: 60
   comfyAutoStart: 1
-  comfyBaseUrl: http://127.0.0.1:8001
-  comfyWsUrl: ws://127.0.0.1:8001/ws
+  comfyBaseUrl: http://127.0.0.1:8188
+  comfyWsUrl: ws://127.0.0.1:8188/ws
   comfyClientId: spatialgen-unity-client
   comfyWorkflowTemplatePath: SpatialGenHandoff/generation.json
   comfyInputFolder: SpatialGenHandoff/comfy_inputs

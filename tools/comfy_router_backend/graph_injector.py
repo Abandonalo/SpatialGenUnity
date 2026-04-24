@@ -41,6 +41,7 @@ def _build_replacements(req: RunRequest) -> Dict[str, Any]:
         "__SEED__": req.seed,
         "__STEPS__": req.steps,
         "__CFG__": req.cfg,
+        "__DENOISE__": req.denoise,
         "__TRIPOSR_MODEL__": req.tripo_model,
         "__GEOMETRY_RESOLUTION__": req.geometry_resolution,
         "__TRIPOSR_THRESHOLD__": req.tripo_threshold,

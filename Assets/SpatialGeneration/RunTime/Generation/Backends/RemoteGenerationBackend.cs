@@ -22,7 +22,10 @@ public class RemoteGenerationBackend : IGenerationBackend
 {
     private readonly BackendSettings _settings;
     private static Process _comfyProcess;
-    private static readonly HttpClient Http = new HttpClient();
+    // HttpClient's default timeout is 100s, well below the multi-minute runs we
+    // see at higher geometry resolutions. Per-request timeouts are enforced via
+    // CancellationToken, so disable the client-level timeout.
+    private static readonly HttpClient Http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     private static bool _preferHistoryPolling;
     private const string ComfySessionProcessIdKey = "SpatialGeneration.RemoteGenerationBackend.ComfyProcessId";
 
@@ -32,6 +35,8 @@ public class RemoteGenerationBackend : IGenerationBackend
     {
         _settings = settings;
     }
+
+    public Task EnsureReadyAsync() => EnsureComfyRunningAsync();
 
     public async Task<GenerationResult> GenerateAsync(NewBackendRequest request)
     {
@@ -314,10 +319,15 @@ public class RemoteGenerationBackend : IGenerationBackend
     {
         if (UsesFastApiProxy())
         {
-            if (await IsComfyHealthyAsync())
-                return;
-
-            throw new Exception($"FastAPI proxy is not reachable at {GetComfyBaseUrl()}");
+            string routerBaseUrl = GetRouterBaseUrl();
+            if (!await IsRouterHealthyAsync())
+            {
+                throw new Exception(
+                    $"FastAPI router is not reachable at {routerBaseUrl}. " +
+                    "Start it with ./tools/start_backend.sh.");
+            }
+            // Fall through so ComfyUI (which the router forwards to) is also
+            // brought up / auto-started if needed.
         }
 
         bool comfyHealthy = await IsComfyHealthyAsync();
@@ -371,9 +381,7 @@ LaunchComfyProcess:
     {
         try
         {
-            string url = UsesFastApiProxy()
-                ? $"{GetComfyBaseUrl().TrimEnd('/')}/health"
-                : $"{GetComfyBaseUrl().TrimEnd('/')}/system_stats";
+            string url = $"{GetComfyBaseUrl().TrimEnd('/')}/system_stats";
             using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
             using HttpResponseMessage response = await Http.GetAsync(url, cts.Token);
             return response.IsSuccessStatusCode;
@@ -1725,6 +1733,37 @@ LaunchComfyProcess:
     private bool UsesFastApiProxy()
     {
         return !string.IsNullOrWhiteSpace(_settings?.remoteUrl);
+    }
+
+    // The FastAPI router URL (e.g. http://127.0.0.1:8001) derived from
+    // remoteUrl by stripping the trailing /generate path if present.
+    private string GetRouterBaseUrl()
+    {
+        if (string.IsNullOrWhiteSpace(_settings?.remoteUrl))
+            return string.Empty;
+
+        string url = _settings.remoteUrl.TrimEnd('/');
+        if (url.EndsWith("/generate", StringComparison.OrdinalIgnoreCase))
+            url = url.Substring(0, url.Length - "/generate".Length);
+        return url;
+    }
+
+    private async Task<bool> IsRouterHealthyAsync()
+    {
+        string baseUrl = GetRouterBaseUrl();
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return false;
+
+        try
+        {
+            using var cts = new CancellationTokenSource(Math.Max(1000, _settings.remoteTimeoutSeconds * 1000));
+            using HttpResponseMessage response = await Http.GetAsync($"{baseUrl}/health", cts.Token);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private Uri BuildWsUri()

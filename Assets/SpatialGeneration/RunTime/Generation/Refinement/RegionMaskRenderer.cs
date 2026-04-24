@@ -19,7 +19,8 @@ public class RegionMaskRenderer : MonoBehaviour
         Camera cameraToUse = PrepareCamera();
         RenderTexture target = EnsureTarget(ref rgbRT, RenderTextureFormat.ARGB32);
         RenderScene(cameraToUse, target, null);
-        return ReadTexture(target, TextureFormat.RGBA32);
+        Texture2D tex = ReadTexture(target, TextureFormat.RGBA32);
+        return tex;
     }
 
     public Texture2D RenderDepth()
@@ -32,7 +33,8 @@ public class RegionMaskRenderer : MonoBehaviour
         Shader.SetGlobalFloat("_MaxDepth", Mathf.Max(0.01f, cameraToUse.farClipPlane));
         RenderTexture target = EnsureTarget(ref depthRT, RenderTextureFormat.ARGB32);
         RenderScene(cameraToUse, target, depthShader);
-        return ReadTexture(target, TextureFormat.RGBA32);
+        Texture2D tex = ReadTexture(target, TextureFormat.RGBA32);
+        return tex;
     }
 
     public Texture2D RenderMask(RegionSelection selection)
@@ -192,17 +194,29 @@ public class RegionMaskRenderer : MonoBehaviour
         Color previousBackground = cameraToUse.backgroundColor;
         RenderTexture previousTarget = cameraToUse.targetTexture;
 
+        Camera source = ResolveSourceCamera();
         try
         {
             cameraToUse.targetTexture = target;
-            cameraToUse.clearFlags = CameraClearFlags.SolidColor;
-            cameraToUse.backgroundColor = Color.black;
-            cameraToUse.cullingMask = ResolveSourceCamera().cullingMask;
+            cameraToUse.cullingMask = source.cullingMask;
 
             if (overrideShader == null)
+            {
+                // For the RGB pass we want the viewer's actual scene (skybox or
+                // whatever the source camera uses) so the model isn't fed a
+                // hard-black background that dominates the inpaint result.
+                cameraToUse.clearFlags = source.clearFlags;
+                cameraToUse.backgroundColor = source.backgroundColor;
                 cameraToUse.Render();
+            }
             else
+            {
+                // Depth/mask passes need a solid-black background so fragments
+                // outside the selection encode 0.
+                cameraToUse.clearFlags = CameraClearFlags.SolidColor;
+                cameraToUse.backgroundColor = Color.black;
                 cameraToUse.RenderWithShader(overrideShader, string.Empty);
+            }
         }
         finally
         {

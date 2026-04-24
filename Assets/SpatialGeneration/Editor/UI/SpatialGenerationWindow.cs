@@ -13,6 +13,7 @@ public class SpatialGenerationWindow : EditorWindow
     private const string GlobalNegativeStylePromptPrefsKey = "SpatialGenerationWindow.GlobalNegativeStylePrompt";
     private const string LocalRefinementPromptPrefsKey = "SpatialGenerationWindow.LocalRefinementPrompt";
     private const string DefaultLocalComfyBaseUrl = "http://127.0.0.1:8188";
+    private const string DefaultLocalRouterBaseUrl = "http://127.0.0.1:8001";
     private const string DefaultColabBaseUrl = "https://comfyuitunnel.share.zrok.io";
     private static readonly HttpClient Http = new();
     private string _globalStylePrompt = string.Empty;
@@ -261,7 +262,7 @@ public class SpatialGenerationWindow : EditorWindow
         {
             if (GUILayout.Button(controller.IsRunning ? "Refining..." : "Refine Selected Region"))
             {
-                controller.RunRefinement(_globalStylePrompt, _localRefinementPrompt);
+                controller.RunMultiViewRefinement(_globalStylePrompt, _localRefinementPrompt);
 
                 InteractionLogger.Log(new InteractionEvent
                 {
@@ -372,7 +373,10 @@ public class SpatialGenerationWindow : EditorWindow
 
     private static BackendConnectionPreset GetCurrentPreset(BackendSettings settings)
     {
-        return string.IsNullOrWhiteSpace(settings?.remoteUrl)
+        // Distinguish by whether comfyBaseUrl points at a local host, rather than
+        // by whether remoteUrl is empty. Both presets now populate remoteUrl
+        // (refinement requires the FastAPI router, which serves /refine).
+        return IsLocalUrl(settings?.comfyBaseUrl)
             ? BackendConnectionPreset.LocalComfyApi
             : BackendConnectionPreset.Colab;
     }
@@ -384,12 +388,17 @@ public class SpatialGenerationWindow : EditorWindow
         switch (preset)
         {
             case BackendConnectionPreset.LocalComfyApi:
-                settings.remoteUrl = string.Empty;
+                // Local setup: ComfyUI on :8188, FastAPI router on :8001.
+                // Refinement (/refine) is served only by the router, so
+                // remoteUrl must point at the router's /generate, not be empty.
                 settings.comfyBaseUrl = GetConfiguredLocalBaseUrl(settings);
+                settings.remoteUrl = $"{DefaultLocalRouterBaseUrl.TrimEnd('/')}/generate";
                 settings.comfyWsUrl = BuildWebSocketUrl(settings.comfyBaseUrl);
                 break;
 
             case BackendConnectionPreset.Colab:
+                // Colab setup: ComfyUI and FastAPI router both served from
+                // the tunnelled base URL.
                 settings.comfyBaseUrl = GetConfiguredColabBaseUrl(settings);
                 settings.remoteUrl = $"{settings.comfyBaseUrl.TrimEnd('/')}/generate";
                 settings.comfyWsUrl = string.Empty;
@@ -409,7 +418,10 @@ public class SpatialGenerationWindow : EditorWindow
             return;
         }
 
-        settings.remoteUrl = string.Empty;
+        // Local: route /refine (and /generate) through the local FastAPI router
+        // on port 8001. ComfyUI itself stays on whatever the user configured
+        // (typically 127.0.0.1:8188) and is reached via the router.
+        settings.remoteUrl = $"{DefaultLocalRouterBaseUrl.TrimEnd('/')}/generate";
         settings.comfyWsUrl = BuildWebSocketUrl(normalizedBaseUrl);
     }
 

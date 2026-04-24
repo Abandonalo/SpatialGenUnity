@@ -16,6 +16,7 @@ class RunRequest(BaseModel):
     seed: int
     steps: int = Field(gt=0)
     cfg: float = Field(gt=0)
+    denoise: float = 0.55
 
     tripo_model: str = Field(min_length=1)
     geometry_resolution: int = Field(gt=0)
@@ -115,6 +116,50 @@ class RefinementRequestModel(BaseModel):
 class RefinementResponseModel(BaseModel):
     requestId: str = ""
     refinedImageBase64: str = ""
+    meshBase64: str = ""
+    success: bool
+    errorMessage: str = ""
+
+
+class ViewPayload(BaseModel):
+    # viewType mirrors the Unity ViewType enum: Front / Left / Right / Top.
+    viewType: str = ""
+    width: int = 0
+    height: int = 0
+    rgbBase64: str = ""
+    depthBase64: str = ""
+    maskBase64: str = ""
+
+
+class MultiViewRefinementRequestModel(BaseModel):
+    requestId: str = ""
+    sessionId: str = ""
+    mode: Literal["refine"] = "refine"
+
+    positivePrompt: str = ""
+    negativePrompt: str = ""
+
+    # Deterministic seed shared by every view. Negative values are
+    # resolved to a random seed in the router once so all views still
+    # share the same value for the duration of a request.
+    seed: int = -1
+
+    steps: int = Field(default=20, gt=0)
+    cfg: float = Field(default=8.0, gt=0)
+    denoise: float = 1.0
+
+    reconstructionView: str = "Front"
+    views: list[ViewPayload] = Field(default_factory=list)
+
+
+class RefinedViewResultModel(BaseModel):
+    viewType: str = ""
+    refinedImageBase64: str = ""
+
+
+class MultiViewRefinementResponseModel(BaseModel):
+    requestId: str = ""
+    refinedViews: list[RefinedViewResultModel] = Field(default_factory=list)
     meshBase64: str = ""
     success: bool
     errorMessage: str = ""

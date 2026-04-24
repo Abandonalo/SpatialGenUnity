@@ -6,6 +6,8 @@ public class MockGenerationBackend : IGenerationBackend
 {
     public string Name => "Mock";
 
+    public Task EnsureReadyAsync() => Task.CompletedTask;
+
     public Task<GenerationResult> GenerateAsync(NewBackendRequest request)
     {
         var result = new GenerationResult();

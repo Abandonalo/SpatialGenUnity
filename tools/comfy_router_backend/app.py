@@ -14,12 +14,15 @@ from .comfy_client import (
     submit_prompt,
 )
 from .models import (
+    MultiViewRefinementRequestModel,
+    MultiViewRefinementResponseModel,
     ProxyGenerateRequest,
     RefinementRequestModel,
     RefinementResponseModel,
     RunRequest,
     RunResponse,
 )
+from .multi_view_router import handle_multi_view_refine
 from .router import route_request
 
 
@@ -65,9 +68,15 @@ def generate(req: ProxyGenerateRequest) -> dict:
 @app.post("/refine", response_model=RefinementResponseModel)
 def refine(req: RefinementRequestModel) -> RefinementResponseModel:
     try:
+        # Refinement acts only on the user's selected region: the untouched
+        # geometry outside the mask is preserved by SetLatentNoiseMask, and the
+        # intent for the selection is expressed solely by the local prompt.
+        # Mixing the global (scene-wide) prompt dilutes that intent, so use
+        # the local prompt as the positive conditioning on its own.
+        effective_prompt = (req.localPrompt or "").strip() or (req.globalPrompt or "").strip()
         run_request = RunRequest(
             mode="refine",
-            positive_prompt=_build_refinement_prompt(req.globalPrompt, req.localPrompt),
+            positive_prompt=effective_prompt,
             negative_prompt="",
             rgb_image=req.rgbImageBase64,
             depth_image=req.depthImageBase64,
@@ -75,6 +84,11 @@ def refine(req: RefinementRequestModel) -> RefinementResponseModel:
             seed=_normalize_seed(-1),
             steps=max(1, req.steps),
             cfg=max(0.0, req.cfgScale),
+            # Inpainting replacement needs nearly full denoise; anything below
+            # ~0.85 barely escapes the encoded input latent. Floor defensively
+            # so stale serialized defaults from older Unity scenes (0.6) don't
+            # silently produce near-identity refinements.
+            denoise=max(0.85, min(1.0, req.denoiseStrength)),
             tripo_model=_default_tripo_model(),
             geometry_resolution=_default_geometry_resolution(),
             tripo_threshold=_default_tripo_threshold(),
@@ -92,6 +106,26 @@ def refine(req: RefinementRequestModel) -> RefinementResponseModel:
         return RefinementResponseModel(
             requestId=req.requestId,
             refinedImageBase64="",
+            meshBase64="",
+            success=False,
+            errorMessage=str(exc),
+        )
+
+
+@app.post("/refine_multi_view", response_model=MultiViewRefinementResponseModel)
+def refine_multi_view(req: MultiViewRefinementRequestModel) -> MultiViewRefinementResponseModel:
+    try:
+        response = handle_multi_view_refine(
+            req,
+            tripo_model=_default_tripo_model(),
+            geometry_resolution=_default_geometry_resolution(),
+            tripo_threshold=_default_tripo_threshold(),
+        )
+        return response
+    except Exception as exc:
+        return MultiViewRefinementResponseModel(
+            requestId=req.requestId,
+            refinedViews=[],
             meshBase64="",
             success=False,
             errorMessage=str(exc),
@@ -131,7 +165,13 @@ def view(
 
 
 def _proxy_request_to_run_request(req: ProxyGenerateRequest) -> RunRequest:
-    mode = req.mode or _infer_mode(req)
+    # Honour the caller's explicit mode; only fall back to heuristic inference
+    # when the caller did not specify one. Previously the heuristic would
+    # silently flip /generate requests to "refine" whenever an asset image was
+    # attached, which routed them through the (ControlNet-stripped) refinement
+    # workflow and produced degraded/planar meshes instead of full-scene
+    # generations. See H16 runtime evidence in debug log.
+    mode = (req.mode or "").strip() or _infer_mode(req)
     positive_prompt = (req.positive_prompt or req.prompt or "").strip()
     if not positive_prompt:
         raise ValueError("positive_prompt or prompt is required")
@@ -156,14 +196,6 @@ def _infer_mode(req: ProxyGenerateRequest) -> str:
     if any((_asset_image_base64(req), req.rgb_image, req.depth_image, req.mask_image)):
         return "refine"
     return "generate"
-
-
-def _build_refinement_prompt(global_prompt: str, local_prompt: str) -> str:
-    global_prompt = (global_prompt or "").strip()
-    local_prompt = (local_prompt or "").strip()
-    if global_prompt and local_prompt:
-        return f"{global_prompt}, {local_prompt}"
-    return local_prompt or global_prompt
 
 
 def _asset_image_base64(req: ProxyGenerateRequest) -> Optional[str]:

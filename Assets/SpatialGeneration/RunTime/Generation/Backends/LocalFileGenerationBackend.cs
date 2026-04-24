@@ -10,6 +10,8 @@ public class LocalFileGenerationBackend : IGenerationBackend
 
     public LocalFileGenerationBackend(BackendSettings settings) => _s = settings;
 
+    public Task EnsureReadyAsync() => Task.CompletedTask;
+
     public async Task<GenerationResult> GenerateAsync(NewBackendRequest request)
     {
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));

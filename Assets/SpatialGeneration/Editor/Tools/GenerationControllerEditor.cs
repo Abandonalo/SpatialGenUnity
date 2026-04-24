@@ -155,12 +155,15 @@ public static class GenerationControllerEditor
                     if (!TryInstantiateMeshOutput(meshPath, root, out GameObject meshObject))
                         continue;
 
-                    if (occupyProxies.Count > 0)
-                        PlaceGeneratedObjectAtProxy(meshObject, occupyProxies[i]);
+                    SpatialProxyIntent proxy = occupyProxies.Count > 0 ? occupyProxies[i] : null;
+                    if (proxy != null)
+                        PlaceGeneratedObjectAtProxy(meshObject, proxy);
 
-                    meshObject.name = occupyProxies.Count > 0
-                        ? $"Generated_Mesh_{(string.IsNullOrWhiteSpace(occupyProxies[i].proxy_id) ? i.ToString() : occupyProxies[i].proxy_id)}"
-                        : $"Generated_Mesh_{i}";
+                    string proxyId = proxy != null && !string.IsNullOrWhiteSpace(proxy.proxy_id)
+                        ? proxy.proxy_id
+                        : i.ToString();
+                    meshObject.name = $"Generated_Mesh_{proxyId}";
+                    AttachMeshMetadata(meshObject, meshPath, proxyId, proxy, result.outputFiles);
                     Undo.RegisterCreatedObjectUndo(meshObject, "Create Generated Mesh");
                     createdAnyMesh = true;
                 }
@@ -225,7 +228,70 @@ public static class GenerationControllerEditor
         Undo.CollapseUndoOperations(group);
     }
 
-    private static bool TryInstantiateMeshOutput(string absolutePath, GameObject root, out GameObject instance)
+    /// <summary>
+    /// Attaches <see cref="GeneratedMeshMetadata"/> to a freshly-created
+    /// Generated_Mesh so refinement can later locate the 2D source image
+    /// the mesh was lifted from (and the proxy pose used for placement).
+    /// </summary>
+    private static void AttachMeshMetadata(GameObject meshObject, string meshAbsolutePath, string proxyId, SpatialProxyIntent proxy, List<string> outputFiles)
+    {
+        if (meshObject == null)
+            return;
+
+        GeneratedMeshMetadata meta = meshObject.GetComponent<GeneratedMeshMetadata>();
+        if (meta == null)
+            meta = Undo.AddComponent<GeneratedMeshMetadata>(meshObject);
+
+        meta.meshPath = meshAbsolutePath ?? string.Empty;
+        meta.proxyId = proxyId ?? string.Empty;
+        if (proxy != null)
+        {
+            meta.proxyPosition = proxy.position;
+            meta.proxyRotation = proxy.rotation;
+            meta.proxySize = proxy.size;
+        }
+        meta.sourceImagePath = FindMeshSourceImagePath(outputFiles, proxyId);
+    }
+
+    /// <summary>
+    /// Picks the <c>spatialgen_mesh_source_*.png</c> produced by generation
+    /// that corresponds to the given proxy. The backend names files as
+    /// <c>{requestId}_{proxyId}_spatialgen_mesh_source_*.png</c>, so we
+    /// match on the proxy id substring.
+    /// </summary>
+    private static string FindMeshSourceImagePath(List<string> outputFiles, string proxyId)
+    {
+        if (outputFiles == null)
+            return string.Empty;
+
+        string best = string.Empty;
+        for (int i = 0; i < outputFiles.Count; i++)
+        {
+            string path = outputFiles[i];
+            if (string.IsNullOrWhiteSpace(path))
+                continue;
+            if (!path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                continue;
+            string name = Path.GetFileName(path) ?? string.Empty;
+            if (name.IndexOf("spatialgen_mesh_source", StringComparison.OrdinalIgnoreCase) < 0)
+                continue;
+            // Prefer the mask-guided variant if available, since it's the
+            // image that was actually conditioned onto the proxy; fall back
+            // to the raw mesh-source image otherwise.
+            bool isMaskGuided = name.IndexOf("mask_guided", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool proxyMatches = string.IsNullOrWhiteSpace(proxyId) ||
+                                name.IndexOf(proxyId, StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!proxyMatches)
+                continue;
+            if (isMaskGuided)
+                return path;
+            if (string.IsNullOrEmpty(best))
+                best = path;
+        }
+        return best;
+    }
+
+    public static bool TryInstantiateMeshOutput(string absolutePath, GameObject root, out GameObject instance)
     {
         instance = null;
         string assetPath = StageFileIntoGeneratedAssets(absolutePath);
@@ -416,7 +482,7 @@ public static class GenerationControllerEditor
         return proxies;
     }
 
-    private static void FitObjectToTargetSize(GameObject generatedObject, Vector3 targetSize)
+    public static void FitObjectToTargetSize(GameObject generatedObject, Vector3 targetSize)
     {
         Renderer[] renderers = generatedObject.GetComponentsInChildren<Renderer>();
         if (renderers == null || renderers.Length == 0)
@@ -437,17 +503,22 @@ public static class GenerationControllerEditor
             Mathf.Max(min, targetSize.y),
             Mathf.Max(min, targetSize.z));
 
-        // Preserve generated mesh proportions: scale uniformly to avoid axis stretching.
+        // Preserve generated mesh proportions: scale uniformly to avoid axis
+        // stretching, and use the MIN ratio so the mesh fits *inside* the
+        // proxy on every axis. Using MAX (cover) was overshooting — whichever
+        // axis had the largest target/current ratio dominated, inflating the
+        // other axes past the proxy bounds and leaving the mesh visibly
+        // larger than the spatial proxy.
         Vector3 axisRatios = new(
             safeTarget.x / safeCurrent.x,
             safeTarget.y / safeCurrent.y,
             safeTarget.z / safeCurrent.z);
-        float uniformScale = Mathf.Max(axisRatios.x, Mathf.Max(axisRatios.y, axisRatios.z));
+        float uniformScale = Mathf.Min(axisRatios.x, Mathf.Min(axisRatios.y, axisRatios.z));
         Vector3 multiplier = new(uniformScale, uniformScale, uniformScale);
         generatedObject.transform.localScale = Vector3.Scale(generatedObject.transform.localScale, multiplier);
     }
 
-    private static void AlignObjectBoundsCenterToTarget(GameObject generatedObject, Vector3 targetCenter)
+    public static void AlignObjectBoundsCenterToTarget(GameObject generatedObject, Vector3 targetCenter)
     {
         if (generatedObject == null)
             return;
