@@ -135,14 +135,14 @@
 
   "50": {
     "inputs": {
-      "upscale_method": "nearest-exact",
-      "width": 512,
-      "height": 512,
-      "crop": "center",
+      "width": "__CROP_WIDTH__",
+      "height": "__CROP_HEIGHT__",
+      "x": "__CROP_X__",
+      "y": "__CROP_Y__",
       "image": ["8", 0]
     },
-    "class_type": "ImageScale",
-    "_meta": { "title": "Upscale Image" }
+    "class_type": "ImageCrop",
+    "_meta": { "title": "Crop Reconstruction Quadrant" }
   },
 
   "65": {

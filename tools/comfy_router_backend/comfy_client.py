@@ -59,9 +59,15 @@ def submit_prompt(graph: Dict[str, Any]) -> str:
 
 
 def wait_for_completion(prompt_id: str) -> Dict[str, Any]:
-    timeout_seconds = float(os.getenv("COMFY_TIMEOUT_SECONDS", "180"))
+    # Default raised from 180s -> 900s: the multi-view refinement composes a
+    # 2x2 grid (1024x1024 latent) which is roughly 4x more expensive than the
+    # original 512x512 single-view inpaint, and TripoSR runs on top of that.
+    # 180s is too tight for local Mac/MPS setups; 15 minutes is generous and
+    # users can still override via env if they want stricter SLAs.
+    timeout_seconds = float(os.getenv("COMFY_TIMEOUT_SECONDS", "900"))
     poll_interval = float(os.getenv("COMFY_POLL_INTERVAL", "1.0"))
-    deadline = time.monotonic() + timeout_seconds
+    started = time.monotonic()
+    deadline = started + timeout_seconds
 
     while time.monotonic() < deadline:
         history = get_history(prompt_id)

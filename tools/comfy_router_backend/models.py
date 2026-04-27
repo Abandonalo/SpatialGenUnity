@@ -22,6 +22,17 @@ class RunRequest(BaseModel):
     geometry_resolution: int = Field(gt=0)
     tripo_threshold: float
 
+    # Where to crop the refined 2D image before RemBG/TripoSR. In single-view
+    # mode this defaults to the full (square) input size, so the crop node
+    # in the graph is a no-op. In multi-view refinement, the router composes
+    # four per-view images into a 2x2 grid, runs the inpaint once, and then
+    # asks the graph to crop the reconstruction quadrant (top-left) so the
+    # TripoSR stage sees a clean single-view image instead of the grid.
+    crop_width: Optional[int] = None
+    crop_height: Optional[int] = None
+    crop_x: Optional[int] = None
+    crop_y: Optional[int] = None
+
     @model_validator(mode="after")
     def validate_refine_inputs(self) -> "RunRequest":
         if self.mode != "refine":

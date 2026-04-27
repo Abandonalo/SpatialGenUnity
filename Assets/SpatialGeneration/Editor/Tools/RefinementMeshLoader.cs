@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using UnityEditor;
 using UnityEngine;
 
@@ -41,10 +40,6 @@ public static class RefinementMeshLoader
 
             meshObject.name = $"Refined_Mesh_{(string.IsNullOrWhiteSpace(ctx.requestId) ? "0" : ctx.requestId)}";
 
-            // #region agent log
-            Bounds rawBounds = MeasureBounds(meshObject);
-            // #endregion
-
             // Multi-view refinement lifts the WHOLE generated scene into a new
             // mesh (only the selection region's pixels were changed inside the
             // inpaint step). Align the refined mesh to the full scene bounds
@@ -74,7 +69,7 @@ public static class RefinementMeshLoader
             if (hasTarget)
             {
                 meshObject.transform.rotation = targetRotation;
-                FitObjectInsideTargetSize(meshObject, targetSize);
+                FitObjectToTargetSizeNonUniform(meshObject, targetSize);
                 GenerationControllerEditor.AlignObjectBoundsCenterToTarget(meshObject, targetCenter);
             }
 
@@ -84,11 +79,6 @@ public static class RefinementMeshLoader
             // can restore them by re-enabling if needed.
             if (usedSceneBounds)
                 DeactivateOriginalGeneratedMeshes(root);
-
-            // #region agent log
-            Bounds finalBounds = MeasureBounds(meshObject);
-            DbgLogMeshPlacement(ctx, rawBounds, targetSize, finalBounds, sceneBounds, usedSceneBounds);
-            // #endregion
 
             Undo.RegisterCreatedObjectUndo(meshObject, "Create Refined Mesh");
 
@@ -103,13 +93,18 @@ public static class RefinementMeshLoader
     }
 
     /// <summary>
-    /// Uniformly scales <paramref name="target"/> so that its combined
-    /// renderer bounds fit inside <paramref name="targetSize"/> (contain, not
-    /// cover). Uses the MIN axis ratio so the refined geometry stays within
-    /// the selection region instead of overshooting along its tallest axis
-    /// (the bug the logs caught on the previous run).
+    /// Scales <paramref name="target"/> per-axis so its combined renderer
+    /// bounds match <paramref name="targetSize"/> exactly on every axis.
+    /// TripoSR returns a near-unit-cube mesh regardless of the source
+    /// image's true proportions, so any uniform scale either fits-inside
+    /// (much smaller than the original scene) or covers (overshoots two
+    /// axes). Per-axis scaling is the only way to match the original
+    /// scene's bounding box on all three axes simultaneously, at the cost
+    /// of slight non-uniform deformation - which is acceptable here
+    /// because the refined mesh is meant to *replace* the original
+    /// generated scene, not preserve TripoSR's internal proportions.
     /// </summary>
-    private static void FitObjectInsideTargetSize(GameObject target, Vector3 targetSize)
+    private static void FitObjectToTargetSizeNonUniform(GameObject target, Vector3 targetSize)
     {
         if (target == null)
             return;
@@ -124,14 +119,18 @@ public static class RefinementMeshLoader
         Vector3 cur = combined.size;
         Vector3 safeCur = new(Mathf.Max(min, cur.x), Mathf.Max(min, cur.y), Mathf.Max(min, cur.z));
         Vector3 safeTgt = new(Mathf.Max(min, targetSize.x), Mathf.Max(min, targetSize.y), Mathf.Max(min, targetSize.z));
-        float ratio = Mathf.Min(safeTgt.x / safeCur.x, Mathf.Min(safeTgt.y / safeCur.y, safeTgt.z / safeCur.z));
-        target.transform.localScale *= ratio;
+        Vector3 axisScale = new(safeTgt.x / safeCur.x, safeTgt.y / safeCur.y, safeTgt.z / safeCur.z);
+        target.transform.localScale = Vector3.Scale(target.transform.localScale, axisScale);
     }
 
     // Combined renderer bounds of the original Generated_Mesh* under
-    // <paramref name="root"/>, ignoring prior Refined_* artifacts. Used as
-    // the placement target for the new refined mesh so the whole scene is
-    // replaced instead of a selection-sized patch.
+    // <paramref name="root"/>. Walks each renderer up to the direct child
+    // of <paramref name="root"/> and only includes descendants of nodes
+    // named "Generated_Mesh*". Filtering on the renderer's immediate
+    // GameObject name (the previous approach) didn't work because
+    // imported GLBs have renderers on grandchildren with internal glTF
+    // node names like "Mesh_001", so "Refined_*" never matched and prior
+    // refined-mesh renderers leaked into the bounds.
     private static Bounds ComputeOriginalSceneBounds(GameObject root)
     {
         if (root == null) return new Bounds(Vector3.zero, Vector3.zero);
@@ -143,12 +142,27 @@ public static class RefinementMeshLoader
             Renderer r = rs[i];
             if (r == null) continue;
             if (!r.gameObject.activeInHierarchy) continue;
-            string n = r.gameObject.name ?? string.Empty;
-            if (n.StartsWith("Refined_", StringComparison.Ordinal)) continue;
+            Transform rootChild = FindRootChild(root.transform, r.transform);
+            if (rootChild == null) continue;
+            string n = rootChild.gameObject.name ?? string.Empty;
+            if (!n.StartsWith("Generated_Mesh", StringComparison.Ordinal)) continue;
             if (!has) { b = r.bounds; has = true; }
             else b.Encapsulate(r.bounds);
         }
         return has ? b : new Bounds(Vector3.zero, Vector3.zero);
+    }
+
+    // Walks up from <paramref name="descendant"/> until it hits a direct
+    // child of <paramref name="root"/>. Returns null if the descendant is
+    // not under root.
+    private static Transform FindRootChild(Transform root, Transform descendant)
+    {
+        Transform t = descendant;
+        while (t != null && t.parent != root)
+        {
+            t = t.parent;
+        }
+        return t;
     }
 
     // Disable the original Generated_Mesh*/Generated_Image so the refined
@@ -170,39 +184,6 @@ public static class RefinementMeshLoader
             }
         }
     }
-
-    // #region agent log
-    private const string DbgLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-f3f4e4.log";
-    private static Bounds MeasureBounds(GameObject go)
-    {
-        if (go == null) return new Bounds(Vector3.zero, Vector3.zero);
-        Renderer[] rs = go.GetComponentsInChildren<Renderer>(true);
-        if (rs == null || rs.Length == 0) return new Bounds(go.transform.position, Vector3.zero);
-        Bounds b = rs[0].bounds;
-        for (int i = 1; i < rs.Length; i++) b.Encapsulate(rs[i].bounds);
-        return b;
-    }
-    private static void DbgLogMeshPlacement(RefinedMeshContext ctx, Bounds raw, Vector3 targetSize, Bounds finalB, Bounds sceneB, bool usedScene)
-    {
-        try
-        {
-            string line = "{\"sessionId\":\"f3f4e4\",\"runId\":\"post-fix\",\"timestamp\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() +
-                ",\"hypothesisId\":\"H2\",\"location\":\"RefinementMeshLoader.cs:Handle\"" +
-                ",\"message\":\"refined mesh placement\"" +
-                ",\"data\":{\"requestId\":\"" + (ctx.requestId ?? "") + "\"" +
-                ",\"rawCenter\":{\"x\":" + raw.center.x.ToString("0.###") + ",\"y\":" + raw.center.y.ToString("0.###") + ",\"z\":" + raw.center.z.ToString("0.###") + "}" +
-                ",\"rawSize\":{\"x\":" + raw.size.x.ToString("0.###") + ",\"y\":" + raw.size.y.ToString("0.###") + ",\"z\":" + raw.size.z.ToString("0.###") + "}" +
-                ",\"targetSize\":{\"x\":" + targetSize.x.ToString("0.###") + ",\"y\":" + targetSize.y.ToString("0.###") + ",\"z\":" + targetSize.z.ToString("0.###") + "}" +
-                ",\"finalSize\":{\"x\":" + finalB.size.x.ToString("0.###") + ",\"y\":" + finalB.size.y.ToString("0.###") + ",\"z\":" + finalB.size.z.ToString("0.###") + "}" +
-                ",\"sceneSize\":{\"x\":" + sceneB.size.x.ToString("0.###") + ",\"y\":" + sceneB.size.y.ToString("0.###") + ",\"z\":" + sceneB.size.z.ToString("0.###") + "}" +
-                ",\"usedSceneBounds\":" + (usedScene ? "true" : "false") +
-                ",\"selSize\":{\"x\":" + ctx.selectionSize.x.ToString("0.###") + ",\"y\":" + ctx.selectionSize.y.ToString("0.###") + ",\"z\":" + ctx.selectionSize.z.ToString("0.###") + "}" +
-                "}}\n";
-            File.AppendAllText(DbgLogPath, line);
-        }
-        catch { }
-    }
-    // #endregion
 
     private static void ClearPreviousRefinementArtifacts(GameObject root)
     {

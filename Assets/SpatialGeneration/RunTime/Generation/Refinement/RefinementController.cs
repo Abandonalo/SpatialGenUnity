@@ -280,14 +280,6 @@ public class RefinementController : MonoBehaviour
         cm.farClip = Mathf.Max(distance + maxExtent * 4f, 1000f);
         cm.AutoSetupCameras();
 
-        // #region agent log
-        DbgLogMultiViewFraming(selection, frameBounds, maxExtent, halfHeight, distance);
-        // #endregion
-
-        // AutoSetupCameras positions cameras along world axes; re-apply the
-        // selection's rotation so the canonical views stay aligned with the
-        // region's local axes (the mask shader uses the same rotation, so
-        // cameras and mask agree on what "Front" means for the selection).
         Quaternion r = selection.rotation;
         Vector3 c = frameBounds.center;
         PlaceCamera(cm.frontCamera, c + r * new Vector3(0f, 0f, -distance),
@@ -342,30 +334,6 @@ public class RefinementController : MonoBehaviour
         cam.transform.position = worldPos;
         cam.transform.rotation = worldRot;
     }
-
-    // #region agent log
-    private const string DbgLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-f3f4e4.log";
-    private static void DbgLogMultiViewFraming(RegionSelection selection, Bounds frame, float maxExtent, float halfHeight, float distance)
-    {
-        try
-        {
-            string line = "{\"sessionId\":\"f3f4e4\",\"runId\":\"post-fix\",\"timestamp\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() +
-                ",\"hypothesisId\":\"H1\",\"location\":\"RefinementController.cs:EnsureMultiViewRig\"" +
-                ",\"message\":\"multi-view framing applied\"" +
-                ",\"data\":{" +
-                "\"selCenter\":{\"x\":" + selection.center.x.ToString("0.###") + ",\"y\":" + selection.center.y.ToString("0.###") + ",\"z\":" + selection.center.z.ToString("0.###") + "}" +
-                ",\"selSize\":{\"x\":" + selection.size.x.ToString("0.###") + ",\"y\":" + selection.size.y.ToString("0.###") + ",\"z\":" + selection.size.z.ToString("0.###") + "}" +
-                ",\"frameCenter\":{\"x\":" + frame.center.x.ToString("0.###") + ",\"y\":" + frame.center.y.ToString("0.###") + ",\"z\":" + frame.center.z.ToString("0.###") + "}" +
-                ",\"frameSize\":{\"x\":" + frame.size.x.ToString("0.###") + ",\"y\":" + frame.size.y.ToString("0.###") + ",\"z\":" + frame.size.z.ToString("0.###") + "}" +
-                ",\"maxExtent\":" + maxExtent.ToString("0.###") +
-                ",\"orthoHalfHeight\":" + halfHeight.ToString("0.###") +
-                ",\"rigDistance\":" + distance.ToString("0.###") +
-                "}}\n";
-            File.AppendAllText(DbgLogPath, line);
-        }
-        catch { }
-    }
-    // #endregion
 
     private static string CombinePrompts(string globalPrompt, string localPrompt)
     {
@@ -719,36 +687,9 @@ public class RefinementController : MonoBehaviour
         string path = Path.Combine(stagingDir, $"{safeReqId}.glb");
         File.WriteAllBytes(path, meshBytes);
 
-        // #region agent log
-        DbgLogMeshStaging(requestId, path, stagingDir);
-        // #endregion
-
         Debug.Log($"Spatial Generation: Saved refinement mesh artifact to {path}");
         return path;
     }
-
-    // #region agent log
-    private static void DbgLogMeshStaging(string requestId, string path, string stagingDir)
-    {
-        try
-        {
-            bool insideAssets = path.Replace('\\', '/').Contains("/Assets/");
-            string[] files = Directory.Exists(stagingDir) ? Directory.GetFiles(stagingDir) : new string[0];
-            string fileList = string.Join("|", files);
-            string line = "{\"sessionId\":\"f3f4e4\",\"runId\":\"post-fix\",\"timestamp\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() +
-                ",\"hypothesisId\":\"H5\",\"location\":\"RefinementController.cs:WriteMeshArtifact\"" +
-                ",\"message\":\"staged refined mesh\"" +
-                ",\"data\":{\"requestId\":\"" + (requestId ?? "") + "\"" +
-                ",\"path\":\"" + path.Replace("\\", "/") + "\"" +
-                ",\"stagingDir\":\"" + stagingDir.Replace("\\", "/") + "\"" +
-                ",\"insideAssets\":" + (insideAssets ? "true" : "false") +
-                ",\"files\":\"" + fileList.Replace("\\", "/") + "\"" +
-                "}}\n";
-            File.AppendAllText(DbgLogPath, line);
-        }
-        catch { }
-    }
-    // #endregion
 
     private void WriteDebugArtifacts(RefinementRequest request, Texture2D rgb, Texture2D depth, Texture2D mask)
     {

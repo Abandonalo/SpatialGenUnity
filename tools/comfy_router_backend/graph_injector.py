@@ -45,6 +45,10 @@ def _build_replacements(req: RunRequest) -> Dict[str, Any]:
         "__TRIPOSR_MODEL__": req.tripo_model,
         "__GEOMETRY_RESOLUTION__": req.geometry_resolution,
         "__TRIPOSR_THRESHOLD__": req.tripo_threshold,
+        "__CROP_WIDTH__": req.crop_width or 512,
+        "__CROP_HEIGHT__": req.crop_height or 512,
+        "__CROP_X__": req.crop_x if req.crop_x is not None else 0,
+        "__CROP_Y__": req.crop_y if req.crop_y is not None else 0,
     }
 
     checkpoint = os.getenv("COMFY_CHECKPOINT")
