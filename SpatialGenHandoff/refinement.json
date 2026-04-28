@@ -3,16 +3,14 @@
     "inputs": {
       "image": "__RGB_IMAGE__"
     },
-    "class_type": "LoadImage",
-    "_meta": { "title": "Load RGB Image" }
+    "class_type": "LoadImage"
   },
 
   "2": {
     "inputs": {
       "image": "__MASK_IMAGE__"
     },
-    "class_type": "LoadImage",
-    "_meta": { "title": "Load Mask Image" }
+    "class_type": "LoadImage"
   },
 
   "12": {
@@ -20,24 +18,45 @@
       "image": ["2", 0],
       "channel": "red"
     },
-    "class_type": "ImageToMask",
-    "_meta": { "title": "Image To Mask" }
+    "class_type": "ImageToMask"
+  },
+
+  "120": {
+    "inputs": {
+      "mask": ["12", 0],
+      "value": 0.5
+    },
+    "class_type": "ThresholdMask"
+  },
+
+  "121": {
+    "inputs": {
+      "mask": ["120", 0],
+      "expand": -2,
+      "tapered_corners": true
+    },
+    "class_type": "GrowMask"
   },
 
   "11": {
     "inputs": {
       "image": "__DEPTH_IMAGE__"
     },
-    "class_type": "LoadImage",
-    "_meta": { "title": "Load Depth Image" }
+    "class_type": "LoadImage"
+  },
+
+  "111": {
+    "inputs": {
+      "image": "__CANNY_IMAGE__"
+    },
+    "class_type": "LoadImage"
   },
 
   "4": {
     "inputs": {
       "ckpt_name": "__CHECKPOINT__"
     },
-    "class_type": "CheckpointLoaderSimple",
-    "_meta": { "title": "Load Checkpoint" }
+    "class_type": "CheckpointLoaderSimple"
   },
 
   "6": {
@@ -45,8 +64,7 @@
       "text": "__POSITIVE_PROMPT__",
       "clip": ["4", 1]
     },
-    "class_type": "CLIPTextEncode",
-    "_meta": { "title": "Positive Prompt" }
+    "class_type": "CLIPTextEncode"
   },
 
   "7": {
@@ -54,30 +72,47 @@
       "text": "__NEGATIVE_PROMPT__",
       "clip": ["4", 1]
     },
-    "class_type": "CLIPTextEncode",
-    "_meta": { "title": "Negative Prompt" }
+    "class_type": "CLIPTextEncode"
   },
 
   "13": {
     "inputs": {
-      "control_net_name": "controlnet-depth/diffusion_pytorch_model.safetensors"
+      "control_net_name": "__CONTROLNET_DEPTH__"
     },
-    "class_type": "ControlNetLoader",
-    "_meta": { "title": "Load Depth ControlNet" }
+    "class_type": "ControlNetLoader"
   },
 
   "14": {
     "inputs": {
-      "strength": 0.9,
-      "start_percent": 0,
-      "end_percent": 1,
+      "strength": 0.5,
+      "start_percent": 0.0,
+      "end_percent": 0.7,
       "positive": ["6", 0],
       "negative": ["7", 0],
       "control_net": ["13", 0],
       "image": ["11", 0]
     },
-    "class_type": "ControlNetApplyAdvanced",
-    "_meta": { "title": "Apply Depth ControlNet" }
+    "class_type": "ControlNetApplyAdvanced"
+  },
+
+  "130": {
+    "inputs": {
+      "control_net_name": "__CONTROLNET_CANNY__"
+    },
+    "class_type": "ControlNetLoader"
+  },
+
+  "131": {
+    "inputs": {
+      "strength": 0.5,
+      "start_percent": 0.0,
+      "end_percent": 1.0,
+      "positive": ["14", 0],
+      "negative": ["14", 1],
+      "control_net": ["130", 0],
+      "image": ["111", 0]
+    },
+    "class_type": "ControlNetApplyAdvanced"
   },
 
   "9": {
@@ -85,17 +120,15 @@
       "pixels": ["1", 0],
       "vae": ["4", 2]
     },
-    "class_type": "VAEEncode",
-    "_meta": { "title": "VAE Encode (RGB → Latent)" }
+    "class_type": "VAEEncode"
   },
 
   "10": {
     "inputs": {
       "samples": ["9", 0],
-      "mask": ["12", 0]
+      "mask": ["121", 0]
     },
-    "class_type": "SetLatentNoiseMask",
-    "_meta": { "title": "Apply Latent Mask" }
+    "class_type": "SetLatentNoiseMask"
   },
 
   "3": {
@@ -107,21 +140,31 @@
       "scheduler": "normal",
       "denoise": "__DENOISE__",
       "model": ["4", 0],
-      "positive": ["14", 0],
-      "negative": ["14", 1],
+      "positive": ["131", 0],
+      "negative": ["131", 1],
       "latent_image": ["10", 0]
     },
-    "class_type": "KSampler",
-    "_meta": { "title": "Masked Inpainting Sampler" }
+    "class_type": "KSampler"
+  },
+
+  "200": {
+    "inputs": {
+      "destination": ["9", 0],
+      "source": ["3", 0],
+      "x": 0,
+      "y": 0,
+      "resize_source": false,
+      "mask": ["121", 0]
+    },
+    "class_type": "LatentCompositeMasked"
   },
 
   "8": {
     "inputs": {
-      "samples": ["3", 0],
+      "samples": ["200", 0],
       "vae": ["4", 2]
     },
-    "class_type": "VAEDecode",
-    "_meta": { "title": "Decode Image" }
+    "class_type": "VAEDecode"
   },
 
   "43": {
@@ -129,10 +172,9 @@
       "filename_prefix": "spatialgen_refined",
       "images": ["8", 0]
     },
-    "class_type": "SaveImage",
-    "_meta": { "title": "Save Refined Image" }
+    "class_type": "SaveImage"
   },
-
+  
   "50": {
     "inputs": {
       "width": "__CROP_WIDTH__",
@@ -141,8 +183,7 @@
       "y": "__CROP_Y__",
       "image": ["8", 0]
     },
-    "class_type": "ImageCrop",
-    "_meta": { "title": "Crop Reconstruction Quadrant" }
+    "class_type": "ImageCrop"
   },
 
   "65": {
@@ -150,8 +191,7 @@
       "model": "u2net: general purpose",
       "providers": "CPU"
     },
-    "class_type": "RemBGSession+",
-    "_meta": { "title": "RemBG Session" }
+    "class_type": "RemBGSession+"
   },
 
   "64": {
@@ -159,16 +199,14 @@
       "rembg_session": ["65", 0],
       "image": ["50", 0]
     },
-    "class_type": "ImageRemoveBackground+",
-    "_meta": { "title": "Remove Background" }
+    "class_type": "ImageRemoveBackground+"
   },
 
   "53": {
     "inputs": {
       "mask": ["64", 1]
     },
-    "class_type": "MaskToImage",
-    "_meta": { "title": "Mask To Image" }
+    "class_type": "MaskToImage"
   },
 
   "26": {
@@ -176,8 +214,7 @@
       "filename_prefix": "spatialgen_rmbg_refined",
       "images": ["64", 0]
     },
-    "class_type": "SaveImage",
-    "_meta": { "title": "Save RMBG Image" }
+    "class_type": "SaveImage"
   },
 
   "27": {
@@ -185,8 +222,7 @@
       "filename_prefix": "spatialgen_rmbg_mask_refined",
       "images": ["53", 0]
     },
-    "class_type": "SaveImage",
-    "_meta": { "title": "Save RMBG Mask" }
+    "class_type": "SaveImage"
   },
 
   "67": {
@@ -194,8 +230,7 @@
       "model": "__TRIPOSR_MODEL__",
       "chunk_size": 8192
     },
-    "class_type": "TripoSRModelLoader",
-    "_meta": { "title": "Load TripoSR Model" }
+    "class_type": "TripoSRModelLoader"
   },
 
   "66": {
@@ -206,8 +241,7 @@
       "reference_image": ["64", 0],
       "reference_mask": ["64", 1]
     },
-    "class_type": "TripoSRSampler",
-    "_meta": { "title": "Generate 3D Mesh" }
+    "class_type": "TripoSRSampler"
   },
 
   "68": {
@@ -215,7 +249,6 @@
       "format": "glb",
       "mesh": ["66", 0]
     },
-    "class_type": "TripoSRViewer",
-    "_meta": { "title": "Output Mesh" }
+    "class_type": "TripoSRViewer"
   }
 }

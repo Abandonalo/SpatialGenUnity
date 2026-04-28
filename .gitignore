@@ -9,6 +9,7 @@ SpatialGenHandoff/
 UserSettings/
 GeneratedAssets/
 Generated/
+Scenes/SampleScene.unity
 
 *.csproj
 *.sln

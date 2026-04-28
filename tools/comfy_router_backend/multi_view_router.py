@@ -89,10 +89,12 @@ def handle_multi_view_refine(
         rgb_image=rgb_composite,
         depth_image=depth_composite,
         mask_image=mask_composite,
+        # Uses the same fused composite until the client sends explicit edge maps per view.
+        canny_image=rgb_composite,
         seed=seed,
         steps=max(1, req.steps),
         cfg=max(0.0, req.cfg),
-        denoise=max(0.85, min(1.0, req.denoise)),
+        denoise=max(0.25, min(0.6, req.denoise)),
         tripo_model=tripo_model,
         geometry_resolution=geometry_resolution,
         tripo_threshold=tripo_threshold,

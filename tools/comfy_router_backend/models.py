@@ -12,6 +12,9 @@ class RunRequest(BaseModel):
     rgb_image: Optional[str] = None
     depth_image: Optional[str] = None
     mask_image: Optional[str] = None
+    # Optional hint for ControlNet Canny when the graph uses LoadImage CANNY,
+    # canny_image=None stages rgb_image in graph_injector for __CANNY_IMAGE__.
+    canny_image: Optional[str] = None
 
     seed: int
     steps: int = Field(gt=0)
