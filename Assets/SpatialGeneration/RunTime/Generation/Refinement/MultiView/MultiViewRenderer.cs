@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
 using UnityEngine;
 
 // MultiViewRenderer captures per-view RGB, depth and region-mask textures
@@ -25,6 +28,11 @@ public class MultiViewRenderer : MonoBehaviour
     [Header("Output")]
     [Tooltip("If true, flip rendered textures vertically so PNG encoding matches the inpainter's expected row order.")]
     public bool flipVerticalOnReadback = false;
+
+    [Header("Mask")]
+    [Tooltip("1 = weight mask by world up (favor roof/slabs; reduce vertical walls inside the same X/Z box). 0 = position-in-OBB only.")]
+    [Range(0f, 1f)]
+    public float maskFavorUpwardNormals = 0.85f;
 
     public MultiViewData RenderAllViews(RegionSelection selection)
     {
@@ -128,6 +136,7 @@ public class MultiViewRenderer : MonoBehaviour
 
         Shader.SetGlobalMatrix("_SelectionWorldToLocal", worldToSelection);
         Shader.SetGlobalVector("_SelectionHalfExtents", halfExtents);
+        Shader.SetGlobalFloat("_MaskFavorUpwardNormals", maskFavorUpwardNormals);
 
         RenderTexture rt = AcquireTarget(resolution);
         try
@@ -135,6 +144,11 @@ public class MultiViewRenderer : MonoBehaviour
             RenderPass(cam, rt, maskShader, clearToSource: false);
             Texture2D mask = ReadPixels(rt);
             Binarize(mask);
+            // #region agent log
+#if UNITY_EDITOR
+            AgentNdjson(mask, selection, maskFavorUpwardNormals, $"MultiViewRenderer:RenderMask exit", cam.name, HypothesisMultiviewMask);
+#endif
+            // #endregion
             return mask;
         }
         finally
@@ -142,6 +156,50 @@ public class MultiViewRenderer : MonoBehaviour
             RenderTexture.ReleaseTemporary(rt);
         }
     }
+
+#if UNITY_EDITOR
+    private const string HypothesisMultiviewMask = "H1_H2_H3";
+    private const string AgentNdjsonLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-58c452.log";
+
+    private static void AgentNdjson(Texture2D maskTex, RegionSelection sel, float maskUpW, string message, string viewLabel, string hypothesisId)
+    {
+        if (maskTex == null)
+            return;
+        float whiteFrac = MaskWhiteFraction(maskTex);
+        var sb = new StringBuilder(512);
+        sb.Append("{\"sessionId\":\"58c452\",\"runId\":\"maskPipeline\",\"hypothesisId\":\"").Append(hypothesisId).Append("\"");
+        sb.Append(",\"location\":\"MultiViewRenderer.cs:RenderMask\"");
+        sb.Append(",\"message\":\"").Append(message.Replace("\"", "'")).Append("\"");
+        sb.Append(",\"data\":{");
+        sb.Append("\"viewCamera\":\"").Append(viewLabel ?? "").Append("\"");
+        sb.Append(",\"maskFavorUpwardNormals\":").Append(maskUpW.ToString(CultureInfo.InvariantCulture));
+        if (sel != null)
+        {
+            sb.Append(",\"selSizeX\":").Append(sel.size.x.ToString(CultureInfo.InvariantCulture));
+            sb.Append(",\"selSizeY\":").Append(sel.size.y.ToString(CultureInfo.InvariantCulture));
+            sb.Append(",\"selSizeZ\":").Append(sel.size.z.ToString(CultureInfo.InvariantCulture));
+        }
+        sb.Append(",\"whitePixelFraction\":").Append(whiteFrac.ToString(CultureInfo.InvariantCulture));
+        sb.Append(",\"width\":").Append(maskTex.width).Append(",\"height\":").Append(maskTex.height);
+        sb.Append('}');
+        sb.Append(",\"timestamp\":").Append(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()).AppendLine("}");
+        File.AppendAllText(AgentNdjsonLogPath, sb.ToString());
+    }
+
+    private static float MaskWhiteFraction(Texture2D tex)
+    {
+        Color[] pixels = tex.GetPixels();
+        if (pixels == null || pixels.Length == 0)
+            return -1f;
+        int white = 0;
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            if (pixels[i].grayscale >= 0.5f)
+                white++;
+        }
+        return (float)white / pixels.Length;
+    }
+#endif
 
     private void RenderPass(Camera cam, RenderTexture target, Shader overrideShader, bool clearToSource)
     {

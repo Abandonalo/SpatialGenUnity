@@ -12,6 +12,10 @@ public class RegionMaskRenderer : MonoBehaviour
     public RenderTexture depthRT;
     public RenderTexture maskRT;
 
+    [Tooltip("Same as MultiViewRenderer: weight mask toward upward-facing normals (roof-ish). 0 = OBB only.")]
+    [Range(0f, 1f)]
+    public float maskFavorUpwardNormals = 0.85f;
+
     private Camera _driverCamera;
 
     public Texture2D RenderRGB()
@@ -54,6 +58,7 @@ public class RegionMaskRenderer : MonoBehaviour
 
         Shader.SetGlobalMatrix("_SelectionWorldToLocal", worldToSelection);
         Shader.SetGlobalVector("_SelectionHalfExtents", ClampHalfExtents(selection.size * 0.5f));
+        Shader.SetGlobalFloat("_MaskFavorUpwardNormals", maskFavorUpwardNormals);
 
         RenderTexture target = EnsureTarget(ref maskRT, RenderTextureFormat.ARGB32);
         RenderScene(cameraToUse, target, maskShader);

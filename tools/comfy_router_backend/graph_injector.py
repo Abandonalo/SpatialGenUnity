@@ -1,21 +1,16 @@
 import base64
 import copy
+import io
 import json
 import os
 import re
-import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+
+from PIL import Image
 
 from .models import RunRequest
-
-_DEBUG_LOG_PATH = "/Users/alo/SpatialGenUnity/.cursor/debug-b26376.log"
-
-
-def _agent_debug_log(payload: Dict[str, Any]) -> None:
-    with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, default=str) + "\n")
 
 
 _DATA_URI_PATTERN = re.compile(r"^data:(?P<mime>[\w.+-]+/[\w.+-]+);base64,(?P<data>.+)$", re.IGNORECASE)
@@ -38,44 +33,46 @@ def inject_params(graph: Dict[str, Any], req: RunRequest) -> Dict[str, Any]:
         joined = ", ".join(unresolved)
         raise ValueError(f"Unresolved graph placeholders: {joined}")
 
-    # region agent log
-    try:
-        n4 = injected.get("4") if isinstance(injected.get("4"), dict) else {}
-        n13 = injected.get("13") if isinstance(injected.get("13"), dict) else {}
-        n130 = injected.get("130") if isinstance(injected.get("130"), dict) else {}
-        ckpt = (n4.get("inputs") or {}).get("ckpt_name")
-        cn_depth = (n13.get("inputs") or {}).get("control_net_name")
-        cn_canny = (n130.get("inputs") or {}).get("control_net_name")
-        _agent_debug_log(
-            {
-                "sessionId": "b26376",
-                "runId": "pre-fix",
-                "hypothesisId": "H1",
-                "location": "graph_injector.py:inject_params",
-                "message": "resolved ckpt and controlnet for Comfy graph",
-                "data": {
-                    "mode": getattr(req, "mode", None),
-                    "ckpt_name": ckpt,
-                    "control_net_depth_name": cn_depth,
-                    "control_net_canny_name": cn_canny,
-                    "comfy_checkpoint_env_set": bool(os.getenv("COMFY_CHECKPOINT")),
-                    "comfy_controlnet_depth_env_set": bool(os.getenv("COMFY_CONTROLNET_DEPTH")),
-                    "comfy_controlnet_canny_env_set": bool(os.getenv("COMFY_CONTROLNET_CANNY")),
-                    "ckpt_filename_suggests_sdxl": bool(
-                        ckpt and isinstance(ckpt, str) and ("xl" in ckpt.lower() or "sd_xl" in ckpt.lower())
-                    ),
-                    "controlnet_depth_suggests_sdxl": bool(
-                        cn_depth and isinstance(cn_depth, str) and ("xl" in cn_depth.lower() or "sdxl" in cn_depth.lower() or "xinsir" in cn_depth.lower())
-                    ),
-                },
-                "timestamp": int(time.time() * 1000),
-            }
-        )
-    except Exception:
-        pass
-    # endregion agent log
-
     return injected
+
+
+def _tripo_crop_replacements(req: RunRequest) -> Dict[str, Any]:
+    """Crop applied after inpaint so TripoSR ingests a single coherent view.
+
+    Multi-view requests set explicit crop_* for the reconstruction quadrant.
+    Single-view /refine omits crop_* — use the full staged RGB dimensions.
+    """
+    if req.crop_width is not None and req.crop_height is not None:
+        crop_w, crop_h = req.crop_width, req.crop_height
+    else:
+        dims = _rgb_dimensions_from_base64(req.rgb_image)
+        crop_w, crop_h = dims if dims else (512, 512)
+    crop_x = 0 if req.crop_x is None else req.crop_x
+    crop_y = 0 if req.crop_y is None else req.crop_y
+    return {
+        "__CROP_WIDTH__": crop_w,
+        "__CROP_HEIGHT__": crop_h,
+        "__CROP_X__": crop_x,
+        "__CROP_Y__": crop_y,
+    }
+
+
+def _rgb_dimensions_from_base64(encoded: Optional[str]) -> Optional[Tuple[int, int]]:
+    if not encoded:
+        return None
+    raw = encoded.strip()
+    match = _DATA_URI_PATTERN.match(raw)
+    if match:
+        raw = match.group("data")
+    try:
+        payload = base64.b64decode(raw, validate=True)
+    except Exception:
+        return None
+    try:
+        with Image.open(io.BytesIO(payload)) as im:
+            return im.size
+    except Exception:
+        return None
 
 
 def _build_replacements(req: RunRequest) -> Dict[str, Any]:
@@ -91,10 +88,7 @@ def _build_replacements(req: RunRequest) -> Dict[str, Any]:
         "__TRIPOSR_MODEL__": req.tripo_model,
         "__GEOMETRY_RESOLUTION__": req.geometry_resolution,
         "__TRIPOSR_THRESHOLD__": req.tripo_threshold,
-        "__CROP_WIDTH__": req.crop_width or 512,
-        "__CROP_HEIGHT__": req.crop_height or 512,
-        "__CROP_X__": req.crop_x if req.crop_x is not None else 0,
-        "__CROP_Y__": req.crop_y if req.crop_y is not None else 0,
+        **_tripo_crop_replacements(req),
         # Names must appear in ControlNetLoader’s list under models/controlnet/ (subdir layout matches Comfy’s UI).
         "__CONTROLNET_DEPTH__": os.getenv(
             "COMFY_CONTROLNET_DEPTH",

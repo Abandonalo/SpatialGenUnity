@@ -32,7 +32,10 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import random
+import time
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from PIL import Image
@@ -76,6 +79,7 @@ def handle_multi_view_refine(
     rgb_composite = _composite_views(req.views, positions, "rgbBase64", (per_view_w, per_view_h), fill=(0, 0, 0, 255))
     depth_composite = _composite_views(req.views, positions, "depthBase64", (per_view_w, per_view_h), fill=(0, 0, 0, 255))
     mask_composite = _composite_views(req.views, positions, "maskBase64", (per_view_w, per_view_h), fill=(0, 0, 0, 255))
+    _debug_log_mask_composite_tightness(mask_composite)
 
     # Crop the top-right quadrant: with the default quadrant map, Unity's
     # leftCamera (user-facing "front" for common house orientations) lands
@@ -94,7 +98,10 @@ def handle_multi_view_refine(
         seed=seed,
         steps=max(1, req.steps),
         cfg=max(0.0, req.cfg),
-        denoise=max(0.25, min(0.6, req.denoise)),
+        # Must match /refine (app.refine): inpainting needs high denoise. A 0.6
+        # ceiling made multi-view runs look like "nothing changed" because the
+        # KSampler barely departed from the VAE-encoded latent.
+        denoise=max(0.85, min(1.0, req.denoise)),
         tripo_model=tripo_model,
         geometry_resolution=geometry_resolution,
         tripo_threshold=tripo_threshold,
@@ -103,6 +110,33 @@ def handle_multi_view_refine(
         crop_x=crop_x,
         crop_y=crop_y,
     )
+
+    # region agent log
+    try:
+        dbg = Path(__file__).resolve().parents[2] / ".cursor" / "debug-58c452.log"
+        dbg.parent.mkdir(parents=True, exist_ok=True)
+        with dbg.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "sessionId": "58c452",
+                        "runId": "denoise-align",
+                        "hypothesisId": "MV_DENOISE",
+                        "location": "multi_view_router.py:handle_multi_view_refine",
+                        "message": "effective KSampler denoise vs client request",
+                        "data": {
+                            "requestedDenoise": req.denoise,
+                            "wiredToGraphDenoise": run_request.denoise,
+                        },
+                        "timestamp": int(time.time() * 1000),
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # endregion
 
     graph = _build_graph(run_request)
     result = send_to_comfy(graph)
@@ -124,6 +158,49 @@ def handle_multi_view_refine(
         success=True,
         errorMessage="",
     )
+
+
+def _debug_log_mask_composite_tightness(mask_composite_b64: str) -> None:
+    """Append NDJSON: how spread out white mask pixels are on the 2x2 composite."""
+    try:
+        raw = mask_composite_b64.strip().split(",", 1)[-1]
+        im = Image.open(io.BytesIO(base64.b64decode(raw))).convert("L")
+        w, h = im.size
+        total = w * h
+        if total <= 0:
+            return
+        data = im.getdata()
+        white_px = sum(1 for p in data if p > 127)
+        white_px_frac = white_px / float(total)
+        bw = im.point(lambda p: 255 if p > 127 else 0)
+        bb = bw.getbbox()
+        bbox_cover = ((bb[2] - bb[0]) * (bb[3] - bb[1]) / float(total)) if bb else 0.0
+
+        dbg = Path(__file__).resolve().parents[2] / ".cursor" / "debug-58c452.log"
+        dbg.parent.mkdir(parents=True, exist_ok=True)
+        with dbg.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "sessionId": "58c452",
+                        "runId": "maskComposite",
+                        "hypothesisId": "MASK_COMPOSITE_BBOX",
+                        "location": "multi_view_router.py:handle_multi_view_refine",
+                        "message": "mask composite white coverage vs tight bbox",
+                        "data": {
+                            "compositeW": w,
+                            "compositeH": h,
+                            "whitePixelFraction": white_px_frac,
+                            "whiteTightBboxAreaFraction": bbox_cover,
+                        },
+                        "timestamp": int(time.time() * 1000),
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
 
 
 def _validate_request(req: MultiViewRefinementRequestModel) -> None:

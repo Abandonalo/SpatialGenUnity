@@ -243,16 +243,32 @@ public class SpatialGenerationWindow : EditorWindow
             return;
         }
 
-        string selectionSummary = selectionManager?.CurrentSelection == null
+        RegionSelection cs = selectionManager?.CurrentSelection;
+        string selectionSummary = cs == null
             ? "No active region selection."
-            : $"Selection: center={selectionManager.CurrentSelection.center}, size={selectionManager.CurrentSelection.size}";
-        EditorGUILayout.HelpBox(selectionSummary, MessageType.None);
+            : $"Selection: center={cs.center}, size={cs.size}";
+        if (cs != null
+            && RegionSelectionManager.TryGetGeneratedContentMeshBounds(out Bounds gm)
+            && RegionSelectionManager.SelectionWorldAabbSpansMostOfMesh(cs, gm))
+        {
+            EditorGUILayout.HelpBox(
+                selectionSummary
+                + " The cube encloses almost the entire generated mesh on multiple axes — "
+                + "refinement masks will trace most of the object. Resize handles in Scene view "
+                + "or Reset Selection for a tighter default centered on GeneratedContent.",
+                MessageType.Warning);
+        }
+        else
+            EditorGUILayout.HelpBox(selectionSummary, MessageType.None);
 
         if (GUILayout.Button("Reset Selection"))
         {
             Undo.RecordObject(selectionManager, "Reset Region Selection");
-            if (!selectionManager.TryInitializeFromSceneGeometry(0.7f))
-                selectionManager.BeginSelection();
+            if (!selectionManager.TryInitializeFromGeneratedMeshBounds())
+            {
+                if (!selectionManager.TryInitializeFromSceneGeometry(0.4f))
+                    selectionManager.BeginSelection();
+            }
             selectionManager.ConfirmSelection();
             EditorUtility.SetDirty(selectionManager);
             SceneView.RepaintAll();
@@ -270,6 +286,19 @@ public class SpatialGenerationWindow : EditorWindow
                     extra = $"selection={selectionManager.CurrentSelection.selectionId}, global_prompt={_globalStylePrompt}, local_prompt={_localRefinementPrompt}"
                 });
             }
+        }
+
+        if (controller.IsRunning)
+        {
+            if (GUILayout.Button("Clear refining status"))
+            {
+                Undo.RecordObject(controller, "Clear refining status");
+                controller.ClearRefiningRunningState();
+                EditorUtility.SetDirty(controller);
+            }
+            EditorGUILayout.HelpBox(
+                "If refinement finished or was interrupted but the button still shows Refining..., clear the busy flag here.",
+                MessageType.None);
         }
     }
 
@@ -494,7 +523,11 @@ public class SpatialGenerationWindow : EditorWindow
         maskRenderer.renderCamera = Camera.main != null ? Camera.main : FindFirstObjectByType<Camera>();
         controller.selectionManager = selectionManager;
         controller.maskRenderer = maskRenderer;
-        selectionManager.TryInitializeFromSceneGeometry(0.7f);
+        if (!selectionManager.TryInitializeFromGeneratedMeshBounds())
+        {
+            if (!selectionManager.TryInitializeFromSceneGeometry(0.4f))
+                selectionManager.BeginSelection();
+        }
         selectionManager.ConfirmSelection();
 
         EditorUtility.SetDirty(root);
