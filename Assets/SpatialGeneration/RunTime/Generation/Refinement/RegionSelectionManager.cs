@@ -1,12 +1,14 @@
 using System;
-using System.Globalization;
-using System.IO;
+using System.Collections.Generic;
 using UnityEngine;
 
 [ExecuteAlways]
 public class RegionSelectionManager : MonoBehaviour
 {
     private const string GeneratedContentRootName = "GeneratedContent";
+
+    /// <summary>Unity layer used by <see cref="MultiViewRenderer"/> screen-space mask pass (see Tags &amp; Layers).</summary>
+    public const string MaskSelectionLayerName = "SpatialGenMaskSelection";
 
     [SerializeField] private RegionSelection currentSelection;
     [SerializeField] private bool isSelecting;
@@ -261,32 +263,6 @@ public class RegionSelectionManager : MonoBehaviour
             && volumeRatio >= volumeSpanMin
             && minR >= minAxisSpanMin;
 
-        // #region agent log
-#if UNITY_EDITOR
-        try
-        {
-            const string path = "/Users/alo/SpatialGenUnity/.cursor/debug-58c452.log";
-            string ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
-            File.AppendAllText(
-                path,
-                "{\"sessionId\":\"58c452\",\"runId\":\"spanHeuristic\",\"hypothesisId\":\"H_VOL\",\"location\":\"RegionSelectionManager.SelectionWorldAabbSpansMostOfMesh\",\"message\":\"axis vs volume span check\",\"data\":{"
-                    + "\"rx\":" + rx.ToString(CultureInfo.InvariantCulture)
-                    + ",\"ry\":" + ry.ToString(CultureInfo.InvariantCulture)
-                    + ",\"rz\":" + rz.ToString(CultureInfo.InvariantCulture)
-                    + ",\"minR\":" + minR.ToString(CultureInfo.InvariantCulture)
-                    + ",\"bigAxes\":" + big.ToString(CultureInfo.InvariantCulture)
-                    + ",\"volumeRatio\":" + volumeRatio.ToString(CultureInfo.InvariantCulture)
-                    + ",\"volumeSpanMin\":" + volumeSpanMin.ToString(CultureInfo.InvariantCulture)
-                    + ",\"minAxisSpanMin\":" + minAxisSpanMin.ToString(CultureInfo.InvariantCulture)
-                    + ",\"spansMost\":" + (spansMost ? "true" : "false")
-                    + "},\"timestamp\":" + ts + "}\n");
-        }
-        catch
-        {
-        }
-#endif
-        // #endregion
-
         return spansMost;
     }
 
@@ -454,6 +430,56 @@ public class RegionSelectionManager : MonoBehaviour
             return false;
 
         return true;
+    }
+
+    /// <summary>
+    /// For screen-space masks: same renderers as <see cref="TryGetPrimaryGeneratedContentMeshBounds"/>
+    /// (Generated_Mesh* / Refined_Mesh* under <c>GeneratedContent</c>), temporarily moved to <paramref name="maskLayer"/>).
+    /// </summary>
+    public static bool TryBeginScreenSpaceMaskPass(int maskLayer, List<(Renderer renderer, int savedLayer)> savedLayers)
+    {
+        savedLayers.Clear();
+        if (maskLayer < 0)
+            return false;
+
+        GameObject rootGo = GameObject.Find(GeneratedContentRootName);
+        if (rootGo == null)
+            return false;
+
+        Transform generatedRoot = rootGo.transform;
+        Renderer[] rs = generatedRoot.GetComponentsInChildren<Renderer>(true);
+        bool any = false;
+        for (int i = 0; i < rs.Length; i++)
+        {
+            Renderer r = rs[i];
+            if (r == null || !r.gameObject.activeInHierarchy)
+                continue;
+
+            Transform rootChild = FindDirectChildOfGeneratedRoot(generatedRoot, r.transform);
+            if (rootChild == null || (!IsGeneratedMeshSubtreeRoot(rootChild) && !IsRefinedMeshSubtreeRoot(rootChild)))
+                continue;
+
+            savedLayers.Add((r, r.gameObject.layer));
+            r.gameObject.layer = maskLayer;
+            any = true;
+        }
+
+        return any;
+    }
+
+    public static void EndScreenSpaceMaskPass(List<(Renderer renderer, int savedLayer)> savedLayers)
+    {
+        if (savedLayers == null)
+            return;
+
+        for (int i = 0; i < savedLayers.Count; i++)
+        {
+            (Renderer renderer, int savedLayer) = savedLayers[i];
+            if (renderer != null)
+                renderer.gameObject.layer = savedLayer;
+        }
+
+        savedLayers.Clear();
     }
 }
 

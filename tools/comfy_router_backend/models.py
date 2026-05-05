@@ -142,6 +142,7 @@ class ViewPayload(BaseModel):
     height: int = 0
     rgbBase64: str = ""
     depthBase64: str = ""
+    edgesBase64: str = ""
     maskBase64: str = ""
 
 

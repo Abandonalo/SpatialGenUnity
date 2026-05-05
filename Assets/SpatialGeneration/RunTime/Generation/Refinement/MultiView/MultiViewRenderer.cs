@@ -1,9 +1,15 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
-using System.Text;
 using UnityEngine;
+
+public enum MultiViewMaskMode
+{
+    /// <summary>Depth prepass + OBB / viewport mask shader.</summary>
+    ObbDepthShader = 0,
+
+    /// <summary>Same camera as RGB; white replacement shader on generated/refined mesh only.</summary>
+    ScreenSpaceGeneratedMesh = 1
+}
 
 // MultiViewRenderer captures per-view RGB, depth and region-mask textures
 // from the canonical camera rig owned by MultiViewCameraManager.
@@ -19,6 +25,7 @@ public class MultiViewRenderer : MonoBehaviour
 {
     private const string DepthShaderName = "Hidden/SpatialGen/EncodeLinearDepth";
     private const string MaskShaderName = "Hidden/SpatialGen/RegionSelectionMask";
+    private const string SolidWhiteMaskShaderName = "Hidden/SpatialGen/MaskSolidWhite";
 
     public MultiViewCameraManager cameraManager;
 
@@ -30,9 +37,25 @@ public class MultiViewRenderer : MonoBehaviour
     public bool flipVerticalOnReadback = false;
 
     [Header("Mask")]
-    [Tooltip("1 = weight mask by world up (favor roof/slabs; reduce vertical walls inside the same X/Z box). 0 = position-in-OBB only.")]
+    [Tooltip("ObbDepthShader: selection/OBB path. ScreenSpaceGeneratedMesh: render generated mesh as white (same projection as RGB).")]
+    public MultiViewMaskMode maskMode = MultiViewMaskMode.ScreenSpaceGeneratedMesh;
+
+    [Tooltip("Unity layer for ScreenSpaceGeneratedMesh (must exist in Tags & Layers).")]
+    public string maskGeometryLayerName = RegionSelectionManager.MaskSelectionLayerName;
+
+    [Tooltip("When true, build a Sobel edge map from the linear depth image and send as edgesBase64 per view.")]
+    public bool includeEdgesFromDepth = true;
+
+    [Tooltip("Logged only: exported mask pass always sends 0 (see RegionMaskRenderer.MaskExportFavorUpwardNormals).")]
     [Range(0f, 1f)]
-    public float maskFavorUpwardNormals = 0.85f;
+    public float maskFavorUpwardNormals = 0f;
+
+    [Tooltip("Max |Δ| in linear encoded depth (EncodeLinearDepth) vs fragment.")]
+    public float depthMaskEpsilon = 0.004f;
+
+    [Tooltip("0=binary mask for backend. 1–3=depth debug (no binarize).")]
+    [Range(0f, 3f)]
+    public float maskDebugView = 0f;
 
     public MultiViewData RenderAllViews(RegionSelection selection)
     {
@@ -54,11 +77,13 @@ public class MultiViewRenderer : MonoBehaviour
 
             Texture2D rgb = null;
             Texture2D depth = null;
+            Texture2D edges = null;
             Texture2D mask = null;
             try
             {
                 rgb = RenderRGB(cam, resolution);
                 depth = RenderDepth(cam, resolution);
+                edges = includeEdgesFromDepth ? BuildSimpleEdgeMapFromDepth(depth) : null;
                 mask = RenderMask(cam, selection, resolution);
 
                 result.views.Add(new ViewData
@@ -68,6 +93,7 @@ public class MultiViewRenderer : MonoBehaviour
                     height = resolution.y,
                     rgbBase64 = EncodePng(rgb),
                     depthBase64 = EncodePng(depth),
+                    edgesBase64 = edges != null ? EncodePng(edges) : string.Empty,
                     maskBase64 = EncodePng(mask)
                 });
             }
@@ -75,6 +101,7 @@ public class MultiViewRenderer : MonoBehaviour
             {
                 if (rgb != null) UnityEngine.Object.DestroyImmediate(rgb);
                 if (depth != null) UnityEngine.Object.DestroyImmediate(depth);
+                if (edges != null) UnityEngine.Object.DestroyImmediate(edges);
                 if (mask != null) UnityEngine.Object.DestroyImmediate(mask);
             }
         }
@@ -118,90 +145,120 @@ public class MultiViewRenderer : MonoBehaviour
 
     private Texture2D RenderMask(Camera cam, RegionSelection selection, Vector2Int resolution)
     {
-        Shader maskShader = Shader.Find(MaskShaderName);
-        if (maskShader == null)
-            throw new InvalidOperationException($"Mask shader '{MaskShaderName}' not found.");
+        return maskMode == MultiViewMaskMode.ScreenSpaceGeneratedMesh
+            ? RenderMaskScreenSpace(cam, selection, resolution)
+            : RenderMaskObbDepth(cam, selection, resolution);
+    }
 
-        Matrix4x4 worldToSelection = Matrix4x4.TRS(
-            selection.center,
-            selection.rotation,
-            Vector3.one).inverse;
+    private Texture2D RenderMaskScreenSpace(Camera cam, RegionSelection selection, Vector2Int resolution)
+    {
+        Shader whiteShader = Shader.Find(SolidWhiteMaskShaderName);
+        if (whiteShader == null)
+            throw new InvalidOperationException($"Mask shader '{SolidWhiteMaskShaderName}' not found.");
 
-        Vector3 half = selection.size * 0.5f;
-        Vector4 halfExtents = new Vector4(
-            Mathf.Max(0.005f, Mathf.Abs(half.x)),
-            Mathf.Max(0.005f, Mathf.Abs(half.y)),
-            Mathf.Max(0.005f, Mathf.Abs(half.z)),
-            0f);
+        int maskLayer = LayerMask.NameToLayer(maskGeometryLayerName);
+        if (maskLayer < 0)
+        {
+            throw new InvalidOperationException(
+                $"MultiViewRenderer: layer '{maskGeometryLayerName}' is not defined. Add it under Edit > Project Settings > Tags and Layers.");
+        }
 
-        Shader.SetGlobalMatrix("_SelectionWorldToLocal", worldToSelection);
-        Shader.SetGlobalVector("_SelectionHalfExtents", halfExtents);
-        Shader.SetGlobalFloat("_MaskFavorUpwardNormals", maskFavorUpwardNormals);
-
-        RenderTexture rt = AcquireTarget(resolution);
+        var savedLayers = new List<(Renderer renderer, int savedLayer)>();
+        RegionSelectionManager.TryBeginScreenSpaceMaskPass(maskLayer, savedLayers);
         try
         {
-            RenderPass(cam, rt, maskShader, clearToSource: false);
-            Texture2D mask = ReadPixels(rt);
-            Binarize(mask);
-            // #region agent log
-#if UNITY_EDITOR
-            AgentNdjson(mask, selection, maskFavorUpwardNormals, $"MultiViewRenderer:RenderMask exit", cam.name, HypothesisMultiviewMask);
-#endif
-            // #endregion
-            return mask;
+            RenderTexture rt = AcquireTarget(resolution);
+            try
+            {
+                int maskOnly = 1 << maskLayer;
+                RenderPass(cam, rt, whiteShader, clearToSource: false, maskOnly);
+                Texture2D mask = ReadPixels(rt);
+                if (maskDebugView < 0.25f)
+                    Binarize(mask);
+                return mask;
+            }
+            finally
+            {
+                RenderTexture.ReleaseTemporary(rt);
+            }
         }
         finally
         {
-            RenderTexture.ReleaseTemporary(rt);
+            RegionSelectionManager.EndScreenSpaceMaskPass(savedLayers);
         }
     }
 
-#if UNITY_EDITOR
-    private const string HypothesisMultiviewMask = "H1_H2_H3";
-    private const string AgentNdjsonLogPath = "/Users/alo/SpatialGenUnity/.cursor/debug-58c452.log";
-
-    private static void AgentNdjson(Texture2D maskTex, RegionSelection sel, float maskUpW, string message, string viewLabel, string hypothesisId)
+    private Texture2D RenderMaskObbDepth(Camera cam, RegionSelection selection, Vector2Int resolution)
     {
-        if (maskTex == null)
-            return;
-        float whiteFrac = MaskWhiteFraction(maskTex);
-        var sb = new StringBuilder(512);
-        sb.Append("{\"sessionId\":\"58c452\",\"runId\":\"maskPipeline\",\"hypothesisId\":\"").Append(hypothesisId).Append("\"");
-        sb.Append(",\"location\":\"MultiViewRenderer.cs:RenderMask\"");
-        sb.Append(",\"message\":\"").Append(message.Replace("\"", "'")).Append("\"");
-        sb.Append(",\"data\":{");
-        sb.Append("\"viewCamera\":\"").Append(viewLabel ?? "").Append("\"");
-        sb.Append(",\"maskFavorUpwardNormals\":").Append(maskUpW.ToString(CultureInfo.InvariantCulture));
-        if (sel != null)
+        Shader depthShader = Shader.Find(DepthShaderName);
+        Shader maskShader = Shader.Find(MaskShaderName);
+        if (depthShader == null)
+            throw new InvalidOperationException($"Depth shader '{DepthShaderName}' not found.");
+        if (maskShader == null)
+            throw new InvalidOperationException($"Mask shader '{MaskShaderName}' not found.");
+
+        float maxDepth = Mathf.Max(0.01f, cam.farClipPlane);
+        RenderTexture depthBuf = AcquireTarget(resolution);
+        try
         {
-            sb.Append(",\"selSizeX\":").Append(sel.size.x.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"selSizeY\":").Append(sel.size.y.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"selSizeZ\":").Append(sel.size.z.ToString(CultureInfo.InvariantCulture));
+            Shader.SetGlobalFloat("_MaxDepth", maxDepth);
+            RenderPass(cam, depthBuf, depthShader, clearToSource: false);
+
+            Matrix4x4 worldToSelection = Matrix4x4.TRS(
+                selection.center,
+                selection.rotation,
+                Vector3.one).inverse;
+
+            Vector3 half = selection.size * 0.5f;
+            Vector4 halfExtents = new Vector4(
+                Mathf.Max(0.005f, Mathf.Abs(half.x)),
+                Mathf.Max(0.005f, Mathf.Abs(half.y)),
+                Mathf.Max(0.005f, Mathf.Abs(half.z)),
+                0f);
+
+            Shader.SetGlobalTexture("_RegionMaskSceneDepthTex", depthBuf);
+            Shader.SetGlobalFloat("_DepthMaskEpsilon", Mathf.Max(1e-6f, depthMaskEpsilon));
+            Shader.SetGlobalFloat("_RegionMaskUseDepthTest", 1f);
+            Shader.SetGlobalFloat("_MaskDebugView", maskDebugView);
+
+            if (cam != null && RegionMaskRenderer.TryGetSelectionViewportUvBounds(cam, selection, out Vector4 uvBoundsMv))
+            {
+                Shader.SetGlobalVector("_MaskViewportUvMinMax", uvBoundsMv);
+                Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 1f);
+            }
+            else
+                Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
+
+            Shader.SetGlobalMatrix("_SelectionWorldToLocal", worldToSelection);
+            Shader.SetGlobalVector("_SelectionHalfExtents", halfExtents);
+            Shader.SetGlobalFloat("_MaskFavorUpwardNormals", RegionMaskRenderer.MaskExportFavorUpwardNormals);
+            Shader.SetGlobalFloat("_MaxDepth", maxDepth);
+
+            RenderTexture rt = AcquireTarget(resolution);
+            try
+            {
+                RenderPass(cam, rt, maskShader, clearToSource: false);
+                Texture2D mask = ReadPixels(rt);
+                if (maskDebugView < 0.25f)
+                    Binarize(mask);
+                return mask;
+            }
+            finally
+            {
+                RenderTexture.ReleaseTemporary(rt);
+            }
         }
-        sb.Append(",\"whitePixelFraction\":").Append(whiteFrac.ToString(CultureInfo.InvariantCulture));
-        sb.Append(",\"width\":").Append(maskTex.width).Append(",\"height\":").Append(maskTex.height);
-        sb.Append('}');
-        sb.Append(",\"timestamp\":").Append(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()).AppendLine("}");
-        File.AppendAllText(AgentNdjsonLogPath, sb.ToString());
+        finally
+        {
+            Shader.SetGlobalTexture("_RegionMaskSceneDepthTex", null);
+            Shader.SetGlobalFloat("_RegionMaskUseDepthTest", 0f);
+            Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
+            Shader.SetGlobalFloat("_MaskDebugView", 0f);
+            RenderTexture.ReleaseTemporary(depthBuf);
+        }
     }
 
-    private static float MaskWhiteFraction(Texture2D tex)
-    {
-        Color[] pixels = tex.GetPixels();
-        if (pixels == null || pixels.Length == 0)
-            return -1f;
-        int white = 0;
-        for (int i = 0; i < pixels.Length; i++)
-        {
-            if (pixels[i].grayscale >= 0.5f)
-                white++;
-        }
-        return (float)white / pixels.Length;
-    }
-#endif
-
-    private void RenderPass(Camera cam, RenderTexture target, Shader overrideShader, bool clearToSource)
+    private void RenderPass(Camera cam, RenderTexture target, Shader overrideShader, bool clearToSource, int? overrideCullingMask = null)
     {
         RenderTexture previousTarget = cam.targetTexture;
         CameraClearFlags previousFlags = cam.clearFlags;
@@ -211,7 +268,9 @@ public class MultiViewRenderer : MonoBehaviour
         try
         {
             cam.targetTexture = target;
-            if (cullingSource != null)
+            if (overrideCullingMask.HasValue)
+                cam.cullingMask = overrideCullingMask.Value;
+            else if (cullingSource != null)
                 cam.cullingMask = cullingSource.cullingMask;
 
             if (overrideShader == null)
@@ -237,6 +296,51 @@ public class MultiViewRenderer : MonoBehaviour
             cam.backgroundColor = previousBackground;
             cam.cullingMask = previousMask;
         }
+    }
+
+    private static Texture2D BuildSimpleEdgeMapFromDepth(Texture2D source)
+    {
+        if (source == null)
+            return null;
+
+        int width = source.width;
+        int height = source.height;
+        var edges = new Texture2D(width, height, TextureFormat.RGBA32, false);
+        Color[] src = source.GetPixels();
+        Color[] dst = new Color[src.Length];
+
+        for (int y = 1; y < height - 1; y++)
+        {
+            for (int x = 1; x < width - 1; x++)
+            {
+                int i = y * width + x;
+                float gx =
+                    -src[(y - 1) * width + (x - 1)].r + src[(y - 1) * width + (x + 1)].r +
+                    -2f * src[y * width + (x - 1)].r + 2f * src[y * width + (x + 1)].r +
+                    -src[(y + 1) * width + (x - 1)].r + src[(y + 1) * width + (x + 1)].r;
+                float gy =
+                    src[(y - 1) * width + (x - 1)].r + 2f * src[(y - 1) * width + x].r + src[(y - 1) * width + (x + 1)].r -
+                    src[(y + 1) * width + (x - 1)].r - 2f * src[(y + 1) * width + x].r - src[(y + 1) * width + (x + 1)].r;
+                float edge = Mathf.Clamp01(Mathf.Sqrt(gx * gx + gy * gy));
+                dst[i] = new Color(edge, edge, edge, 1f);
+            }
+        }
+
+        for (int x = 0; x < width; x++)
+        {
+            dst[x] = Color.black;
+            dst[(height - 1) * width + x] = Color.black;
+        }
+
+        for (int y = 0; y < height; y++)
+        {
+            dst[y * width] = Color.black;
+            dst[y * width + (width - 1)] = Color.black;
+        }
+
+        edges.SetPixels(dst);
+        edges.Apply(false, false);
+        return edges;
     }
 
     private static RenderTexture AcquireTarget(Vector2Int resolution)

@@ -12,6 +12,8 @@ public class ViewData
     public int height;
     public string rgbBase64 = string.Empty;
     public string depthBase64 = string.Empty;
+    /// <summary>Per-view edge map (e.g. Sobel on linear depth), same resolution as RGB; optional for backend.</summary>
+    public string edgesBase64 = string.Empty;
     public string maskBase64 = string.Empty;
 }
 

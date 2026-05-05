@@ -1,8 +1,6 @@
 using System;
-using System.Globalization;
 using System.IO;
 using System.Net.Http;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -95,13 +93,6 @@ public class RefinementController : MonoBehaviour
                     "or choose Reset Selection for a tighter default centered on your asset.");
             }
 
-            // #region agent log
-#if UNITY_EDITOR
-            AgentDebugLogMultiViewSelection(selection, maskForInpaint);
-#endif
-            // #endregion
-
-            MultiViewData views = multiViewRenderer.RenderAllViews(maskForInpaint);
 
             // Refinement intent lives entirely in the local prompt. Mixing in
             // the global style prompt dilutes the per-region change the user
@@ -215,6 +206,7 @@ public class RefinementController : MonoBehaviour
                 string maskPath = Path.Combine(artifactDir, $"{v.viewType}_mask.png");
                 WriteBase64Png(v.rgbBase64, rgbPath);
                 WriteBase64Png(v.depthBase64, Path.Combine(artifactDir, $"{v.viewType}_depth.png"));
+                WriteBase64Png(v.edgesBase64, Path.Combine(artifactDir, $"{v.viewType}_edges.png"));
                 WriteBase64Png(v.maskBase64, maskPath);
                 TryWriteMaskRgbOverlay(
                     rgbPath,
@@ -384,12 +376,13 @@ public class RefinementController : MonoBehaviour
 
         Quaternion r = selection.rotation;
         Vector3 c = frameBounds.center;
-        PlaceCamera(cm.frontCamera, c + r * new Vector3(0f, 0f, -distance),
-                    r * Quaternion.LookRotation(Vector3.forward, Vector3.up));
-        PlaceCamera(cm.leftCamera, c + r * new Vector3(-distance, 0f, 0f),
+        // Match MultiViewCameraManager.AutoSetupCameras: façade from -X, left from +Z, right from -Z.
+        PlaceCamera(cm.frontCamera, c + r * new Vector3(-distance, 0f, 0f),
                     r * Quaternion.LookRotation(Vector3.right, Vector3.up));
-        PlaceCamera(cm.rightCamera, c + r * new Vector3(distance, 0f, 0f),
-                    r * Quaternion.LookRotation(Vector3.left, Vector3.up));
+        PlaceCamera(cm.leftCamera, c + r * new Vector3(0f, 0f, distance),
+                    r * Quaternion.LookRotation(Vector3.back, Vector3.up));
+        PlaceCamera(cm.rightCamera, c + r * new Vector3(0f, 0f, -distance),
+                    r * Quaternion.LookRotation(Vector3.forward, Vector3.up));
         PlaceCamera(cm.topCamera, c + r * new Vector3(0f, distance, 0f),
                     r * Quaternion.LookRotation(Vector3.down, Vector3.forward));
     }
@@ -854,109 +847,4 @@ public class RefinementController : MonoBehaviour
         selectionManager = GetComponent<RegionSelectionManager>();
         maskRenderer = GetComponent<RegionMaskRenderer>();
     }
-
-#if UNITY_EDITOR
-    private const string AgentNdjsonSession = "58c452";
-    private const string AgentNdjsonPath = "/Users/alo/SpatialGenUnity/.cursor/debug-58c452.log";
-
-    private static void AgentDebugLogMultiViewSelection(RegionSelection interactive, RegionSelection maskUsed)
-    {
-        void AppendSelectionBlock(StringBuilder sb, string prefix, RegionSelection sel, Bounds frame, bool hasGen, Bounds genMesh)
-        {
-            float rx = sel.size.x / Mathf.Max(frame.size.x, 1e-6f);
-            float ry = sel.size.y / Mathf.Max(frame.size.y, 1e-6f);
-            float rz = sel.size.z / Mathf.Max(frame.size.z, 1e-6f);
-            float gx = hasGen ? sel.size.x / Mathf.Max(genMesh.size.x, 1e-6f) : -1f;
-            float gy = hasGen ? sel.size.y / Mathf.Max(genMesh.size.y, 1e-6f) : -1f;
-            float gz = hasGen ? sel.size.z / Mathf.Max(genMesh.size.z, 1e-6f) : -1f;
-            sb.Append('"').Append(prefix).Append("SizeX\":").Append(sel.size.x.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"").Append(prefix).Append("SizeY\":").Append(sel.size.y.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"").Append(prefix).Append("SizeZ\":").Append(sel.size.z.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"").Append(prefix).Append("SelOverFrameX\":").Append(rx.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"").Append(prefix).Append("SelOverFrameY\":").Append(ry.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"").Append(prefix).Append("SelOverFrameZ\":").Append(rz.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"").Append(prefix).Append("SelOverGenMeshX\":").Append(gx.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"").Append(prefix).Append("SelOverGenMeshY\":").Append(gy.ToString(CultureInfo.InvariantCulture));
-            sb.Append(",\"").Append(prefix).Append("SelOverGenMeshZ\":").Append(gz.ToString(CultureInfo.InvariantCulture));
-        }
-
-        if (interactive == null)
-            return;
-
-        RegionSelection mask = maskUsed ?? interactive;
-        Bounds frame = ResolveSceneFramingBounds(interactive);
-        bool hasGen = TryComputeGeneratedOriginalMeshBounds(out Bounds genMesh);
-
-        var sb = new StringBuilder(900);
-        sb.Append("{\"sessionId\":\"").Append(AgentNdjsonSession).Append("\",\"runId\":\"meshClip\",\"hypothesisId\":\"maskMeshClip\"");
-        sb.Append(",\"location\":\"RefinementController.cs:RunMultiViewRefinement\"");
-        sb.Append(",\"message\":\"interactive selection vs mask after mesh AABB clip\"");
-        sb.Append(",\"data\":{");
-        sb.Append("\"frameSizeX\":").Append(frame.size.x.ToString(CultureInfo.InvariantCulture));
-        sb.Append(",\"frameSizeY\":").Append(frame.size.y.ToString(CultureInfo.InvariantCulture));
-        sb.Append(",\"frameSizeZ\":").Append(frame.size.z.ToString(CultureInfo.InvariantCulture));
-        sb.Append(",\"hasGeneratedMeshBounds\":").Append(hasGen ? "true" : "false");
-        sb.Append(",\"genMeshSizeX\":").Append(hasGen ? genMesh.size.x.ToString(CultureInfo.InvariantCulture) : "0");
-        sb.Append(",\"genMeshSizeY\":").Append(hasGen ? genMesh.size.y.ToString(CultureInfo.InvariantCulture) : "0");
-        sb.Append(",\"genMeshSizeZ\":").Append(hasGen ? genMesh.size.z.ToString(CultureInfo.InvariantCulture) : "0");
-        sb.Append(',');
-        AppendSelectionBlock(sb, "interactive", interactive, frame, hasGen, genMesh);
-        sb.Append(',');
-        AppendSelectionBlock(sb, "mask", mask, frame, hasGen, genMesh);
-        sb.Append('}');
-        sb.Append(",\"timestamp\":").Append(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()).AppendLine("}");
-        try
-        {
-            File.AppendAllText(AgentNdjsonPath, sb.ToString());
-        }
-        catch
-        {
-            // ignored – debug instrumentation only
-        }
-    }
-
-    /// <summary>
-    /// Editor-only: bounds of active Generated_Mesh* renderers under GeneratedContent
-    /// (matches RefinementMeshLoader.ComputeOriginalSceneBounds filtering).
-    /// </summary>
-    private static bool TryComputeGeneratedOriginalMeshBounds(out Bounds bounds)
-    {
-        bounds = default;
-        GameObject root = GameObject.Find(GeneratedRootName);
-        if (root == null)
-            return false;
-
-        Renderer[] rs = root.GetComponentsInChildren<Renderer>(true);
-        bool has = false;
-        for (int i = 0; i < rs.Length; i++)
-        {
-            Renderer r = rs[i];
-            if (r == null || !r.gameObject.activeInHierarchy)
-                continue;
-            Transform rootChild = FindDirectChildOfRoot(root.transform, r.transform);
-            if (rootChild == null)
-                continue;
-            string n = rootChild.gameObject.name ?? string.Empty;
-            if (!n.StartsWith("Generated_Mesh", StringComparison.Ordinal))
-                continue;
-            if (!has)
-            {
-                bounds = r.bounds;
-                has = true;
-            }
-            else
-                bounds.Encapsulate(r.bounds);
-        }
-
-        return has && bounds.size.sqrMagnitude > 1e-6f;
-    }
-
-    private static Transform FindDirectChildOfRoot(Transform root, Transform descendant)
-    {
-        Transform t = descendant;
-        while (t != null && t.parent != root)
-            t = t.parent;
-        return t;
-    }
-#endif
 }

@@ -18,7 +18,7 @@ public enum ViewType
 public class MultiViewCameraManager : MonoBehaviour
 {
     [Header("Canonical Cameras")]
-    [Tooltip("Front-facing camera. Used as the reference view for mesh reconstruction (TripoSR).")]
+    [Tooltip("Camera on -X of rigTarget, looking at +X in rig space (façade). Align RegionSelection rotation so local +X is the asset front.")]
     public Camera frontCamera;
     public Camera leftCamera;
     public Camera rightCamera;
@@ -128,9 +128,15 @@ public class MultiViewCameraManager : MonoBehaviour
         rightCamera = EnsureCamera(rightCamera, "MultiView_Right");
         topCamera = EnsureCamera(topCamera, "MultiView_Top");
 
-        ConfigureCamera(frontCamera, rigTarget + new Vector3(0f, 0f, -rigDistance), Quaternion.LookRotation(Vector3.forward, Vector3.up));
-        ConfigureCamera(leftCamera, rigTarget + new Vector3(-rigDistance, 0f, 0f), Quaternion.LookRotation(Vector3.right, Vector3.up));
-        ConfigureCamera(rightCamera, rigTarget + new Vector3(rigDistance, 0f, 0f), Quaternion.LookRotation(Vector3.left, Vector3.up));
+        // Horizontal views are placed relative to rigTarget so that:
+        //   Front: camera on -X, looking +X (façade / "forward into" the selection volume).
+        //   Left:  camera on +Z, looking -Z (stage-left when facing the façade).
+        //   Right: camera on -Z, looking +Z (stage-right).
+        // Top is unchanged. This replaces the old -Z-as-"Front" layout, which mislabeled
+        // many +X-facing assets (Front PNG was a side view; Left had the true façade).
+        ConfigureCamera(frontCamera, rigTarget + new Vector3(-rigDistance, 0f, 0f), Quaternion.LookRotation(Vector3.right, Vector3.up));
+        ConfigureCamera(leftCamera, rigTarget + new Vector3(0f, 0f, rigDistance), Quaternion.LookRotation(Vector3.back, Vector3.up));
+        ConfigureCamera(rightCamera, rigTarget + new Vector3(0f, 0f, -rigDistance), Quaternion.LookRotation(Vector3.forward, Vector3.up));
         ConfigureCamera(topCamera, rigTarget + new Vector3(0f, topHeight, 0f), Quaternion.LookRotation(Vector3.down, Vector3.forward));
     }
 

@@ -1,8 +1,60 @@
+using System;
 using UnityEngine;
 
 [ExecuteAlways]
 public class RegionMaskRenderer : MonoBehaviour
 {
+    /// <summary>
+    /// Always wired into <c>Hidden/SpatialGen/RegionSelectionMask</c> for exported inpaint masks.
+    /// A non-zero world-up gate is smooth, then the pipeline binarizes at 0.5 — which hollows interiors
+    /// on some canonical views (e.g. Top). Inspector <see cref="maskFavorUpwardNormals"/> is unrelated to GPU.
+    /// </summary>
+    public const float MaskExportFavorUpwardNormals = 0f;
+
+    /// <summary>
+    /// Axis-aligned bounds in viewport UV [0,1] of OBB corners in front of <paramref name="cam"/>.
+    /// </summary>
+    public static bool TryGetSelectionViewportUvBounds(Camera cam, RegionSelection selection, out Vector4 minMaxXy)
+    {
+        minMaxXy = default;
+        if (cam == null || selection == null)
+            return false;
+
+        Vector3[] corners = RegionSelectionManager.GetWorldCorners(selection);
+        if (corners == null || corners.Length == 0)
+            return false;
+
+        bool any = false;
+        float minX = 1f;
+        float minY = 1f;
+        float maxX = 0f;
+        float maxY = 0f;
+        for (int i = 0; i < corners.Length; i++)
+        {
+            Vector3 vp = cam.WorldToViewportPoint(corners[i]);
+            if (vp.z <= 0f)
+                continue;
+            any = true;
+            minX = Mathf.Min(minX, vp.x);
+            minY = Mathf.Min(minY, vp.y);
+            maxX = Mathf.Max(maxX, vp.x);
+            maxY = Mathf.Max(maxY, vp.y);
+        }
+
+        if (!any)
+            return false;
+
+        minX = Mathf.Clamp01(minX);
+        minY = Mathf.Clamp01(minY);
+        maxX = Mathf.Clamp01(maxX);
+        maxY = Mathf.Clamp01(maxY);
+        if (maxX <= minX || maxY <= minY)
+            return false;
+
+        minMaxXy = new Vector4(minX, minY, maxX, maxY);
+        return true;
+    }
+
     private const string DepthShaderName = "Hidden/SpatialGen/EncodeLinearDepth";
     private const string MaskShaderName = "Hidden/SpatialGen/RegionSelectionMask";
 
@@ -12,9 +64,17 @@ public class RegionMaskRenderer : MonoBehaviour
     public RenderTexture depthRT;
     public RenderTexture maskRT;
 
-    [Tooltip("Same as MultiViewRenderer: weight mask toward upward-facing normals (roof-ish). 0 = OBB only.")]
+    [Tooltip("Logged only: exported mask pass always sends 0 to the shader (see MaskExportFavorUpwardNormals).")]
     [Range(0f, 1f)]
-    public float maskFavorUpwardNormals = 0.85f;
+    public float maskFavorUpwardNormals = 0f;
+
+    [Header("Depth-aware mask (prepass linear depth)")]
+    [Tooltip("Max |Δ| in normalized linear depth (EncodeLinearDepth 0..1) vs fragment. Try 0.002–0.008 if noisy.")]
+    public float depthMaskEpsilon = 0.004f;
+
+    [Tooltip("0=binary mask (inpaint). 1–3=depth debug (no binarize — do not send to Comfy).")]
+    [Range(0f, 3f)]
+    public float maskDebugView = 0f;
 
     private Camera _driverCamera;
 
@@ -47,7 +107,10 @@ public class RegionMaskRenderer : MonoBehaviour
             throw new System.ArgumentNullException(nameof(selection));
 
         Camera cameraToUse = PrepareCamera();
+        Shader depthShader = Shader.Find(DepthShaderName);
         Shader maskShader = Shader.Find(MaskShaderName);
+        if (depthShader == null)
+            throw new System.InvalidOperationException($"Depth shader '{DepthShaderName}' not found.");
         if (maskShader == null)
             throw new System.InvalidOperationException($"Mask shader '{MaskShaderName}' not found.");
 
@@ -56,16 +119,48 @@ public class RegionMaskRenderer : MonoBehaviour
             selection.rotation,
             Vector3.one).inverse;
 
-        Shader.SetGlobalMatrix("_SelectionWorldToLocal", worldToSelection);
-        Shader.SetGlobalVector("_SelectionHalfExtents", ClampHalfExtents(selection.size * 0.5f));
-        Shader.SetGlobalFloat("_MaskFavorUpwardNormals", maskFavorUpwardNormals);
+        Vector4 halfExtentsGlobal = ClampHalfExtents(selection.size * 0.5f);
+        float maxDepth = Mathf.Max(0.01f, cameraToUse.farClipPlane);
+        RenderTexture depthTarget = EnsureTarget(ref depthRT, RenderTextureFormat.ARGB32);
+        RenderTexture maskTarget = EnsureTarget(ref maskRT, RenderTextureFormat.ARGB32);
 
-        RenderTexture target = EnsureTarget(ref maskRT, RenderTextureFormat.ARGB32);
-        RenderScene(cameraToUse, target, maskShader);
+        try
+        {
+            Shader.SetGlobalFloat("_MaxDepth", maxDepth);
+            RenderScene(cameraToUse, depthTarget, depthShader);
 
-        Texture2D mask = ReadTexture(target, TextureFormat.RGBA32);
-        Binarize(mask);
-        return mask;
+            Shader.SetGlobalTexture("_RegionMaskSceneDepthTex", depthTarget);
+            Shader.SetGlobalFloat("_DepthMaskEpsilon", Mathf.Max(1e-6f, depthMaskEpsilon));
+            Shader.SetGlobalFloat("_RegionMaskUseDepthTest", 1f);
+            Shader.SetGlobalFloat("_MaskDebugView", maskDebugView);
+
+            if (TryGetSelectionViewportUvBounds(cameraToUse, selection, out Vector4 uvBounds))
+            {
+                Shader.SetGlobalVector("_MaskViewportUvMinMax", uvBounds);
+                Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 1f);
+            }
+            else
+                Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
+
+            Shader.SetGlobalMatrix("_SelectionWorldToLocal", worldToSelection);
+            Shader.SetGlobalVector("_SelectionHalfExtents", halfExtentsGlobal);
+            Shader.SetGlobalFloat("_MaskFavorUpwardNormals", MaskExportFavorUpwardNormals);
+            Shader.SetGlobalFloat("_MaxDepth", maxDepth);
+
+            RenderScene(cameraToUse, maskTarget, maskShader);
+
+            Texture2D mask = ReadTexture(maskTarget, TextureFormat.RGBA32);
+            if (maskDebugView < 0.25f)
+                Binarize(mask);
+            return mask;
+        }
+        finally
+        {
+            Shader.SetGlobalTexture("_RegionMaskSceneDepthTex", null);
+            Shader.SetGlobalFloat("_RegionMaskUseDepthTest", 0f);
+            Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
+            Shader.SetGlobalFloat("_MaskDebugView", 0f);
+        }
     }
 
     public void SetupCamera(Bounds bounds)

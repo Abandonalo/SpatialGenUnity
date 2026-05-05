@@ -32,9 +32,7 @@ from __future__ import annotations
 
 import base64
 import io
-import json
 import random
-import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -79,13 +77,20 @@ def handle_multi_view_refine(
     rgb_composite = _composite_views(req.views, positions, "rgbBase64", (per_view_w, per_view_h), fill=(0, 0, 0, 255))
     depth_composite = _composite_views(req.views, positions, "depthBase64", (per_view_w, per_view_h), fill=(0, 0, 0, 255))
     mask_composite = _composite_views(req.views, positions, "maskBase64", (per_view_w, per_view_h), fill=(0, 0, 0, 255))
-    _debug_log_mask_composite_tightness(mask_composite)
 
-    # Crop the top-right quadrant: with the default quadrant map, Unity's
-    # leftCamera (user-facing "front" for common house orientations) lands
-    # in that cell; TripoSR then lifts that view.
-    crop_x = per_view_w
-    crop_y = 0
+    edges_composite = None
+    if all(getattr(v, "edgesBase64", "") for v in req.views):
+        edges_composite = _composite_views(
+            req.views, positions, "edgesBase64", (per_view_w, per_view_h), fill=(0, 0, 0, 255)
+        )
+    canny_image = edges_composite if edges_composite is not None else rgb_composite
+
+    rec = reconstruction_view
+    if rec not in positions:
+        rec = "Front"
+    col, row = positions[rec]
+    crop_x = col * per_view_w
+    crop_y = row * per_view_h
     run_request = RunRequest(
         mode="refine",
         positive_prompt=_effective_prompt(req.positivePrompt),
@@ -93,8 +98,8 @@ def handle_multi_view_refine(
         rgb_image=rgb_composite,
         depth_image=depth_composite,
         mask_image=mask_composite,
-        # Uses the same fused composite until the client sends explicit edge maps per view.
-        canny_image=rgb_composite,
+        # Depth Sobel edge maps from Unity when every view includes edgesBase64; else RGB composite.
+        canny_image=canny_image,
         seed=seed,
         steps=max(1, req.steps),
         cfg=max(0.0, req.cfg),
@@ -110,33 +115,6 @@ def handle_multi_view_refine(
         crop_x=crop_x,
         crop_y=crop_y,
     )
-
-    # region agent log
-    try:
-        dbg = Path(__file__).resolve().parents[2] / ".cursor" / "debug-58c452.log"
-        dbg.parent.mkdir(parents=True, exist_ok=True)
-        with dbg.open("a", encoding="utf-8") as fh:
-            fh.write(
-                json.dumps(
-                    {
-                        "sessionId": "58c452",
-                        "runId": "denoise-align",
-                        "hypothesisId": "MV_DENOISE",
-                        "location": "multi_view_router.py:handle_multi_view_refine",
-                        "message": "effective KSampler denoise vs client request",
-                        "data": {
-                            "requestedDenoise": req.denoise,
-                            "wiredToGraphDenoise": run_request.denoise,
-                        },
-                        "timestamp": int(time.time() * 1000),
-                    },
-                    separators=(",", ":"),
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-    # endregion
 
     graph = _build_graph(run_request)
     result = send_to_comfy(graph)
@@ -158,49 +136,6 @@ def handle_multi_view_refine(
         success=True,
         errorMessage="",
     )
-
-
-def _debug_log_mask_composite_tightness(mask_composite_b64: str) -> None:
-    """Append NDJSON: how spread out white mask pixels are on the 2x2 composite."""
-    try:
-        raw = mask_composite_b64.strip().split(",", 1)[-1]
-        im = Image.open(io.BytesIO(base64.b64decode(raw))).convert("L")
-        w, h = im.size
-        total = w * h
-        if total <= 0:
-            return
-        data = im.getdata()
-        white_px = sum(1 for p in data if p > 127)
-        white_px_frac = white_px / float(total)
-        bw = im.point(lambda p: 255 if p > 127 else 0)
-        bb = bw.getbbox()
-        bbox_cover = ((bb[2] - bb[0]) * (bb[3] - bb[1]) / float(total)) if bb else 0.0
-
-        dbg = Path(__file__).resolve().parents[2] / ".cursor" / "debug-58c452.log"
-        dbg.parent.mkdir(parents=True, exist_ok=True)
-        with dbg.open("a", encoding="utf-8") as fh:
-            fh.write(
-                json.dumps(
-                    {
-                        "sessionId": "58c452",
-                        "runId": "maskComposite",
-                        "hypothesisId": "MASK_COMPOSITE_BBOX",
-                        "location": "multi_view_router.py:handle_multi_view_refine",
-                        "message": "mask composite white coverage vs tight bbox",
-                        "data": {
-                            "compositeW": w,
-                            "compositeH": h,
-                            "whitePixelFraction": white_px_frac,
-                            "whiteTightBboxAreaFraction": bbox_cover,
-                        },
-                        "timestamp": int(time.time() * 1000),
-                    },
-                    separators=(",", ":"),
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
 
 
 def _validate_request(req: MultiViewRefinementRequestModel) -> None:
@@ -256,12 +191,9 @@ def _canonicalize_view(view: str) -> str:
 
 
 def _build_quadrant_map(reconstruction_view: str) -> Dict[str, Tuple[int, int]]:
-    """Place the reconstruction view in the top-left (0, 0) cell so the
-    composite layout stays consistent with the canonical view order. The
-    graph crops a different quadrant (top-right) at runtime because the
-    user's geometry's actual front facade is captured by Unity's
-    leftCamera, which lands at (1, 0) in this map - see the crop_x setting
-    in handle_multi_view_refine."""
+    """Place the reconstruction view in the top-left (0, 0) cell. Remaining
+    canonical views fill the other quadrants in a fixed order; keep crop_x/y
+    aligned with whichever cell TripoSR should consume (currently top-right)."""
     rv = _canonicalize_view(reconstruction_view)
     ordered = [rv] + [v for v in _CANONICAL_VIEWS if v != rv]
     cells = [(0, 0), (1, 0), (0, 1), (1, 1)]

@@ -441,7 +441,7 @@ Transform:
   m_GameObject: {fileID: 680437685}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.7071068, z: -0, w: 0.7071068}
-  m_LocalPosition: {x: -3.032679, y: 0.06509459, z: 3.46}
+  m_LocalPosition: {x: -3.056699, y: 0, z: 3.46}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -516,7 +516,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4814140183114437194, guid: 810eb1e9028c14d669cd5438901da76a, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6147826009795423660, guid: 810eb1e9028c14d669cd5438901da76a, type: 3}
       propertyPath: m_LocalScale.x
@@ -683,7 +683,7 @@ Transform:
   m_GameObject: {fileID: 827832236}
   serializedVersion: 2
   m_LocalRotation: {x: 0.7071068, y: -0, z: -0, w: 0.7071068}
-  m_LocalPosition: {x: 2.49402, y: 5.5917935, z: 3.46}
+  m_LocalPosition: {x: 2.47, y: 5.526699, z: 3.46}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -771,6 +771,9 @@ MonoBehaviour:
   cameraManager: {fileID: 847160669}
   cullingSource: {fileID: 0}
   flipVerticalOnReadback: 0
+  maskFavorUpwardNormals: 0.85
+  depthMaskEpsilon: 0.004
+  maskDebugView: 0
 --- !u!114 &847160669
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -787,7 +790,7 @@ MonoBehaviour:
   leftCamera: {fileID: 680437687}
   rightCamera: {fileID: 1186943155}
   topCamera: {fileID: 827832237}
-  rigTarget: {x: 2.49402, y: 0.06509459, z: 3.46}
+  rigTarget: {x: 2.47, y: 0, z: 3.46}
   rigDistance: 5.526699
   topHeight: 5.526699
   orthographic: 1
@@ -841,7 +844,7 @@ Transform:
   m_GameObject: {fileID: 1050189811}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 2.49402, y: 0.06509459, z: -2.066699}
+  m_LocalPosition: {x: 2.47, y: 0, z: -2.066699}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -924,7 +927,7 @@ Transform:
   m_GameObject: {fileID: 1186943153}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0.7071068, z: -0, w: 0.7071068}
-  m_LocalPosition: {x: 8.02072, y: 0.06509459, z: 3.46}
+  m_LocalPosition: {x: 7.9966993, y: 0, z: 3.46}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1017,11 +1020,10 @@ MonoBehaviour:
   multiViewRenderer: {fileID: 847160668}
   multiViewSeed: 1234567
   reconstructionView: 0
-  denoiseStrength: 1
+  denoiseStrength: 0.3
   steps: 20
   cfgScale: 8
   sessionId: 20260424_143918_f072f9b6
-  isRunning: 0
 --- !u!114 &1298885996
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1038,6 +1040,9 @@ MonoBehaviour:
   rgbRT: {fileID: 0}
   depthRT: {fileID: 0}
   maskRT: {fileID: 0}
+  maskFavorUpwardNormals: 0
+  depthMaskEpsilon: 0.004
+  maskDebugView: 0
 --- !u!114 &1298885997
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1052,8 +1057,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: SpatialGeneration.Runtime::RegionSelectionManager
   currentSelection:
     selectionId: afc01f634dd849e2af08a639c5f94edd
-    center: {x: 2.49402, y: 0.799612, z: 3.470306}
-    size: {x: 2.4214199, y: 1.2332096, z: 2.5717885}
+    center: {x: 2.47, y: 0, z: 3.46}
+    size: {x: 1.8924502, y: 0.16057758, z: 2.060664}
     rotation: {x: 0, y: 0, z: 0, w: 1}
   isSelecting: 0
 --- !u!4 &1298885998
