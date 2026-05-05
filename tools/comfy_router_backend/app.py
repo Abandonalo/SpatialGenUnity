@@ -168,7 +168,7 @@ def _proxy_request_to_run_request(req: ProxyGenerateRequest) -> RunRequest:
     # silently flip /generate requests to "refine" whenever an asset image was
     # attached, which routed them through the (ControlNet-stripped) refinement
     # workflow and produced degraded/planar meshes instead of full-scene
-    # generations. See H16 runtime evidence in debug log.
+    # generations.
     mode = (req.mode or "").strip() or _infer_mode(req)
     positive_prompt = (req.positive_prompt or req.prompt or "").strip()
     if not positive_prompt:

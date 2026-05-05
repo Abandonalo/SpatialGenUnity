@@ -195,8 +195,6 @@ public class RefinementController : MonoBehaviour
                 selection = CloneSelection(selection)
             };
 
-            WriteMultiViewDebugArtifacts(request);
-
             IGenerationBackend backend = BackendRegistry.Current;
             if (backend != null)
                 await backend.EnsureReadyAsync();
@@ -258,120 +256,6 @@ public class RefinementController : MonoBehaviour
                 ApplyRefinedImage(response.requestId, chosen.refinedImageBase64, selection, null);
             }
         }
-    }
-
-    private void WriteMultiViewDebugArtifacts(MultiViewRefinementRequest request)
-    {
-        try
-        {
-            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            string artifactDir = Path.Combine(projectRoot, "Logs", "Refinement", sessionId, request.requestId);
-            Directory.CreateDirectory(artifactDir);
-
-            File.WriteAllText(Path.Combine(artifactDir, "multi_view_request.json"), JsonUtility.ToJson(request, true));
-            if (request.views == null)
-                return;
-            for (int i = 0; i < request.views.Count; i++)
-            {
-                ViewData v = request.views[i];
-                if (v == null) continue;
-                string rgbPath = Path.Combine(artifactDir, $"{v.viewType}_rgb.png");
-                string maskPath = Path.Combine(artifactDir, $"{v.viewType}_mask.png");
-                WriteBase64Png(v.rgbBase64, rgbPath);
-                WriteBase64Png(v.depthBase64, Path.Combine(artifactDir, $"{v.viewType}_depth.png"));
-                WriteBase64Png(v.edgesBase64, Path.Combine(artifactDir, $"{v.viewType}_edges.png"));
-                WriteBase64Png(v.maskBase64, maskPath);
-                TryWriteMaskRgbOverlay(
-                    rgbPath,
-                    maskPath,
-                    Path.Combine(artifactDir, $"{v.viewType}_mask_overlay.png"));
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"Spatial Generation: Failed to write multi-view debug artifacts: {ex.Message}");
-        }
-    }
-
-    private static void WriteBase64Png(string base64, string path)
-    {
-        if (string.IsNullOrWhiteSpace(base64) || string.IsNullOrWhiteSpace(path))
-            return;
-        try
-        {
-            File.WriteAllBytes(path, Convert.FromBase64String(base64));
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"Spatial Generation: Failed to write artifact {path}: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Debug visualization: RGB with the inpaint mask tinted magenta (50% where mask is white).
-    /// Use to verify per-pixel alignment and whether the mask covers the full object vs only the intended region.
-    /// </summary>
-    private static void TryWriteMaskRgbOverlay(string rgbPath, string maskPath, string overlayPath)
-    {
-        if (string.IsNullOrWhiteSpace(rgbPath) || string.IsNullOrWhiteSpace(maskPath) || string.IsNullOrWhiteSpace(overlayPath))
-            return;
-        if (!File.Exists(rgbPath) || !File.Exists(maskPath))
-            return;
-
-        Texture2D rgb = null;
-        Texture2D mask = null;
-        Texture2D overlay = null;
-        try
-        {
-            rgb = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            mask = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            if (!rgb.LoadImage(File.ReadAllBytes(rgbPath)) || !mask.LoadImage(File.ReadAllBytes(maskPath)))
-                return;
-            if (rgb.width != mask.width || rgb.height != mask.height)
-            {
-                Debug.LogWarning(
-                    $"Spatial Generation: mask_overlay skip — size mismatch rgb {rgb.width}x{rgb.height} vs mask {mask.width}x{mask.height}.");
-                return;
-            }
-
-            Color[] rp = rgb.GetPixels();
-            Color[] mp = mask.GetPixels();
-            var blended = new Color[rp.Length];
-            for (int j = 0; j < rp.Length; j++)
-            {
-                float m = Mathf.Clamp01(mp[j].grayscale);
-                blended[j] = Color.Lerp(rp[j], new Color(1f, 0f, 1f, 1f), m * 0.5f);
-            }
-
-            overlay = new Texture2D(rgb.width, rgb.height, TextureFormat.RGBA32, false);
-            overlay.SetPixels(blended);
-            overlay.Apply(false, false);
-            File.WriteAllBytes(overlayPath, overlay.EncodeToPNG());
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"Spatial Generation: mask_overlay failed: {ex.Message}");
-        }
-        finally
-        {
-            DestroyRuntimeTexture(rgb);
-            DestroyRuntimeTexture(mask);
-            DestroyRuntimeTexture(overlay);
-        }
-    }
-
-    private static void DestroyRuntimeTexture(Texture2D tex)
-    {
-        if (tex == null)
-            return;
-#if UNITY_EDITOR
-        if (!Application.isPlaying)
-            UnityEngine.Object.DestroyImmediate(tex);
-        else
-            UnityEngine.Object.Destroy(tex);
-#else
-        UnityEngine.Object.Destroy(tex);
-#endif
     }
 
     // Ensure there is a MultiViewRenderer + MultiViewCameraManager provisioned
