@@ -14,7 +14,7 @@ public class RefinementRequest
 
     public RegionSelection selection;
 
-    public float denoiseStrength = 0.6f;
+    public float denoiseStrength = RefinementDefaults.KSDenoise;
     public int steps = 20;
     public float cfgScale = 8f;
 

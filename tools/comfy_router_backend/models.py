@@ -2,6 +2,9 @@ from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# Canonical KSampler denoise for refinement; matches Unity RefinementDefaults.KSDenoise (0.3).
+REFINEMENT_KS_DENOISE: float = 0.3
+
 
 class RunRequest(BaseModel):
     mode: Literal["generate", "refine"]
@@ -19,7 +22,7 @@ class RunRequest(BaseModel):
     seed: int
     steps: int = Field(gt=0)
     cfg: float = Field(gt=0)
-    denoise: float = 0.55
+    denoise: float = REFINEMENT_KS_DENOISE
 
     tripo_model: str = Field(min_length=1)
     geometry_resolution: int = Field(gt=0)
@@ -121,7 +124,7 @@ class RefinementRequestModel(BaseModel):
     rgbImageBase64: str = ""
     depthImageBase64: str = ""
     maskImageBase64: str = ""
-    denoiseStrength: float = 0.6
+    denoiseStrength: float = REFINEMENT_KS_DENOISE
     steps: int = 20
     cfgScale: float = 8.0
     sessionId: str = ""
@@ -161,7 +164,7 @@ class MultiViewRefinementRequestModel(BaseModel):
 
     steps: int = Field(default=20, gt=0)
     cfg: float = Field(default=8.0, gt=0)
-    denoise: float = 1.0
+    denoise: float = REFINEMENT_KS_DENOISE
 
     reconstructionView: str = "Front"
     views: list[ViewPayload] = Field(default_factory=list)

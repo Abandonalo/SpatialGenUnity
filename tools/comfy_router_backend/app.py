@@ -84,11 +84,9 @@ def refine(req: RefinementRequestModel) -> RefinementResponseModel:
             seed=_normalize_seed(-1),
             steps=max(1, req.steps),
             cfg=max(0.0, req.cfgScale),
-            # Inpainting replacement needs nearly full denoise; anything below
-            # ~0.85 barely escapes the encoded input latent. Floor defensively
-            # so stale serialized defaults from older Unity scenes (0.6) don't
-            # silently produce near-identity refinements.
-            denoise=max(0.85, min(1.0, req.denoiseStrength)),
+            # Unity client hardcodes denoise (e.g. 0.4); pass through clamped so
+            # KSampler matches the client without re-flooring old 0.85 behavior.
+            denoise=max(0.0, min(1.0, req.denoiseStrength)),
             tripo_model=_default_tripo_model(),
             geometry_resolution=_default_geometry_resolution(),
             tripo_threshold=_default_tripo_threshold(),

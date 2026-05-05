@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 
 public enum MultiViewMaskMode
@@ -7,7 +8,9 @@ public enum MultiViewMaskMode
     /// <summary>Depth prepass + OBB / viewport mask shader.</summary>
     ObbDepthShader = 0,
 
-    /// <summary>Same camera as RGB; white replacement shader on generated/refined mesh only.</summary>
+    /// <summary>
+    /// Mesh white mask when a subtree restrict is active; otherwise multi-view uses OBB+depth from <see cref="RegionSelection"/>.
+    /// </summary>
     ScreenSpaceGeneratedMesh = 1
 }
 
@@ -25,7 +28,15 @@ public class MultiViewRenderer : MonoBehaviour
 {
     private const string DepthShaderName = "Hidden/SpatialGen/EncodeLinearDepth";
     private const string MaskShaderName = "Hidden/SpatialGen/RegionSelectionMask";
-    private const string SolidWhiteMaskShaderName = "Hidden/SpatialGen/MaskSolidWhite";
+
+    static Material s_obbDepthPassMaterial;
+    static Material s_obbMaskPassMaterial;
+
+    /// <summary>
+    /// When non-null/non-empty during <see cref="RenderAllViews(RegionSelection, string)"/>, only that direct subtree
+    /// under GeneratedContent participates in ScreenSpaceGeneratedMesh masks.
+    /// </summary>
+    string _restrictScreenSpaceMaskToGeneratedChildName;
 
     public MultiViewCameraManager cameraManager;
 
@@ -37,8 +48,8 @@ public class MultiViewRenderer : MonoBehaviour
     public bool flipVerticalOnReadback = false;
 
     [Header("Mask")]
-    [Tooltip("ObbDepthShader: selection/OBB path. ScreenSpaceGeneratedMesh: render generated mesh as white (same projection as RGB).")]
-    public MultiViewMaskMode maskMode = MultiViewMaskMode.ScreenSpaceGeneratedMesh;
+    [Tooltip("ObbDepthShader: OBB + depth (default for region refinement). ScreenSpace: white mesh mask only when a subtree restrict is set.")]
+    public MultiViewMaskMode maskMode = MultiViewMaskMode.ObbDepthShader;
 
     [Tooltip("Unity layer for ScreenSpaceGeneratedMesh (must exist in Tags & Layers).")]
     public string maskGeometryLayerName = RegionSelectionManager.MaskSelectionLayerName;
@@ -50,14 +61,22 @@ public class MultiViewRenderer : MonoBehaviour
     [Range(0f, 1f)]
     public float maskFavorUpwardNormals = 0f;
 
-    [Tooltip("Max |Δ| in linear encoded depth (EncodeLinearDepth) vs fragment.")]
-    public float depthMaskEpsilon = 0.004f;
+    [Tooltip("Max |Δ| in linear encoded depth (EncodeLinearDepth) vs fragment. Larger = more tolerant (fuller mask at depth discontinuities).")]
+    public float depthMaskEpsilon = 0.018f;
 
     [Tooltip("0=binary mask for backend. 1–3=depth debug (no binarize).")]
     [Range(0f, 3f)]
     public float maskDebugView = 0f;
 
     public MultiViewData RenderAllViews(RegionSelection selection)
+    {
+        return RenderAllViews(selection, null);
+    }
+
+    /// <param name="restrictScreenSpaceMaskToGeneratedContentDirectChild">
+    /// ScreenSpaceGeneratedMesh only: direct child name under GeneratedContent whose renderers move to the mask layer
+    /// (null/empty = all Generated_Mesh* / Refined_Mesh* subtrees, previous behavior).</param>
+    public MultiViewData RenderAllViews(RegionSelection selection, string restrictScreenSpaceMaskToGeneratedContentDirectChild)
     {
         if (selection == null)
             throw new ArgumentNullException(nameof(selection));
@@ -67,46 +86,60 @@ public class MultiViewRenderer : MonoBehaviour
 
         MultiViewData result = new MultiViewData();
 
-        foreach (ViewType view in cameraManager.GetAllViews())
+        bool hadRestrict =
+            !string.IsNullOrEmpty(restrictScreenSpaceMaskToGeneratedContentDirectChild);
+
+        try
         {
-            Camera cam = cameraManager.GetCamera(view);
-            if (cam == null)
-                throw new InvalidOperationException($"MultiViewRenderer: camera for view {view} is null.");
+            if (hadRestrict)
+                _restrictScreenSpaceMaskToGeneratedChildName = restrictScreenSpaceMaskToGeneratedContentDirectChild;
 
-            Vector2Int resolution = cameraManager.captureResolution;
-
-            Texture2D rgb = null;
-            Texture2D depth = null;
-            Texture2D edges = null;
-            Texture2D mask = null;
-            try
+            foreach (ViewType view in cameraManager.GetAllViews())
             {
-                rgb = RenderRGB(cam, resolution);
-                depth = RenderDepth(cam, resolution);
-                edges = includeEdgesFromDepth ? BuildSimpleEdgeMapFromDepth(depth) : null;
-                mask = RenderMask(cam, selection, resolution);
+                Camera cam = cameraManager.GetCamera(view);
+                if (cam == null)
+                    throw new InvalidOperationException($"MultiViewRenderer: camera for view {view} is null.");
 
-                result.views.Add(new ViewData
+                Vector2Int resolution = cameraManager.captureResolution;
+
+                Texture2D rgb = null;
+                Texture2D depth = null;
+                Texture2D edges = null;
+                Texture2D mask = null;
+                try
                 {
-                    viewType = view.ToString(),
-                    width = resolution.x,
-                    height = resolution.y,
-                    rgbBase64 = EncodePng(rgb),
-                    depthBase64 = EncodePng(depth),
-                    edgesBase64 = edges != null ? EncodePng(edges) : string.Empty,
-                    maskBase64 = EncodePng(mask)
-                });
-            }
-            finally
-            {
-                if (rgb != null) UnityEngine.Object.DestroyImmediate(rgb);
-                if (depth != null) UnityEngine.Object.DestroyImmediate(depth);
-                if (edges != null) UnityEngine.Object.DestroyImmediate(edges);
-                if (mask != null) UnityEngine.Object.DestroyImmediate(mask);
-            }
-        }
+                    rgb = RenderRGB(cam, resolution);
+                    depth = RenderDepth(cam, resolution);
+                    edges = includeEdgesFromDepth ? BuildSimpleEdgeMapFromDepth(depth) : null;
+                    mask = RenderMask(cam, selection, resolution);
 
-        return result;
+                    result.views.Add(new ViewData
+                    {
+                        viewType = view.ToString(),
+                        width = resolution.x,
+                        height = resolution.y,
+                        rgbBase64 = EncodePng(rgb),
+                        depthBase64 = EncodePng(depth),
+                        edgesBase64 = edges != null ? EncodePng(edges) : string.Empty,
+                        maskBase64 = EncodePng(mask)
+                    });
+                }
+                finally
+                {
+                    if (rgb != null) UnityEngine.Object.DestroyImmediate(rgb);
+                    if (depth != null) UnityEngine.Object.DestroyImmediate(depth);
+                    if (edges != null) UnityEngine.Object.DestroyImmediate(edges);
+                    if (mask != null) UnityEngine.Object.DestroyImmediate(mask);
+                }
+            }
+
+            return result;
+        }
+        finally
+        {
+            if (hadRestrict)
+                _restrictScreenSpaceMaskToGeneratedChildName = null;
+        }
     }
 
     private Texture2D RenderRGB(Camera cam, Vector2Int resolution)
@@ -145,17 +178,17 @@ public class MultiViewRenderer : MonoBehaviour
 
     private Texture2D RenderMask(Camera cam, RegionSelection selection, Vector2Int resolution)
     {
-        return maskMode == MultiViewMaskMode.ScreenSpaceGeneratedMesh
-            ? RenderMaskScreenSpace(cam, selection, resolution)
-            : RenderMaskObbDepth(cam, selection, resolution);
+        bool screenSpaceWithRestrict = maskMode == MultiViewMaskMode.ScreenSpaceGeneratedMesh
+            && !string.IsNullOrEmpty(_restrictScreenSpaceMaskToGeneratedChildName);
+
+        if (screenSpaceWithRestrict)
+            return RenderMaskScreenSpace(cam, selection, resolution);
+
+        return RenderMaskObbDepth(cam, selection, resolution);
     }
 
     private Texture2D RenderMaskScreenSpace(Camera cam, RegionSelection selection, Vector2Int resolution)
     {
-        Shader whiteShader = Shader.Find(SolidWhiteMaskShaderName);
-        if (whiteShader == null)
-            throw new InvalidOperationException($"Mask shader '{SolidWhiteMaskShaderName}' not found.");
-
         int maskLayer = LayerMask.NameToLayer(maskGeometryLayerName);
         if (maskLayer < 0)
         {
@@ -164,28 +197,289 @@ public class MultiViewRenderer : MonoBehaviour
         }
 
         var savedLayers = new List<(Renderer renderer, int savedLayer)>();
-        RegionSelectionManager.TryBeginScreenSpaceMaskPass(maskLayer, savedLayers);
+        RegionSelectionManager.TryBeginScreenSpaceMaskPass(maskLayer, savedLayers,
+            string.IsNullOrEmpty(_restrictScreenSpaceMaskToGeneratedChildName)
+                ? null
+                : _restrictScreenSpaceMaskToGeneratedChildName);
+
+        Material whiteMat = GetIsolationWhiteMaterial();
+        // Only meshes we explicitly moved onto the mask layer — never sweep the whole scene by layer index.
+        Dictionary<Renderer, Material[]> materialBackups =
+            SnapshotAndApplyWhiteMaterials(savedLayers, whiteMat);
+
+        int w = Mathf.Max(64, resolution.x);
+        int h = Mathf.Max(64, resolution.y);
+
+        RenderTexture rt = null;
+        GameObject cloneRoot = null;
         try
         {
-            RenderTexture rt = AcquireTarget(resolution);
-            try
-            {
-                int maskOnly = 1 << maskLayer;
-                RenderPass(cam, rt, whiteShader, clearToSource: false, maskOnly);
-                Texture2D mask = ReadPixels(rt);
-                if (maskDebugView < 0.25f)
-                    Binarize(mask);
-                return mask;
-            }
-            finally
-            {
-                RenderTexture.ReleaseTemporary(rt);
-            }
+            rt = CreateMaskIsolationRenderTexture(w, h);
+            cloneRoot = InstantiateMaskIsolationCamera(cam, rt, 1 << maskLayer);
+
+            cloneRoot.SetActive(true);
+            Camera maskCam = cloneRoot.GetComponent<Camera>();
+            if (maskCam == null)
+                throw new InvalidOperationException("SpatialGeneration: cloned mask camera missing Camera.");
+
+            maskCam.Render();
+
+            Texture2D mask = ReadMaskIsolationPixels(rt);
+            if (maskDebugView < 0.25f)
+                Binarize(mask);
+            return mask;
         }
         finally
         {
+            if (cloneRoot != null)
+            {
+#if UNITY_EDITOR
+                if (!Application.isPlaying)
+                    UnityEngine.Object.DestroyImmediate(cloneRoot);
+                else
+                    UnityEngine.Object.Destroy(cloneRoot);
+#else
+                UnityEngine.Object.Destroy(cloneRoot);
+#endif
+            }
+
+            DestroyMaskIsolationRenderTexture(rt);
+
+            foreach (KeyValuePair<Renderer, Material[]> kv in materialBackups)
+            {
+                if (kv.Key != null)
+                    kv.Key.sharedMaterials = kv.Value;
+            }
+
             RegionSelectionManager.EndScreenSpaceMaskPass(savedLayers);
         }
+    }
+
+    /// <summary>
+    /// Backup every slot in <see cref="Renderer.sharedMaterials"/> and assign white Unlit for each submesh.
+    /// Only renderers from the active mask pass (Geometry moved to <c>SpatialGenMaskSelection</c>).
+    /// </summary>
+    private static Dictionary<Renderer, Material[]> SnapshotAndApplyWhiteMaterials(
+        List<(Renderer renderer, int savedLayer)> maskPassRenderers,
+        Material whiteMat)
+    {
+        var backups = new Dictionary<Renderer, Material[]>();
+        for (int i = 0; i < maskPassRenderers.Count; i++)
+        {
+            Renderer r = maskPassRenderers[i].renderer;
+            if (r == null || !r.enabled)
+                continue;
+
+            Material[] originals = r.sharedMaterials;
+            if (originals == null || originals.Length == 0)
+                continue;
+
+            var backupCopy = new Material[originals.Length];
+            Array.Copy(originals, backupCopy, originals.Length);
+            backups[r] = backupCopy;
+
+            var swapped = new Material[originals.Length];
+            for (int s = 0; s < originals.Length; s++)
+                swapped[s] = whiteMat;
+            r.sharedMaterials = swapped;
+        }
+
+        return backups;
+    }
+
+    private static RenderTexture CreateMaskIsolationRenderTexture(int width, int height)
+    {
+        var rt = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32)
+        {
+            filterMode = FilterMode.Point,
+            wrapMode = TextureWrapMode.Clamp,
+            name = "SpatialGen_MultiView_MaskIsolation",
+            hideFlags = HideFlags.DontSave
+        };
+
+        rt.Create();
+        return rt;
+    }
+
+    private static void DestroyMaskIsolationRenderTexture(RenderTexture rt)
+    {
+        if (rt == null)
+            return;
+        rt.Release();
+
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+            UnityEngine.Object.DestroyImmediate(rt);
+        else
+            UnityEngine.Object.Destroy(rt);
+#else
+        UnityEngine.Object.Destroy(rt);
+#endif
+    }
+
+    /// <summary>Does not mutate the canonical multi-view cameras — clones for an isolated Render().</summary>
+    private GameObject InstantiateMaskIsolationCamera(Camera sourceCam, RenderTexture target, int cullingLayersMask)
+    {
+        GameObject cloneRoot = UnityEngine.Object.Instantiate(sourceCam.gameObject);
+        cloneRoot.name = "__SpatialGen_IsolatedMaskCamera";
+        cloneRoot.hideFlags = HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor | HideFlags.HideInHierarchy;
+        cloneRoot.SetActive(false);
+
+        foreach (AudioListener al in cloneRoot.GetComponentsInChildren<AudioListener>(true))
+        {
+            if (al == null)
+                continue;
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+                UnityEngine.Object.DestroyImmediate(al);
+            else
+                UnityEngine.Object.Destroy(al);
+#else
+            UnityEngine.Object.Destroy(al);
+#endif
+        }
+
+        Camera maskCam = cloneRoot.GetComponent<Camera>();
+        if (maskCam == null)
+            return cloneRoot;
+
+        maskCam.tag = "Untagged";
+        maskCam.enabled = false;
+        maskCam.targetTexture = target;
+        maskCam.allowHDR = false;
+        maskCam.allowMSAA = false;
+        maskCam.depthTextureMode = DepthTextureMode.None;
+        maskCam.backgroundColor = Color.black;
+        maskCam.clearFlags = CameraClearFlags.SolidColor;
+        maskCam.cullingMask = cullingLayersMask;
+        // stereoTargetEye is not valid on scriptable render pipelines (URP/HDRP).
+
+        TryApplyUrpMaskCloneSettings(maskCam);
+
+        return cloneRoot;
+    }
+
+    /// <summary>Turn off PP / extra URP attachments on the cloned camera via reflection — no asmdef dependency on URP.</summary>
+    private static void TryApplyUrpMaskCloneSettings(Camera cam)
+    {
+        if (cam == null)
+            return;
+
+        Type uacdType = Type.GetType(
+            "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData, Unity.RenderPipelines.Universal.Runtime");
+        if (uacdType == null)
+            return;
+
+        Component uacd = cam.GetComponent(uacdType);
+        if (uacd == null)
+            return;
+
+        BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        TryAssignPropertyOrField(uacd, "renderPostProcessing", false, bf);
+        TryAssignPropertyOrField(uacd, "requiresDepthTexture", false, bf);
+        TryAssignPropertyOrField(uacd, "requiresColorTexture", false, bf);
+
+        // Standalone Render() to an RT with renderType=Overlay (or a non-empty camera stack) often yields a full
+        // solid frame (commonly white). Force Base and strip stacks for an offscreen one-shot render.
+        Type cameraRenderTypeEnum = Type.GetType(
+            "UnityEngine.Rendering.Universal.CameraRenderType, Unity.RenderPipelines.Universal.Runtime");
+        if (cameraRenderTypeEnum != null && cameraRenderTypeEnum.IsEnum)
+        {
+            try
+            {
+                object baseMode = Enum.Parse(cameraRenderTypeEnum, "Base");
+                TryAssignPropertyOrField(uacd, "renderType", baseMode, bf);
+            }
+            catch (ArgumentException)
+            {
+                // Ignore if enum shape changes between URP versions.
+            }
+        }
+
+        PropertyInfo stackProp = uacdType.GetProperty("cameraStack", bf);
+        if (stackProp?.GetValue(uacd) is IList<Camera> stack)
+        {
+            stack.Clear();
+        }
+
+        PropertyInfo volumeMaskProp = uacdType.GetProperty("volumeLayerMask", bf);
+        if (volumeMaskProp != null && volumeMaskProp.CanWrite)
+        {
+            Type pt = volumeMaskProp.PropertyType;
+            if (pt == typeof(LayerMask))
+                volumeMaskProp.SetValue(uacd, (LayerMask)0);
+            else if (pt == typeof(int))
+                volumeMaskProp.SetValue(uacd, 0);
+        }
+    }
+
+    private static void TryAssignPropertyOrField(object target, string memberName, object value,
+        BindingFlags bindingFlags)
+    {
+        Type t = target.GetType();
+
+        PropertyInfo p = t.GetProperty(memberName, bindingFlags);
+        if (p != null && p.CanWrite)
+        {
+            p.SetValue(target, value);
+            return;
+        }
+
+        FieldInfo f = t.GetField(memberName, bindingFlags);
+        f?.SetValue(target, value);
+    }
+
+    private Texture2D ReadMaskIsolationPixels(RenderTexture rt)
+    {
+        RenderTexture previous = RenderTexture.active;
+        RenderTexture.active = rt;
+        try
+        {
+            Texture2D tex = new Texture2D(rt.width, rt.height, TextureFormat.RGBA32, false);
+            tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+            tex.Apply(false, false);
+
+            if (flipVerticalOnReadback)
+                FlipVertical(tex);
+
+            return tex;
+        }
+        finally
+        {
+            RenderTexture.active = previous;
+        }
+    }
+
+    private static Material s_isolationWhiteMaterial;
+
+    /// <summary>URP-compatible unlit opaque white (shared); used only during mask isolation.</summary>
+    private static Material GetIsolationWhiteMaterial()
+    {
+        if (s_isolationWhiteMaterial != null && s_isolationWhiteMaterial.shader != null)
+            return s_isolationWhiteMaterial;
+
+        Shader shader = Shader.Find("Universal Render Pipeline/Unlit")
+            ?? Shader.Find("Unlit/Color")
+            ?? Shader.Find("Sprites/Default");
+        if (shader == null)
+            throw new InvalidOperationException(
+                "MultiViewRenderer mask isolation requires an Unlit shader (try Universal Render Pipeline/Unlit).");
+
+        s_isolationWhiteMaterial = new Material(shader)
+        {
+            name = "SpatialGen_MultiViewIsolationWhite",
+            hideFlags = HideFlags.DontSave
+        };
+        ConfigureIsolationWhiteMaterial(s_isolationWhiteMaterial);
+        return s_isolationWhiteMaterial;
+    }
+
+    private static void ConfigureIsolationWhiteMaterial(Material material)
+    {
+        if (material.HasProperty("_BaseColor"))
+            material.SetColor("_BaseColor", Color.white);
+        if (material.HasProperty("_Color"))
+            material.SetColor("_Color", Color.white);
     }
 
     private Texture2D RenderMaskObbDepth(Camera cam, RegionSelection selection, Vector2Int resolution)
@@ -198,11 +492,19 @@ public class MultiViewRenderer : MonoBehaviour
             throw new InvalidOperationException($"Mask shader '{MaskShaderName}' not found.");
 
         float maxDepth = Mathf.Max(0.01f, cam.farClipPlane);
+        int effectiveCull = cam.cullingMask;
+        if (cullingSource != null)
+            effectiveCull = cullingSource.cullingMask;
+
+        var obbRenderers = new List<Renderer>(256);
+        CollectRenderersForCullingMask(effectiveCull, obbRenderers);
+
         RenderTexture depthBuf = AcquireTarget(resolution);
         try
         {
+            Material depthMat = EnsureObbDepthPassMaterial(depthShader, maxDepth);
             Shader.SetGlobalFloat("_MaxDepth", maxDepth);
-            RenderPass(cam, depthBuf, depthShader, clearToSource: false);
+            RenderCameraWithSwappedMaterials(cam, depthBuf, effectiveCull, depthMat, obbRenderers);
 
             Matrix4x4 worldToSelection = Matrix4x4.TRS(
                 selection.center,
@@ -210,10 +512,11 @@ public class MultiViewRenderer : MonoBehaviour
                 Vector3.one).inverse;
 
             Vector3 half = selection.size * 0.5f;
+            const float obbWorldMargin = 1.025f;
             Vector4 halfExtents = new Vector4(
-                Mathf.Max(0.005f, Mathf.Abs(half.x)),
-                Mathf.Max(0.005f, Mathf.Abs(half.y)),
-                Mathf.Max(0.005f, Mathf.Abs(half.z)),
+                Mathf.Max(0.005f, Mathf.Abs(half.x)) * obbWorldMargin,
+                Mathf.Max(0.005f, Mathf.Abs(half.y)) * obbWorldMargin,
+                Mathf.Max(0.005f, Mathf.Abs(half.z)) * obbWorldMargin,
                 0f);
 
             Shader.SetGlobalTexture("_RegionMaskSceneDepthTex", depthBuf);
@@ -221,23 +524,20 @@ public class MultiViewRenderer : MonoBehaviour
             Shader.SetGlobalFloat("_RegionMaskUseDepthTest", 1f);
             Shader.SetGlobalFloat("_MaskDebugView", maskDebugView);
 
-            if (cam != null && RegionMaskRenderer.TryGetSelectionViewportUvBounds(cam, selection, out Vector4 uvBoundsMv))
-            {
-                Shader.SetGlobalVector("_MaskViewportUvMinMax", uvBoundsMv);
-                Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 1f);
-            }
-            else
-                Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
+            // Viewport UV clip intersects the OBB mask with the selection's 2D footprint; it often shaves the
+            // mask below the user's gizmo. OBB + depth is enough for multi-view; clip disabled here.
+            Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
 
             Shader.SetGlobalMatrix("_SelectionWorldToLocal", worldToSelection);
             Shader.SetGlobalVector("_SelectionHalfExtents", halfExtents);
             Shader.SetGlobalFloat("_MaskFavorUpwardNormals", RegionMaskRenderer.MaskExportFavorUpwardNormals);
             Shader.SetGlobalFloat("_MaxDepth", maxDepth);
 
+            Material maskMat = EnsureObbMaskPassMaterial(maskShader);
             RenderTexture rt = AcquireTarget(resolution);
             try
             {
-                RenderPass(cam, rt, maskShader, clearToSource: false);
+                RenderCameraWithSwappedMaterials(cam, rt, effectiveCull, maskMat, obbRenderers);
                 Texture2D mask = ReadPixels(rt);
                 if (maskDebugView < 0.25f)
                     Binarize(mask);
@@ -256,6 +556,124 @@ public class MultiViewRenderer : MonoBehaviour
             Shader.SetGlobalFloat("_MaskDebugView", 0f);
             RenderTexture.ReleaseTemporary(depthBuf);
         }
+    }
+
+    private static void CollectRenderersForCullingMask(int cullingMaskBits, List<Renderer> results)
+    {
+        results.Clear();
+        Renderer[] found = UnityEngine.Object.FindObjectsByType<Renderer>(
+            FindObjectsInactive.Exclude,
+            FindObjectsSortMode.None);
+        for (int i = 0; i < found.Length; i++)
+        {
+            Renderer r = found[i];
+            if (r == null || !r.gameObject.activeInHierarchy)
+                continue;
+            int layer = r.gameObject.layer;
+            if (((1 << layer) & cullingMaskBits) == 0)
+                continue;
+
+            Material[] mats = r.sharedMaterials;
+            if (mats == null || mats.Length == 0)
+                continue;
+
+            results.Add(r);
+        }
+    }
+
+    private void RenderCameraWithSwappedMaterials(
+        Camera cam,
+        RenderTexture target,
+        int effectiveCullingMask,
+        Material replacement,
+        List<Renderer> renderers)
+    {
+        var backup = new Dictionary<Renderer, Material[]>(renderers.Count);
+        for (int i = 0; i < renderers.Count; i++)
+        {
+            Renderer r = renderers[i];
+            if (r == null)
+                continue;
+            Material[] originals = r.sharedMaterials;
+            var copy = new Material[originals.Length];
+            Array.Copy(originals, copy, originals.Length);
+            backup[r] = copy;
+            var swapped = new Material[originals.Length];
+            for (int s = 0; s < originals.Length; s++)
+                swapped[s] = replacement;
+            r.sharedMaterials = swapped;
+        }
+
+        RenderTexture prevTarget = cam.targetTexture;
+        CameraClearFlags prevFlags = cam.clearFlags;
+        Color prevBackground = cam.backgroundColor;
+        int prevMask = cam.cullingMask;
+
+        try
+        {
+            cam.targetTexture = target;
+            cam.cullingMask = effectiveCullingMask;
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = Color.black;
+            cam.Render();
+        }
+        finally
+        {
+            foreach (KeyValuePair<Renderer, Material[]> kv in backup)
+            {
+                if (kv.Key != null)
+                    kv.Key.sharedMaterials = kv.Value;
+            }
+
+            cam.targetTexture = prevTarget;
+            cam.clearFlags = prevFlags;
+            cam.backgroundColor = prevBackground;
+            cam.cullingMask = prevMask;
+        }
+    }
+
+    private static Material EnsureObbDepthPassMaterial(Shader depthShader, float maxDepth)
+    {
+        if (s_obbDepthPassMaterial == null || s_obbDepthPassMaterial.shader != depthShader)
+        {
+            DestroyObbShareableMaterial(ref s_obbDepthPassMaterial);
+            s_obbDepthPassMaterial = new Material(depthShader)
+            {
+                hideFlags = HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor
+            };
+        }
+
+        s_obbDepthPassMaterial.SetFloat("_MaxDepth", maxDepth);
+        return s_obbDepthPassMaterial;
+    }
+
+    private static Material EnsureObbMaskPassMaterial(Shader maskShader)
+    {
+        if (s_obbMaskPassMaterial == null || s_obbMaskPassMaterial.shader != maskShader)
+        {
+            DestroyObbShareableMaterial(ref s_obbMaskPassMaterial);
+            s_obbMaskPassMaterial = new Material(maskShader)
+            {
+                hideFlags = HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor
+            };
+        }
+
+        return s_obbMaskPassMaterial;
+    }
+
+    private static void DestroyObbShareableMaterial(ref Material mat)
+    {
+        if (mat == null)
+            return;
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+            UnityEngine.Object.DestroyImmediate(mat);
+        else
+            UnityEngine.Object.Destroy(mat);
+#else
+        UnityEngine.Object.Destroy(mat);
+#endif
+        mat = null;
     }
 
     private void RenderPass(Camera cam, RenderTexture target, Shader overrideShader, bool clearToSource, int? overrideCullingMask = null)

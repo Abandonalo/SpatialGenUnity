@@ -207,11 +207,11 @@ public class SpatialGenerationWindow : EditorWindow
             EditorPrefs.SetString(LocalRefinementPromptPrefsKey, _localRefinementPrompt);
         }
 
+        RefinementController controller = FindFirstObjectByType<RefinementController>();
         EditorGUILayout.HelpBox(
             "Select a region in the Scene view, describe the local change, then send RGB/depth/mask inputs to the refinement backend.",
             MessageType.Info);
 
-        RefinementController controller = FindFirstObjectByType<RefinementController>();
         if (controller == null)
         {
             if (GUILayout.Button("Setup Refinement Rig"))
@@ -274,16 +274,18 @@ public class SpatialGenerationWindow : EditorWindow
             SceneView.RepaintAll();
         }
 
-        using (new EditorGUI.DisabledScope(selectionManager == null || selectionManager.CurrentSelection == null || controller.IsRunning))
+        bool refinementNeedsInteractiveSelection = selectionManager.CurrentSelection == null;
+        using (new EditorGUI.DisabledScope(selectionManager == null || refinementNeedsInteractiveSelection || controller.IsRunning))
         {
             if (GUILayout.Button(controller.IsRunning ? "Refining..." : "Refine Selected Region"))
             {
                 controller.RunMultiViewRefinement(_globalStylePrompt, _localRefinementPrompt);
 
+                string selectionLogId = selectionManager.CurrentSelection?.selectionId ?? "unknown";
                 InteractionLogger.Log(new InteractionEvent
                 {
                     type = "refine_region",
-                    extra = $"selection={selectionManager.CurrentSelection.selectionId}, global_prompt={_globalStylePrompt}, local_prompt={_localRefinementPrompt}"
+                    extra = $"selection={selectionLogId}, global_prompt={_globalStylePrompt}, local_prompt={_localRefinementPrompt}"
                 });
             }
         }

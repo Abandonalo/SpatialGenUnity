@@ -6,6 +6,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -220,6 +221,76 @@ def _stringify_message(value: Any) -> str:
 def _url(path: str) -> str:
     base_url = os.getenv("COMFY_BASE_URL", "http://127.0.0.1:8188").rstrip("/")
     return f"{base_url}{path}"
+
+
+def upload_input_image(filename: str, data: bytes, *, content_type: str = "image/png") -> str:
+    """POST PNG/JPEG bytes to ComfyUI's /upload/image so LoadImage resolves them.
+
+    Prefer this over writing to COMFY_INPUT_DIR on disk: the Comfy server
+    (especially ComfyUI.app) may use a different input root than the router
+    process, which previously caused FileNotFoundError on node LoadImage.
+    """
+    body, headers = _multipart_upload_body(filename, data, content_type)
+    raw: bytes = b""
+    response_url = ""
+    for upload_path in ("/upload/image", "/api/upload/image"):
+        response_url = _url(upload_path)
+        request = urllib.request.Request(response_url, data=body, headers=headers, method="POST")
+        timeout = float(os.getenv("COMFY_HTTP_TIMEOUT_SECONDS", "120"))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read()
+            break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 404 and upload_path == "/upload/image":
+                continue
+            raise RuntimeError(f"HTTP {exc.code} from {response_url}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Failed to reach {response_url}: {exc.reason}") from exc
+    else:
+        raise RuntimeError("ComfyUI upload failed: no working upload endpoint (/upload/image, /api/upload/image)")
+
+    try:
+        decoded = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Expected JSON from upload, got: {raw[:200]!r}") from exc
+
+    if not isinstance(decoded, dict):
+        raise RuntimeError(f"upload/image returned non-object: {decoded!r}")
+    name = decoded.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise RuntimeError(f"upload/image missing 'name' in response: {decoded!r}")
+    return name
+
+
+def _multipart_upload_body(filename: str, data: bytes, content_type: str) -> tuple[bytes, Dict[str, str]]:
+    boundary = f"spatialgen{uuid.uuid4().hex}"
+
+    def part_field(name: str, value: str) -> bytes:
+        return (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{name}"\r\n'
+            f"\r\n"
+            f"{value}\r\n"
+        ).encode("utf-8")
+
+    def part_file(fname: str, raw: bytes, ctype: str) -> bytes:
+        return (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="image"; filename="{fname}"\r\n'
+            f"Content-Type: {ctype}\r\n"
+            f"\r\n"
+        ).encode("utf-8") + raw + b"\r\n"
+
+    body = (
+        part_field("type", "input")
+        + part_field("overwrite", "true")
+        + part_file(filename, data, content_type)
+        + f"--{boundary}--\r\n".encode("utf-8")
+    )
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    return body, headers
 
 
 def _request_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

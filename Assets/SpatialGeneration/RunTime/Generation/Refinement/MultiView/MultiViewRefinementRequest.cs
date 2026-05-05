@@ -46,7 +46,7 @@ public class MultiViewRefinementRequest
 
     public int steps = 20;
     public float cfg = 8f;
-    public float denoise = 1.0f;
+    public float denoise = RefinementDefaults.KSDenoise;
 
     // Preferred view used for the final TripoSR reconstruction.
     public string reconstructionView = "Front";

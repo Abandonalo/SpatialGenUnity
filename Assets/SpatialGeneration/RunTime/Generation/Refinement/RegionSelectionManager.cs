@@ -435,8 +435,11 @@ public class RegionSelectionManager : MonoBehaviour
     /// <summary>
     /// For screen-space masks: same renderers as <see cref="TryGetPrimaryGeneratedContentMeshBounds"/>
     /// (Generated_Mesh* / Refined_Mesh* under <c>GeneratedContent</c>), temporarily moved to <paramref name="maskLayer"/>).
+    /// When <paramref name="restrictToGeneratedContentDirectChildName"/> is non-empty, only that direct subtree
+    /// under <c>GeneratedContent</c> is lifted (the default <c>Generated_Mesh*</c>/<c>Refined_Mesh*</c> filter is waived for that subtree).
     /// </summary>
-    public static bool TryBeginScreenSpaceMaskPass(int maskLayer, List<(Renderer renderer, int savedLayer)> savedLayers)
+    public static bool TryBeginScreenSpaceMaskPass(int maskLayer, List<(Renderer renderer, int savedLayer)> savedLayers,
+        string restrictToGeneratedContentDirectChildName = null)
     {
         savedLayers.Clear();
         if (maskLayer < 0)
@@ -449,6 +452,8 @@ public class RegionSelectionManager : MonoBehaviour
         Transform generatedRoot = rootGo.transform;
         Renderer[] rs = generatedRoot.GetComponentsInChildren<Renderer>(true);
         bool any = false;
+        bool restrictSubtree = !string.IsNullOrEmpty(restrictToGeneratedContentDirectChildName);
+
         for (int i = 0; i < rs.Length; i++)
         {
             Renderer r = rs[i];
@@ -456,8 +461,21 @@ public class RegionSelectionManager : MonoBehaviour
                 continue;
 
             Transform rootChild = FindDirectChildOfGeneratedRoot(generatedRoot, r.transform);
-            if (rootChild == null || (!IsGeneratedMeshSubtreeRoot(rootChild) && !IsRefinedMeshSubtreeRoot(rootChild)))
+            if (rootChild == null)
                 continue;
+
+            if (restrictSubtree)
+            {
+                if (!string.Equals(
+                        rootChild.gameObject.name ?? string.Empty,
+                        restrictToGeneratedContentDirectChildName,
+                        StringComparison.Ordinal))
+                    continue;
+            }
+            else if (!IsGeneratedMeshSubtreeRoot(rootChild) && !IsRefinedMeshSubtreeRoot(rootChild))
+            {
+                continue;
+            }
 
             savedLayers.Add((r, r.gameObject.layer));
             r.gameObject.layer = maskLayer;

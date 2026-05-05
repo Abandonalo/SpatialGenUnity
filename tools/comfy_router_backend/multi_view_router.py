@@ -51,7 +51,7 @@ from .models import (
 
 _REFINE_GRAPH_NAME = "refinement.json"
 _CANONICAL_VIEWS = ("Front", "Left", "Right", "Top")
-
+ 
 
 def handle_multi_view_refine(
     req: MultiViewRefinementRequestModel,
@@ -103,10 +103,7 @@ def handle_multi_view_refine(
         seed=seed,
         steps=max(1, req.steps),
         cfg=max(0.0, req.cfg),
-        # Must match /refine (app.refine): inpainting needs high denoise. A 0.6
-        # ceiling made multi-view runs look like "nothing changed" because the
-        # KSampler barely departed from the VAE-encoded latent.
-        denoise=max(0.85, min(1.0, req.denoise)),
+        denoise=max(0.0, min(1.0, req.denoise)),
         tripo_model=tripo_model,
         geometry_resolution=geometry_resolution,
         tripo_threshold=tripo_threshold,

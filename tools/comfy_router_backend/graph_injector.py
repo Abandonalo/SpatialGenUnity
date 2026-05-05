@@ -149,14 +149,63 @@ def _collect_placeholders(value: Any) -> set[str]:
 
 
 def _stage_refine_images(req: RunRequest) -> Dict[str, str]:
-    input_root = _get_comfy_input_dir()
     run_token = uuid.uuid4().hex
-
-    rgb_path = _write_base64_image(req.rgb_image, input_root / f"{run_token}_rgb{_guess_extension(req.rgb_image)}")
-    mask_path = _write_base64_image(req.mask_image, input_root / f"{run_token}_mask{_guess_extension(req.mask_image)}")
-    depth_path = _write_base64_image(req.depth_image, input_root / f"{run_token}_depth{_guess_extension(req.depth_image)}")
+    rgb_bytes = _decode_base64_to_bytes(req.rgb_image, "rgb")
+    mask_bytes = _decode_base64_to_bytes(req.mask_image, "mask")
+    depth_bytes = _decode_base64_to_bytes(req.depth_image, "depth")
     canny_src = req.canny_image if req.canny_image else req.rgb_image
-    canny_path = _write_base64_image(canny_src, input_root / f"{run_token}_canny{_guess_extension(canny_src)}")
+    canny_bytes = _decode_base64_to_bytes(canny_src, "canny")
+
+    ext_rgb = _guess_extension(req.rgb_image)
+    ext_mask = _guess_extension(req.mask_image)
+    ext_depth = _guess_extension(req.depth_image)
+    ext_canny = _guess_extension(canny_src)
+
+    use_upload = os.getenv("COMFY_REFINE_USE_UPLOAD", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    if use_upload:
+        try:
+            from .comfy_client import upload_input_image
+
+            return {
+                "__RGB_IMAGE__": upload_input_image(
+                    f"{run_token}_rgb{ext_rgb}",
+                    rgb_bytes,
+                    content_type=_mime_for_extension(ext_rgb),
+                ),
+                "__MASK_IMAGE__": upload_input_image(
+                    f"{run_token}_mask{ext_mask}",
+                    mask_bytes,
+                    content_type=_mime_for_extension(ext_mask),
+                ),
+                "__DEPTH_IMAGE__": upload_input_image(
+                    f"{run_token}_depth{ext_depth}",
+                    depth_bytes,
+                    content_type=_mime_for_extension(ext_depth),
+                ),
+                "__CANNY_IMAGE__": upload_input_image(
+                    f"{run_token}_canny{ext_canny}",
+                    canny_bytes,
+                    content_type=_mime_for_extension(ext_canny),
+                ),
+            }
+        except Exception as exc:
+            import sys
+
+            print(
+                "[comfy_router_backend] Refine upload to ComfyUI failed "
+                f"({exc!r}); falling back to COMFY_INPUT_DIR.",
+                file=sys.stderr,
+            )
+
+    input_root = _get_comfy_input_dir()
+    rgb_path = _write_bytes_to_file(rgb_bytes, input_root / f"{run_token}_rgb{ext_rgb}")
+    mask_path = _write_bytes_to_file(mask_bytes, input_root / f"{run_token}_mask{ext_mask}")
+    depth_path = _write_bytes_to_file(depth_bytes, input_root / f"{run_token}_depth{ext_depth}")
+    canny_path = _write_bytes_to_file(canny_bytes, input_root / f"{run_token}_canny{ext_canny}")
 
     return {
         "__RGB_IMAGE__": rgb_path.name,
@@ -164,6 +213,38 @@ def _stage_refine_images(req: RunRequest) -> Dict[str, str]:
         "__DEPTH_IMAGE__": depth_path.name,
         "__CANNY_IMAGE__": canny_path.name,
     }
+
+
+def _mime_for_extension(ext: str) -> str:
+    e = (ext or "").lower()
+    if e in (".jpg", ".jpeg"):
+        return "image/jpeg"
+    if e == ".webp":
+        return "image/webp"
+    if e == ".png":
+        return "image/png"
+    return "application/octet-stream"
+
+
+def _decode_base64_to_bytes(encoded: Optional[str], label: str) -> bytes:
+    if not encoded:
+        raise ValueError(f"Missing base64 image for {label}")
+    raw = encoded.strip()
+    match = _DATA_URI_PATTERN.match(raw)
+    if match:
+        raw = match.group("data")
+    try:
+        return base64.b64decode(raw, validate=True)
+    except Exception as exc:
+        raise ValueError(f"Invalid base64 image payload for {label}") from exc
+
+
+def _write_bytes_to_file(data: bytes, target_path: Path) -> Path:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(data)
+    if not target_path.is_file() or target_path.stat().st_size == 0:
+        raise RuntimeError(f"Failed to write non-empty image file: {target_path.resolve()}")
+    return target_path
 
 
 def _get_comfy_input_dir() -> Path:
@@ -188,18 +269,5 @@ def _guess_extension(encoded: Optional[str]) -> str:
 
 
 def _write_base64_image(encoded: Optional[str], target_path: Path) -> Path:
-    if not encoded:
-        raise ValueError(f"Missing base64 image for {target_path.name}")
-
-    raw = encoded.strip()
-    match = _DATA_URI_PATTERN.match(raw)
-    if match:
-        raw = match.group("data")
-
-    try:
-        payload = base64.b64decode(raw, validate=True)
-    except Exception as exc:
-        raise ValueError(f"Invalid base64 image payload for {target_path.name}") from exc
-
-    target_path.write_bytes(payload)
-    return target_path
+    data = _decode_base64_to_bytes(encoded, target_path.name)
+    return _write_bytes_to_file(data, target_path)

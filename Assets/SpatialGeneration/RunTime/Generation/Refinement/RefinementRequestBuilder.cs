@@ -11,7 +11,7 @@ public static class RefinementRequestBuilder
         Texture2D mask,
         RegionSelection selection,
         string sessionId = null,
-        float denoiseStrength = 0.6f,
+        float denoiseStrength = RefinementDefaults.KSDenoise,
         int steps = 20,
         float cfgScale = 8f)
     {

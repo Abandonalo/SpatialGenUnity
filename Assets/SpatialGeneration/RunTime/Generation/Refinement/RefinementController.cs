@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -9,6 +10,46 @@ using UnityEngine;
 public class RefinementController : MonoBehaviour
 {
     private const string GeneratedRootName = "GeneratedContent";
+
+    /// <remarks>Keyed on user wording before augmentation so we only broaden prompts that already ask for black.</remarks>
+    private static bool MultiViewPromptMentionsSolidBlack(string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+            return false;
+        string t = prompt.Trim();
+        if (t.IndexOf("#000000", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        if (t.IndexOf("#000", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        return t.IndexOf("black", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static string AugmentMultiViewBlackDiffusePrompt(string basePrompt)
+    {
+        string t = (basePrompt ?? string.Empty).Trim();
+        if (!MultiViewPromptMentionsSolidBlack(t))
+            return t;
+        return t +
+            ", solid uniform matte jet black diffuse albedo RGB zero, opaque pigment, consistent flat color "
+            + "within the inpainted masked region without gradient or brown shift";
+    }
+
+    private static bool MultiViewPromptMentionsSolidWhite(string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+            return false;
+        string t = prompt.Trim();
+        if (t.IndexOf("#ffffff", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        return t.IndexOf("white", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static string AugmentMultiViewWhiteDiffusePrompt(string basePrompt)
+    {
+        string t = (basePrompt ?? string.Empty).Trim();
+        if (!MultiViewPromptMentionsSolidWhite(t))
+            return t;
+        return t +
+            ", painted bright pure white RGB 255 255 255 matte flat diffuse albedo, high luminance, opaque light-colored pigment, "
+            + "even illumination in the masked inpaint zone, no black or dark gray pixels, no brown or yellow stain";
+    }
     // HttpClient's default timeout is 100s, which is well below the multi-minute
     // TripoSR run time at higher geometry resolutions. Disable the built-in
     // timeout so the only timeout that applies is the CancellationTokenSource we
@@ -27,7 +68,6 @@ public class RefinementController : MonoBehaviour
     [Tooltip("View whose refined image feeds the TripoSR reconstruction.")]
     public ViewType reconstructionView = ViewType.Front;
 
-    [Range(0f, 1f)] public float denoiseStrength = 1.0f;
     public int steps = 20;
     public float cfgScale = 8f;
 
@@ -44,6 +84,9 @@ public class RefinementController : MonoBehaviour
     {
         isRunning = false;
     }
+
+    /// <summary>Extension hook: return a GeneratedContent child name to restrict screen-space mesh masks, or null.</summary>
+    public string ResolveMultiViewScreenSpaceMaskRestrict() => null;
 
     // Entry point for the 2D-based multi-view refinement pipeline. Renders
     // the selection from every canonical camera (front/left/right/top),
@@ -62,12 +105,14 @@ public class RefinementController : MonoBehaviour
 
         EnsureReferences();
 
-        RegionSelection selection = selectionManager != null ? selectionManager.CurrentSelection : null;
+        RegionSelection selection = ResolveRefinementSelectionOrNull(out bool syncedToManager);
         if (selection == null)
         {
             Debug.LogWarning("Spatial Generation: No region selection is active.");
             return;
         }
+        if (syncedToManager && selectionManager != null)
+            selectionManager.SetSelection(selection);
 
         // Provision (or refresh) the canonical multi-view rig so the four
         // cameras always frame the current selection, regardless of whether
@@ -98,13 +143,41 @@ public class RefinementController : MonoBehaviour
             // the global style prompt dilutes the per-region change the user
             // asked for ("make the roof black"), so we use local-only and
             // fall back to global only if local was left empty.
-            string effectivePrompt = !string.IsNullOrWhiteSpace(localPrompt)
+            string baseMvPrompt = !string.IsNullOrWhiteSpace(localPrompt)
                 ? localPrompt.Trim()
                 : (globalPrompt ?? string.Empty).Trim();
+            bool blackDiffuseIntent = MultiViewPromptMentionsSolidBlack(baseMvPrompt);
+            bool whiteDiffuseIntent = MultiViewPromptMentionsSolidWhite(baseMvPrompt);
+            string effectivePrompt = baseMvPrompt;
+            string multiViewNegative = string.Empty;
+            if (whiteDiffuseIntent && !blackDiffuseIntent)
+            {
+                effectivePrompt = AugmentMultiViewWhiteDiffusePrompt(baseMvPrompt);
+                multiViewNegative =
+                    "black, dark gray, charcoal, muddy shadows, underexposed, low key, dingy, brown stain, yellow grime, "
+                    + "discolored dark patch, burnt-in noise, heavy contrast in masked zone";
+            }
+            else if (blackDiffuseIntent && !whiteDiffuseIntent)
+            {
+                effectivePrompt = AugmentMultiViewBlackDiffusePrompt(baseMvPrompt);
+                multiViewNegative =
+                    "muddy gray, brown pigment cast instead of jet black, washed-out dark patch, glossy specular, bright highlights";
+            }
 
             int seed = multiViewSeed >= 0
                 ? multiViewSeed
                 : UnityEngine.Random.Range(0, int.MaxValue);
+
+            if (multiViewRenderer == null)
+                throw new InvalidOperationException("MultiViewRenderer is required for multi-view refinement.");
+
+            string maskRestrict = ResolveMultiViewScreenSpaceMaskRestrict();
+
+            float cfgOut = Mathf.Max(0f, cfgScale);
+            if (whiteDiffuseIntent && !blackDiffuseIntent)
+                cfgOut = Mathf.Min(18f, cfgOut * 1.2f);
+
+            MultiViewData capturedViews = multiViewRenderer.RenderAllViews(maskForInpaint, maskRestrict);
 
             MultiViewRefinementRequest request = new MultiViewRefinementRequest
             {
@@ -112,13 +185,13 @@ public class RefinementController : MonoBehaviour
                 sessionId = sessionId,
                 mode = "refine",
                 positivePrompt = effectivePrompt,
-                negativePrompt = string.Empty,
+                negativePrompt = multiViewNegative,
                 seed = seed,
                 steps = Mathf.Max(1, steps),
-                cfg = Mathf.Max(0f, cfgScale),
-                denoise = Mathf.Clamp(denoiseStrength, 0.85f, 1f),
+                cfg = cfgOut,
+                denoise = RefinementDefaults.KSDenoise,
                 reconstructionView = reconstructionView.ToString(),
-                views = views.views,
+                views = capturedViews.views,
                 selection = CloneSelection(selection)
             };
 
@@ -454,6 +527,12 @@ public class RefinementController : MonoBehaviour
         };
     }
 
+    private RegionSelection ResolveRefinementSelectionOrNull(out bool wroteSelectionBackToManager)
+    {
+        wroteSelectionBackToManager = false;
+        return selectionManager != null ? selectionManager.CurrentSelection : null;
+    }
+
     private static string ResolveMultiViewUrl(BackendSettings settings)
     {
         if (string.IsNullOrWhiteSpace(settings?.remoteUrl))
@@ -477,12 +556,14 @@ public class RefinementController : MonoBehaviour
         }
 
         EnsureReferences();
-        RegionSelection selection = selectionManager != null ? selectionManager.CurrentSelection : null;
+        RegionSelection selection = ResolveRefinementSelectionOrNull(out bool syncedToManager);
         if (selection == null)
         {
             Debug.LogWarning("Spatial Generation: No region selection is active.");
             return;
         }
+        if (syncedToManager && selectionManager != null)
+            selectionManager.SetSelection(selection);
 
         isRunning = true;
 
@@ -495,7 +576,7 @@ public class RefinementController : MonoBehaviour
             if (string.IsNullOrWhiteSpace(sessionId))
                 sessionId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
 
-            maskRenderer.SetupCamera(selectionManager.GetWorldBounds());
+            maskRenderer.SetupCamera(selectionManager != null ? selectionManager.GetWorldBounds() : RegionSelectionManager.BuildWorldBounds(selection));
 
             rgb = maskRenderer.RenderRGB();
             depth = maskRenderer.RenderDepth();
@@ -509,7 +590,7 @@ public class RefinementController : MonoBehaviour
                 mask,
                 selection,
                 sessionId,
-                denoiseStrength,
+                RefinementDefaults.KSDenoise,
                 steps,
                 cfgScale);
 
