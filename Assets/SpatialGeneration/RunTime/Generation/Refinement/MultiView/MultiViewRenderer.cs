@@ -111,7 +111,7 @@ public class MultiViewRenderer : MonoBehaviour
                     rgb = RenderRGB(cam, resolution);
                     depth = RenderDepth(cam, resolution);
                     edges = includeEdgesFromDepth ? BuildSimpleEdgeMapFromDepth(depth) : null;
-                    mask = RenderMask(cam, selection, resolution);
+                    mask = RenderMask(cam, selection, resolution, view);
 
                     result.views.Add(new ViewData
                     {
@@ -176,7 +176,7 @@ public class MultiViewRenderer : MonoBehaviour
         }
     }
 
-    private Texture2D RenderMask(Camera cam, RegionSelection selection, Vector2Int resolution)
+    private Texture2D RenderMask(Camera cam, RegionSelection selection, Vector2Int resolution, ViewType viewType)
     {
         bool screenSpaceWithRestrict = maskMode == MultiViewMaskMode.ScreenSpaceGeneratedMesh
             && !string.IsNullOrEmpty(_restrictScreenSpaceMaskToGeneratedChildName);
@@ -184,7 +184,7 @@ public class MultiViewRenderer : MonoBehaviour
         if (screenSpaceWithRestrict)
             return RenderMaskScreenSpace(cam, selection, resolution);
 
-        return RenderMaskObbDepth(cam, selection, resolution);
+        return RenderMaskObbDepth(cam, selection, resolution, viewType);
     }
 
     private Texture2D RenderMaskScreenSpace(Camera cam, RegionSelection selection, Vector2Int resolution)
@@ -482,7 +482,7 @@ public class MultiViewRenderer : MonoBehaviour
             material.SetColor("_Color", Color.white);
     }
 
-    private Texture2D RenderMaskObbDepth(Camera cam, RegionSelection selection, Vector2Int resolution)
+    private Texture2D RenderMaskObbDepth(Camera cam, RegionSelection selection, Vector2Int resolution, ViewType viewType)
     {
         Shader depthShader = Shader.Find(DepthShaderName);
         Shader maskShader = Shader.Find(MaskShaderName);
@@ -524,9 +524,16 @@ public class MultiViewRenderer : MonoBehaviour
             Shader.SetGlobalFloat("_RegionMaskUseDepthTest", 1f);
             Shader.SetGlobalFloat("_MaskDebugView", maskDebugView);
 
-            // Viewport UV clip intersects the OBB mask with the selection's 2D footprint; it often shaves the
-            // mask below the user's gizmo. OBB + depth is enough for multi-view; clip disabled here.
-            Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
+            // OBB mask uses inflated half-extents (obbWorldMargin); Top-down captures showed ~2× white-area vs lateral views (logs).
+            // Clip Top masks to the projected selection hull (exact corners), matching RegionMaskRenderer.
+            if (viewType == ViewType.Top
+                && RegionMaskRenderer.TryGetSelectionViewportUvBounds(cam, selection, out Vector4 uvFootprint))
+            {
+                Shader.SetGlobalVector("_MaskViewportUvMinMax", uvFootprint);
+                Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 1f);
+            }
+            else
+                Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
 
             Shader.SetGlobalMatrix("_SelectionWorldToLocal", worldToSelection);
             Shader.SetGlobalVector("_SelectionHalfExtents", halfExtents);

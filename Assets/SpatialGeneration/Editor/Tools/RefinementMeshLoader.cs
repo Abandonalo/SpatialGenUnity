@@ -35,7 +35,11 @@ public static class RefinementMeshLoader
 
             ClearPreviousRefinementArtifacts(root);
 
-            if (!GenerationControllerEditor.TryInstantiateMeshOutput(ctx.meshAbsolutePath, root, out GameObject meshObject))
+            if (!GenerationControllerEditor.TryInstantiateMeshOutput(
+                    ctx.meshAbsolutePath,
+                    root,
+                    out GameObject meshObject,
+                    forceVertexColorMaterials: true))
                 return false;
 
             meshObject.name = $"Refined_Mesh_{(string.IsNullOrWhiteSpace(ctx.requestId) ? "0" : ctx.requestId)}";

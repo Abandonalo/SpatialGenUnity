@@ -6,6 +6,8 @@ from .models import RunRequest
 _MODE_TO_GRAPH = {
     "generate": "generation.json",
     "refine": "refinement.json",
+    "refine_inpaint_only": "refinement_inpaint_only.json",
+    "tripo_from_rgb": "refinement_tripo_from_rgb.json",
 }
 
 

@@ -98,14 +98,21 @@ def _build_replacements(req: RunRequest) -> Dict[str, Any]:
             "COMFY_CONTROLNET_CANNY",
             "controlnet-canny/control_v11p_sd15_canny.pth",
         ),
+        # SD1.5 inpaint UNet for refinement.json; must match a ckpt_name listed by ComfyUI.
+        "__INPAINT_CHECKPOINT__": os.getenv(
+            "COMFY_INPAINT_CHECKPOINT",
+            "sd-v1-5-inpainting.ckpt",
+        ),
     }
 
     checkpoint = os.getenv("COMFY_CHECKPOINT")
     if checkpoint:
         replacements["__CHECKPOINT__"] = checkpoint
 
-    if req.mode == "refine":
+    if req.mode in ("refine", "refine_inpaint_only"):
         replacements.update(_stage_refine_images(req))
+    elif req.mode == "tripo_from_rgb":
+        replacements.update(_stage_tripo_from_rgb_images(req))
 
     return replacements
 
@@ -148,6 +155,22 @@ def _collect_placeholders(value: Any) -> set[str]:
     return found
 
 
+def _tripo_mask_dimensions_px(req: RunRequest) -> Tuple[int, int]:
+    if req.crop_width and req.crop_height:
+        return int(req.crop_width), int(req.crop_height)
+    dims = _rgb_dimensions_from_base64(req.rgb_image)
+    if dims:
+        return int(dims[0]), int(dims[1])
+    return 512, 512
+
+
+def _solid_white_png_bytes(width: int, height: int) -> bytes:
+    w, h = max(1, int(width)), max(1, int(height))
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (255, 255, 255)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _stage_refine_images(req: RunRequest) -> Dict[str, str]:
     run_token = uuid.uuid4().hex
     rgb_bytes = _decode_base64_to_bytes(req.rgb_image, "rgb")
@@ -160,6 +183,9 @@ def _stage_refine_images(req: RunRequest) -> Dict[str, str]:
     ext_mask = _guess_extension(req.mask_image)
     ext_depth = _guess_extension(req.depth_image)
     ext_canny = _guess_extension(canny_src)
+
+    mw, mh = _tripo_mask_dimensions_px(req)
+    tripo_mask_bytes = _solid_white_png_bytes(mw, mh)
 
     use_upload = os.getenv("COMFY_REFINE_USE_UPLOAD", "1").strip().lower() not in (
         "0",
@@ -191,6 +217,11 @@ def _stage_refine_images(req: RunRequest) -> Dict[str, str]:
                     canny_bytes,
                     content_type=_mime_for_extension(ext_canny),
                 ),
+                "__TRIPO_SOLID_MASK__": upload_input_image(
+                    f"{run_token}_tripo_solid_mask.png",
+                    tripo_mask_bytes,
+                    content_type="image/png",
+                ),
             }
         except Exception as exc:
             import sys
@@ -206,12 +237,87 @@ def _stage_refine_images(req: RunRequest) -> Dict[str, str]:
     mask_path = _write_bytes_to_file(mask_bytes, input_root / f"{run_token}_mask{ext_mask}")
     depth_path = _write_bytes_to_file(depth_bytes, input_root / f"{run_token}_depth{ext_depth}")
     canny_path = _write_bytes_to_file(canny_bytes, input_root / f"{run_token}_canny{ext_canny}")
+    tripo_mask_path = _write_bytes_to_file(
+        tripo_mask_bytes, input_root / f"{run_token}_tripo_solid_mask.png"
+    )
 
     return {
         "__RGB_IMAGE__": rgb_path.name,
         "__MASK_IMAGE__": mask_path.name,
         "__DEPTH_IMAGE__": depth_path.name,
         "__CANNY_IMAGE__": canny_path.name,
+        "__TRIPO_SOLID_MASK__": tripo_mask_path.name,
+    }
+
+
+def _tripo_reference_mask_png_bytes(req: RunRequest, mw: int, mh: int) -> bytes:
+    """Bytes for TripoSR ImageToMask input: semantic crop from Unity or solid white fallback."""
+    raw_opt = (req.tripo_reference_mask_image or "").strip()
+    if not raw_opt:
+        return _solid_white_png_bytes(mw, mh)
+    raw_bytes = _decode_base64_to_bytes(raw_opt, "tripo_reference_mask")
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as im:
+            rgba = im.convert("RGBA")
+            if rgba.size != (mw, mh):
+                rgba = rgba.resize((max(1, mw), max(1, mh)), Image.NEAREST)
+            buf = io.BytesIO()
+            rgba.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception:
+        return raw_bytes
+
+
+def _stage_tripo_from_rgb_images(req: RunRequest) -> Dict[str, str]:
+    """Stage reconstructed RGB composite and TripoSR reference_mask (semantic crop or solid white).
+
+    Used by refinement_tripo_from_rgb.json (no Stable Diffusion / depth uploads).
+    """
+    run_token = uuid.uuid4().hex
+    rgb_bytes = _decode_base64_to_bytes(req.rgb_image, "rgb")
+    ext_rgb = _guess_extension(req.rgb_image)
+    mw, mh = _tripo_mask_dimensions_px(req)
+    tripo_mask_bytes = _tripo_reference_mask_png_bytes(req, mw, mh)
+
+    use_upload = os.getenv("COMFY_REFINE_USE_UPLOAD", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    if use_upload:
+        try:
+            from .comfy_client import upload_input_image
+
+            return {
+                "__RGB_IMAGE__": upload_input_image(
+                    f"{run_token}_mv_trip_rgb{ext_rgb}",
+                    rgb_bytes,
+                    content_type=_mime_for_extension(ext_rgb),
+                ),
+                "__TRIPO_SOLID_MASK__": upload_input_image(
+                    f"{run_token}_tripo_solid_mask.png",
+                    tripo_mask_bytes,
+                    content_type="image/png",
+                ),
+            }
+        except Exception as exc:
+            import sys
+
+            print(
+                "[comfy_router_backend] Tripo RGB upload to ComfyUI failed "
+                f"({exc!r}); falling back to COMFY_INPUT_DIR.",
+                file=sys.stderr,
+            )
+
+    input_root = _get_comfy_input_dir()
+    rgb_path = _write_bytes_to_file(rgb_bytes, input_root / f"{run_token}_mv_trip_rgb{ext_rgb}")
+    tripo_mask_path = _write_bytes_to_file(
+        tripo_mask_bytes, input_root / f"{run_token}_tripo_solid_mask.png"
+    )
+
+    return {
+        "__RGB_IMAGE__": rgb_path.name,
+        "__TRIPO_SOLID_MASK__": tripo_mask_path.name,
     }
 
 

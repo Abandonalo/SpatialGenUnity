@@ -293,6 +293,16 @@ public static class GenerationControllerEditor
 
     public static bool TryInstantiateMeshOutput(string absolutePath, GameObject root, out GameObject instance)
     {
+        return TryInstantiateMeshOutput(absolutePath, root, out instance, forceVertexColorMaterials: false);
+    }
+
+    /// <param name="forceVertexColorMaterials">When true and meshes carry vertex colors, replace materials with VertexColorUnlit so albedo matches Tripo vertex bake (refined meshes).</param>
+    public static bool TryInstantiateMeshOutput(
+        string absolutePath,
+        GameObject root,
+        out GameObject instance,
+        bool forceVertexColorMaterials)
+    {
         instance = null;
         string assetPath = StageFileIntoGeneratedAssets(absolutePath);
         if (string.IsNullOrWhiteSpace(assetPath))
@@ -322,6 +332,8 @@ public static class GenerationControllerEditor
         instance.transform.localPosition = Vector3.zero;
         bool hasVertexColors = MeshHasVertexColors(instance);
         EnsureRenderableMaterials(instance, hasVertexColors, out _);
+        if (forceVertexColorMaterials && hasVertexColors)
+            ForceVertexColorUnlitMaterials(instance);
         return true;
     }
 
@@ -399,6 +411,30 @@ public static class GenerationControllerEditor
         }
 
         return replaced;
+    }
+
+    /// <summary>TripoSR GLBs often carry albedo in vertex colors; glTF PBR shaders may leave base maps bright.</summary>
+    private static void ForceVertexColorUnlitMaterials(GameObject root)
+    {
+        if (root == null)
+            return;
+        Shader vc = Shader.Find("SpatialGeneration/VertexColorUnlit");
+        if (vc == null)
+            return;
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+        for (int r = 0; r < renderers.Length; r++)
+        {
+            Renderer renderer = renderers[r];
+            Material[] mats = renderer.sharedMaterials;
+            if (mats == null || mats.Length == 0)
+                continue;
+            var copies = new Material[mats.Length];
+            for (int i = 0; i < mats.Length; i++)
+            {
+                copies[i] = new Material(vc) { name = "Refined_VertexColorUnlit" };
+            }
+            renderer.sharedMaterials = copies;
+        }
     }
 
     private static void EnsureAssetFolder(string assetPath)

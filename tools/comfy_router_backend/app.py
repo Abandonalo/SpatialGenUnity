@@ -17,6 +17,7 @@ from .models import (
     MultiViewRefinementRequestModel,
     MultiViewRefinementResponseModel,
     ProxyGenerateRequest,
+    REFINEMENT_DEFAULT_NEGATIVE,
     RefinementRequestModel,
     RefinementResponseModel,
     RunRequest,
@@ -77,7 +78,7 @@ def refine(req: RefinementRequestModel) -> RefinementResponseModel:
         run_request = RunRequest(
             mode="refine",
             positive_prompt=effective_prompt,
-            negative_prompt="",
+            negative_prompt=REFINEMENT_DEFAULT_NEGATIVE,
             rgb_image=req.rgbImageBase64,
             depth_image=req.depthImageBase64,
             mask_image=req.maskImageBase64,

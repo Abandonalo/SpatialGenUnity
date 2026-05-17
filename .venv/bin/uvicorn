@@ -1,4 +1,4 @@
-#!/Users/alo/SpatialGenUnity/.venv/bin/python
+#!/Users/alo/SpatialGenUnity/.venv/bin/python3
 import sys
 from uvicorn.main import main
 if __name__ == '__main__':

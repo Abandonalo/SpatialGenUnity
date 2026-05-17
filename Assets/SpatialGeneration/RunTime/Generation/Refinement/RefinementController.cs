@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Text;
@@ -11,45 +12,6 @@ public class RefinementController : MonoBehaviour
 {
     private const string GeneratedRootName = "GeneratedContent";
 
-    /// <remarks>Keyed on user wording before augmentation so we only broaden prompts that already ask for black.</remarks>
-    private static bool MultiViewPromptMentionsSolidBlack(string prompt)
-    {
-        if (string.IsNullOrWhiteSpace(prompt))
-            return false;
-        string t = prompt.Trim();
-        if (t.IndexOf("#000000", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (t.IndexOf("#000", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        return t.IndexOf("black", StringComparison.OrdinalIgnoreCase) >= 0;
-    }
-
-    private static string AugmentMultiViewBlackDiffusePrompt(string basePrompt)
-    {
-        string t = (basePrompt ?? string.Empty).Trim();
-        if (!MultiViewPromptMentionsSolidBlack(t))
-            return t;
-        return t +
-            ", solid uniform matte jet black diffuse albedo RGB zero, opaque pigment, consistent flat color "
-            + "within the inpainted masked region without gradient or brown shift";
-    }
-
-    private static bool MultiViewPromptMentionsSolidWhite(string prompt)
-    {
-        if (string.IsNullOrWhiteSpace(prompt))
-            return false;
-        string t = prompt.Trim();
-        if (t.IndexOf("#ffffff", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        return t.IndexOf("white", StringComparison.OrdinalIgnoreCase) >= 0;
-    }
-
-    private static string AugmentMultiViewWhiteDiffusePrompt(string basePrompt)
-    {
-        string t = (basePrompt ?? string.Empty).Trim();
-        if (!MultiViewPromptMentionsSolidWhite(t))
-            return t;
-        return t +
-            ", painted bright pure white RGB 255 255 255 matte flat diffuse albedo, high luminance, opaque light-colored pigment, "
-            + "even illumination in the masked inpaint zone, no black or dark gray pixels, no brown or yellow stain";
-    }
     // HttpClient's default timeout is 100s, which is well below the multi-minute
     // TripoSR run time at higher geometry resolutions. Disable the built-in
     // timeout so the only timeout that applies is the CancellationTokenSource we
@@ -146,23 +108,6 @@ public class RefinementController : MonoBehaviour
             string baseMvPrompt = !string.IsNullOrWhiteSpace(localPrompt)
                 ? localPrompt.Trim()
                 : (globalPrompt ?? string.Empty).Trim();
-            bool blackDiffuseIntent = MultiViewPromptMentionsSolidBlack(baseMvPrompt);
-            bool whiteDiffuseIntent = MultiViewPromptMentionsSolidWhite(baseMvPrompt);
-            string effectivePrompt = baseMvPrompt;
-            string multiViewNegative = string.Empty;
-            if (whiteDiffuseIntent && !blackDiffuseIntent)
-            {
-                effectivePrompt = AugmentMultiViewWhiteDiffusePrompt(baseMvPrompt);
-                multiViewNegative =
-                    "black, dark gray, charcoal, muddy shadows, underexposed, low key, dingy, brown stain, yellow grime, "
-                    + "discolored dark patch, burnt-in noise, heavy contrast in masked zone";
-            }
-            else if (blackDiffuseIntent && !whiteDiffuseIntent)
-            {
-                effectivePrompt = AugmentMultiViewBlackDiffusePrompt(baseMvPrompt);
-                multiViewNegative =
-                    "muddy gray, brown pigment cast instead of jet black, washed-out dark patch, glossy specular, bright highlights";
-            }
 
             int seed = multiViewSeed >= 0
                 ? multiViewSeed
@@ -173,9 +118,11 @@ public class RefinementController : MonoBehaviour
 
             string maskRestrict = ResolveMultiViewScreenSpaceMaskRestrict();
 
-            float cfgOut = Mathf.Max(0f, cfgScale);
-            if (whiteDiffuseIntent && !blackDiffuseIntent)
-                cfgOut = Mathf.Min(18f, cfgOut * 1.2f);
+            float cfgOut = Mathf.Min(18f, Mathf.Max(0f, cfgScale) * 1.16f);
+
+            // Logs @ denoise 0.945: Front masked RGB plateau ~[0.60,0.58,0.61]; neutral-gray frac still falling — allow full mask denoise + more steps.
+            float denoiseOut = Mathf.Clamp(RefinementDefaults.KSDenoise * 3.45f, 0.94f, 1f);
+            int stepsMv = Mathf.Min(50, Mathf.Max(1, steps) + 22);
 
             MultiViewData capturedViews = multiViewRenderer.RenderAllViews(maskForInpaint, maskRestrict);
 
@@ -184,16 +131,38 @@ public class RefinementController : MonoBehaviour
                 requestId = Guid.NewGuid().ToString("N"),
                 sessionId = sessionId,
                 mode = "refine",
-                positivePrompt = effectivePrompt,
-                negativePrompt = multiViewNegative,
+                positivePrompt = baseMvPrompt,
+                negativePrompt = string.Empty,
                 seed = seed,
-                steps = Mathf.Max(1, steps),
+                steps = stepsMv,
                 cfg = cfgOut,
-                denoise = RefinementDefaults.KSDenoise,
+                denoise = denoiseOut,
                 reconstructionView = reconstructionView.ToString(),
                 views = capturedViews.views,
                 selection = CloneSelection(selection)
             };
+
+            #region agent log
+            try
+            {
+                string prev = baseMvPrompt ?? string.Empty;
+                prev = prev.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", " ").Replace("\r", string.Empty);
+                if (prev.Length > 120)
+                    prev = prev.Substring(0, 120);
+                long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                string line =
+                    "{\"sessionId\":\"06fda4\",\"hypothesisId\":\"H_UNITY_MV_PAYLOAD\",\"location\":\"RefinementController.RunMultiViewRefinement\",\"message\":\"multiview_request\",\"data\":{"
+                    + "\"positivePromptPreview\":\"" + prev + "\",\"steps\":" + stepsMv.ToString(CultureInfo.InvariantCulture)
+                    + ",\"cfg\":" + cfgOut.ToString(CultureInfo.InvariantCulture)
+                    + ",\"denoise\":" + denoiseOut.ToString(CultureInfo.InvariantCulture)
+                    + ",\"seed\":" + seed + ",\"reconstructionView\":\"" + reconstructionView + "\"},\"timestamp\":" + ts + "}\n";
+                File.AppendAllText("/Users/alo/SpatialGenUnity/.cursor/debug-06fda4.log", line);
+            }
+            catch
+            {
+                /* debug ingest only */
+            }
+            #endregion
 
             IGenerationBackend backend = BackendRegistry.Current;
             if (backend != null)

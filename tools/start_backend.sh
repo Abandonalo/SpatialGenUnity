@@ -24,4 +24,8 @@ export SPATIALGEN_TRIPO_MODEL="${SPATIALGEN_TRIPO_MODEL:-TripoSRmodel.ckpt}"
 export SPATIALGEN_GEOMETRY_RESOLUTION="${SPATIALGEN_GEOMETRY_RESOLUTION:-512}"
 export SPATIALGEN_TRIPO_THRESHOLD="${SPATIALGEN_TRIPO_THRESHOLD:-25}"
 
-exec uvicorn tools.comfy_router_backend.app:app --host 0.0.0.0 --port "$SPATIALGEN_BACKEND_PORT"
+# Use stdlib asyncio event loop. Some venvs ship a broken/incompatible uvloop (AttributeError:
+# module 'uvloop' has no attribute 'new_event_loop'); --loop asyncio avoids that.
+export UVICORN_LOOP="${UVICORN_LOOP:-asyncio}"
+
+exec uvicorn tools.comfy_router_backend.app:app --host 0.0.0.0 --port "$SPATIALGEN_BACKEND_PORT" --loop "$UVICORN_LOOP"

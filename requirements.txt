@@ -1,2 +1,7 @@
 fastapi
 uvicorn
+# Uvicorn loads the websocket stack at startup; without a compatible package, imports fail early.
+websockets>=12,<16
+
+# Pillow provides `PIL` (multi_view_router, graph_injector image handling).
+pillow>=10,<12

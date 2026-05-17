@@ -10,10 +10,10 @@
   "3": {
     "inputs": {
       "seed": "__SEED__",
-      "steps": 25,
-      "cfg": 8,
-      "sampler_name": "euler",
-      "scheduler": "normal",
+      "steps": "__STEPS__",
+      "cfg": "__CFG__",
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
       "denoise": "__DENOISE__",
       "model": ["4", 0],
       "positive": ["6", 0],
@@ -23,7 +23,7 @@
     "class_type": "KSampler"
   },
   "4": {
-    "inputs": { "ckpt_name": "sd-v1-5-inpainting.ckpt" },
+    "inputs": { "ckpt_name": "__INPAINT_CHECKPOINT__" },
     "class_type": "CheckpointLoaderSimple"
   },
   "6": {
@@ -52,7 +52,7 @@
       "pixels": ["1", 0],
       "vae": ["4", 2],
       "mask": ["121", 0],
-      "grow_mask_by": 6
+      "grow_mask_by": 2
     },
     "class_type": "VAEEncodeForInpaint"
   },
@@ -80,25 +80,11 @@
     },
     "class_type": "ImageCrop"
   },
-  "64": {
-    "inputs": {
-      "rembg_session": ["65", 0],
-      "image": ["50", 0]
-    },
-    "class_type": "ImageRemoveBackground+"
-  },
-  "65": {
-    "inputs": {
-      "model": "u2net: general purpose",
-      "providers": "CPU"
-    },
-    "class_type": "RemBGSession+"
-  },
   "66": {
     "inputs": {
       "model": ["67", 0],
-      "reference_image": ["64", 0],
-      "reference_mask": ["64", 1],
+      "reference_image": ["50", 0],
+      "reference_mask": ["123", 0],
       "geometry_resolution": "__GEOMETRY_RESOLUTION__",
       "threshold": "__TRIPOSR_THRESHOLD__"
     },
@@ -118,10 +104,21 @@
     },
     "class_type": "TripoSRViewer"
   },
+  "122": {
+    "inputs": { "image": "__TRIPO_SOLID_MASK__" },
+    "class_type": "LoadImage"
+  },
+  "123": {
+    "inputs": {
+      "image": ["122", 0],
+      "channel": "red"
+    },
+    "class_type": "ImageToMask"
+  },
   "120": {
     "inputs": {
       "mask": ["12", 0],
-      "value": 0.92
+      "value": 0.65
     },
     "class_type": "ThresholdMask"
   },

@@ -5,9 +5,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Canonical KSampler denoise for refinement; matches Unity RefinementDefaults.KSDenoise (0.3).
 REFINEMENT_KS_DENOISE: float = 0.3
 
+# Artifact / geometry negatives only. Avoid dull/desaturated/washed-out — those steer inpainted
+# pixels toward neutral gray and conflict with prompts like “white roof” (verified vs mask-aligned gray fraction in logs).
+REFINEMENT_DEFAULT_NEGATIVE: str = (
+    "blur, low quality, noise, jpeg artifacts, distorted, deformed"
+)
+
 
 class RunRequest(BaseModel):
-    mode: Literal["generate", "refine"]
+    mode: Literal["generate", "refine", "refine_inpaint_only", "tripo_from_rgb"]
 
     positive_prompt: str = Field(min_length=1)
     negative_prompt: str = ""
@@ -39,9 +45,18 @@ class RunRequest(BaseModel):
     crop_x: Optional[int] = None
     crop_y: Optional[int] = None
 
+    # When set on tripo_from_rgb, stages this PNG as TripoSR reference_mask instead of solid white:
+    # constrains reconstruction toward the inpaint selection so background pixels do not lift into mesh.
+    tripo_reference_mask_image: Optional[str] = None
+
     @model_validator(mode="after")
     def validate_refine_inputs(self) -> "RunRequest":
-        if self.mode != "refine":
+        if self.mode == "tripo_from_rgb":
+            if not self.rgb_image:
+                raise ValueError("tripo_from_rgb mode requires: rgb_image")
+            return self
+
+        if self.mode not in ("refine", "refine_inpaint_only"):
             return self
 
         missing = [
@@ -55,7 +70,7 @@ class RunRequest(BaseModel):
         ]
         if missing:
             joined = ", ".join(missing)
-            raise ValueError(f"refine mode requires: {joined}")
+            raise ValueError(f"{self.mode} mode requires: {joined}")
         return self
 
 
