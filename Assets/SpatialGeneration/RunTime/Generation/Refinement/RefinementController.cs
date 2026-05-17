@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Text;
@@ -141,28 +140,6 @@ public class RefinementController : MonoBehaviour
                 views = capturedViews.views,
                 selection = CloneSelection(selection)
             };
-
-            #region agent log
-            try
-            {
-                string prev = baseMvPrompt ?? string.Empty;
-                prev = prev.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", " ").Replace("\r", string.Empty);
-                if (prev.Length > 120)
-                    prev = prev.Substring(0, 120);
-                long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                string line =
-                    "{\"sessionId\":\"06fda4\",\"hypothesisId\":\"H_UNITY_MV_PAYLOAD\",\"location\":\"RefinementController.RunMultiViewRefinement\",\"message\":\"multiview_request\",\"data\":{"
-                    + "\"positivePromptPreview\":\"" + prev + "\",\"steps\":" + stepsMv.ToString(CultureInfo.InvariantCulture)
-                    + ",\"cfg\":" + cfgOut.ToString(CultureInfo.InvariantCulture)
-                    + ",\"denoise\":" + denoiseOut.ToString(CultureInfo.InvariantCulture)
-                    + ",\"seed\":" + seed + ",\"reconstructionView\":\"" + reconstructionView + "\"},\"timestamp\":" + ts + "}\n";
-                File.AppendAllText("/Users/alo/SpatialGenUnity/.cursor/debug-06fda4.log", line);
-            }
-            catch
-            {
-                /* debug ingest only */
-            }
-            #endregion
 
             IGenerationBackend backend = BackendRegistry.Current;
             if (backend != null)
