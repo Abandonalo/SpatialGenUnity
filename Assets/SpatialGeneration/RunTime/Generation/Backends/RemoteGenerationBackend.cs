@@ -714,8 +714,9 @@ LaunchComfyProcess:
         // Strong object-isolation constraints for TripoSR-friendly source images.
         parts.Add(
             "centered, full in frame, isolated, clean silhouette, sharp edges, uniform lighting, " +
-            "studio lighting, soft shadows, no occlusion,  " +
-            "front view, orthographic feel, product render, " + 
+            "studio lighting, soft shadows, no occlusion, " +
+            "exact straight-on front view of the object, front-facing facade centered, " +
+            "camera perpendicular to the object's front, symmetrical front elevation, orthographic feel, product render, " +
             "high detail geometry, consistent surface, " + 
             "plain background, flat white background, solid white background"
         );
@@ -737,6 +738,7 @@ LaunchComfyProcess:
             "shadow on ground, contact shadow, " +
             "background scene, environment, sky, landscape, " +
             "multiple objects, clutter, occlusion, " + 
+            "side view, profile view, rear view, back view, three-quarter view, angled view, rotated object, " +
             "cut off, cropped, incomplete object, " + 
             "blurry, noisy, messy geometry, asymmetry"
         );

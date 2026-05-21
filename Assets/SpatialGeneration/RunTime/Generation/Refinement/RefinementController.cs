@@ -277,17 +277,50 @@ public class RefinementController : MonoBehaviour
         cm.farClip = Mathf.Max(distance + maxExtent * 4f, 1000f);
         cm.AutoSetupCameras();
 
-        Quaternion r = selection.rotation;
+        Quaternion r = ResolveSpatialProxyRotationForSelection(selection);
         Vector3 c = frameBounds.center;
-        // Match MultiViewCameraManager.AutoSetupCameras: façade from -X, left from +Z, right from -Z.
-        PlaceCamera(cm.frontCamera, c + r * new Vector3(-distance, 0f, 0f),
-                    r * Quaternion.LookRotation(Vector3.right, Vector3.up));
-        PlaceCamera(cm.leftCamera, c + r * new Vector3(0f, 0f, distance),
-                    r * Quaternion.LookRotation(Vector3.back, Vector3.up));
-        PlaceCamera(cm.rightCamera, c + r * new Vector3(0f, 0f, -distance),
+        // Match MultiViewCameraManager.AutoSetupCameras: front from proxy +X,
+        // left from -Z, right from +Z.
+        PlaceCamera(cm.frontCamera, c + r * new Vector3(distance, 0f, 0f),
+                    r * Quaternion.LookRotation(Vector3.left, Vector3.up));
+        PlaceCamera(cm.leftCamera, c + r * new Vector3(0f, 0f, -distance),
                     r * Quaternion.LookRotation(Vector3.forward, Vector3.up));
+        PlaceCamera(cm.rightCamera, c + r * new Vector3(0f, 0f, distance),
+                    r * Quaternion.LookRotation(Vector3.back, Vector3.up));
         PlaceCamera(cm.topCamera, c + r * new Vector3(0f, distance, 0f),
                     r * Quaternion.LookRotation(Vector3.down, Vector3.forward));
+    }
+
+    private static Quaternion ResolveSpatialProxyRotationForSelection(RegionSelection selection)
+    {
+        Quaternion fallback = selection != null ? selection.rotation : Quaternion.identity;
+        GeneratedMeshMetadata[] metas = UnityEngine.Object.FindObjectsByType<GeneratedMeshMetadata>(
+            FindObjectsInactive.Include,
+            FindObjectsSortMode.None);
+        if (metas == null || metas.Length == 0)
+            return fallback;
+
+        Vector3 reference = selection != null ? selection.center : Vector3.zero;
+        float bestDistance = float.PositiveInfinity;
+        Quaternion bestRotation = fallback;
+        bool found = false;
+
+        for (int i = 0; i < metas.Length; i++)
+        {
+            GeneratedMeshMetadata meta = metas[i];
+            if (meta == null)
+                continue;
+
+            float distance = (meta.proxyPosition - reference).sqrMagnitude;
+            if (distance >= bestDistance)
+                continue;
+
+            bestDistance = distance;
+            bestRotation = meta.proxyRotation;
+            found = true;
+        }
+
+        return found ? bestRotation : fallback;
     }
 
     // Combined bounds of the existing Generated_Mesh* under GeneratedContent,

@@ -58,7 +58,7 @@ public static class RefinementMeshLoader
             {
                 targetSize = sceneBounds.size;
                 targetCenter = sceneBounds.center;
-                targetRotation = Quaternion.identity;
+                targetRotation = ResolveOriginalGeneratedMeshRotation(root);
                 usedSceneBounds = true;
             }
             else
@@ -154,6 +154,32 @@ public static class RefinementMeshLoader
             else b.Encapsulate(r.bounds);
         }
         return has ? b : new Bounds(Vector3.zero, Vector3.zero);
+    }
+
+    private static Quaternion ResolveOriginalGeneratedMeshRotation(GameObject root)
+    {
+        if (root == null)
+            return Quaternion.identity;
+
+        GeneratedMeshMetadata[] metas = root.GetComponentsInChildren<GeneratedMeshMetadata>(true);
+        for (int i = 0; i < metas.Length; i++)
+        {
+            GeneratedMeshMetadata meta = metas[i];
+            if (meta == null)
+                continue;
+
+            Transform rootChild = FindRootChild(root.transform, meta.transform);
+            if (rootChild == null)
+                continue;
+
+            string n = rootChild.gameObject.name ?? string.Empty;
+            if (!n.StartsWith("Generated_Mesh", StringComparison.Ordinal))
+                continue;
+
+            return GenerationControllerEditor.GetGeneratedMeshRotationForProxy(meta.proxyRotation);
+        }
+
+        return Quaternion.identity;
     }
 
     // Walks up from <paramref name="descendant"/> until it hits a direct

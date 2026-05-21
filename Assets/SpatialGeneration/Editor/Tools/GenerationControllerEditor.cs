@@ -12,6 +12,8 @@ public static class GenerationControllerEditor
 {
     private const string GeneratedRootName = "GeneratedContent";
     private static bool _isGenerating;
+    private static readonly Quaternion ImportedMeshFrontToProxyXAxis =
+        Quaternion.FromToRotation(Vector3.left, Vector3.right);
 
     /// <summary>
     /// Keeps the same signature your UI already calls.
@@ -517,9 +519,17 @@ public static class GenerationControllerEditor
         if (proxy == null)
             return;
 
-        generatedObject.transform.rotation = GetProxyRotation(proxy);
+        generatedObject.transform.rotation = GetGeneratedMeshRotationForProxy(GetProxyRotation(proxy));
         FitObjectToTargetSize(generatedObject, GetProxySize(proxy));
         AlignObjectBoundsCenterToTarget(generatedObject, GetProxyPosition(proxy));
+    }
+
+    public static Quaternion GetGeneratedMeshRotationForProxy(Quaternion proxyRotation)
+    {
+        // Tripo front-view GLBs import with the visible front on local -X.
+        // Spatial proxies define object front as local +X, so apply this
+        // correction before proxy rotation.
+        return proxyRotation * ImportedMeshFrontToProxyXAxis;
     }
 
     private static void PlacePreviewQuad(GameObject quad, Camera captureCamera, SceneIntent intent)
