@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_GRAPH_DIR = _REPO_ROOT / "SpatialGenHandoff"
+_DEFAULT_GRAPH_DIR = _REPO_ROOT / "tools" / "graphs"
 
 
 def get_graph_dir() -> Path:

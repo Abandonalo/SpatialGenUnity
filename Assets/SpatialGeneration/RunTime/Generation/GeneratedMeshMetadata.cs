@@ -12,13 +12,14 @@ using UnityEngine;
 [AddComponentMenu("Spatial Generation/Generated Mesh Metadata")]
 public class GeneratedMeshMetadata : MonoBehaviour
 {
-    /// <summary>Absolute path to the <c>spatialgen_mesh_source_*.png</c>
-    /// image that was fed into the 3D lifting (TripoSR) stage when this mesh
-    /// was generated. Empty if the path could not be recovered.</summary>
+    /// <summary>Project-relative path to the <c>spatialgen_mesh_source_*.png</c>
+    /// image staged for 3D lifting (TripoSR). Empty if the path could not be
+    /// recovered.</summary>
     public string sourceImagePath;
 
-    /// <summary>Absolute path to the original mesh file (e.g. meshsave_*.glb).
-    /// Informational; kept alongside the source image path for debugging.</summary>
+    /// <summary>Project-relative path to the staged mesh file (e.g.
+    /// meshsave_*.glb). Informational; kept alongside the source image path for
+    /// debugging.</summary>
     public string meshPath;
 
     /// <summary>Occupy proxy id this mesh was placed against.</summary>

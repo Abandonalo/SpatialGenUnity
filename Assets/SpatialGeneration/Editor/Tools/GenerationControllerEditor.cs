@@ -4,6 +4,9 @@ using System.IO;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
+using ProxyIntent = SpatialGeneration.Generation.Intent.ProxyIntent;
+using ProxyRole = SpatialGeneration.Generation.Intent.ProxyRole;
+using SceneIntent = SpatialGeneration.Generation.Intent.SceneIntent;
 
 public static class GenerationControllerEditor
 {
@@ -52,7 +55,7 @@ public static class GenerationControllerEditor
             InteractionLogger.Log(new InteractionEvent
             {
                 type = "generate",
-                extra = $"backend={backend.Name}, proxies={intent.spatialProxies.Count}"
+                extra = $"backend={backend.Name}, proxies={intent?.Proxies?.Count ?? 0}"
             });
 
             EditorUtility.DisplayProgressBar("Spatial Generation", $"Generating via {backend.Name}…", 0.3f);
@@ -145,25 +148,25 @@ public static class GenerationControllerEditor
 
             if (meshPaths.Count > 0)
             {
-                List<SpatialProxyIntent> occupyProxies = GetOccupyPlacementProxies(intent);
+                List<ProxyIntent> occupyProxies = GetOccupyPlacementProxies(intent);
                 int placementCount = occupyProxies.Count > 0 ? occupyProxies.Count : meshPaths.Count;
                 bool createdAnyMesh = false;
 
                 for (int i = 0; i < placementCount; i++)
                 {
                     string meshPath = meshPaths[Mathf.Min(i, meshPaths.Count - 1)];
-                    if (!TryInstantiateMeshOutput(meshPath, root, out GameObject meshObject))
+                    if (!TryInstantiateMeshOutput(meshPath, root, out GameObject meshObject, out string stagedMeshAssetPath))
                         continue;
 
-                    SpatialProxyIntent proxy = occupyProxies.Count > 0 ? occupyProxies[i] : null;
+                    ProxyIntent proxy = occupyProxies.Count > 0 ? occupyProxies[i] : null;
                     if (proxy != null)
                         PlaceGeneratedObjectAtProxy(meshObject, proxy);
 
-                    string proxyId = proxy != null && !string.IsNullOrWhiteSpace(proxy.proxy_id)
-                        ? proxy.proxy_id
+                    string proxyId = proxy != null && !string.IsNullOrWhiteSpace(proxy.Id)
+                        ? proxy.Id
                         : i.ToString();
                     meshObject.name = $"Generated_Mesh_{proxyId}";
-                    AttachMeshMetadata(meshObject, meshPath, proxyId, proxy, result.outputFiles);
+                    AttachMeshMetadata(meshObject, meshPath, stagedMeshAssetPath, proxyId, proxy, result.outputFiles);
                     Undo.RegisterCreatedObjectUndo(meshObject, "Create Generated Mesh");
                     createdAnyMesh = true;
                 }
@@ -233,7 +236,7 @@ public static class GenerationControllerEditor
     /// Generated_Mesh so refinement can later locate the 2D source image
     /// the mesh was lifted from (and the proxy pose used for placement).
     /// </summary>
-    private static void AttachMeshMetadata(GameObject meshObject, string meshAbsolutePath, string proxyId, SpatialProxyIntent proxy, List<string> outputFiles)
+    private static void AttachMeshMetadata(GameObject meshObject, string meshAbsolutePath, string stagedMeshAssetPath, string proxyId, ProxyIntent proxy, List<string> outputFiles)
     {
         if (meshObject == null)
             return;
@@ -242,15 +245,20 @@ public static class GenerationControllerEditor
         if (meta == null)
             meta = Undo.AddComponent<GeneratedMeshMetadata>(meshObject);
 
-        meta.meshPath = meshAbsolutePath ?? string.Empty;
+        meta.meshPath = string.IsNullOrWhiteSpace(stagedMeshAssetPath)
+            ? ToProjectRelativePath(meshAbsolutePath)
+            : stagedMeshAssetPath;
         meta.proxyId = proxyId ?? string.Empty;
         if (proxy != null)
         {
-            meta.proxyPosition = proxy.position;
-            meta.proxyRotation = proxy.rotation;
-            meta.proxySize = proxy.size;
+            meta.proxyPosition = GetProxyPosition(proxy);
+            meta.proxyRotation = GetProxyRotation(proxy);
+            meta.proxySize = GetProxySize(proxy);
         }
-        meta.sourceImagePath = FindMeshSourceImagePath(outputFiles, proxyId);
+        meta.sourceImagePath = ResolveStagedSourceImagePath(
+            FindMeshSourceImagePath(outputFiles, proxyId),
+            meshAbsolutePath,
+            stagedMeshAssetPath);
     }
 
     /// <summary>
@@ -291,9 +299,49 @@ public static class GenerationControllerEditor
         return best;
     }
 
+    private static string ResolveStagedSourceImagePath(string sourceImagePath, string meshAbsolutePath, string stagedMeshAssetPath)
+    {
+        if (string.IsNullOrWhiteSpace(sourceImagePath))
+            return string.Empty;
+
+        string sourceDir = Path.GetDirectoryName(sourceImagePath);
+        string meshDir = Path.GetDirectoryName(meshAbsolutePath);
+        if (!string.IsNullOrWhiteSpace(stagedMeshAssetPath) &&
+            !string.IsNullOrWhiteSpace(sourceDir) &&
+            !string.IsNullOrWhiteSpace(meshDir) &&
+            string.Equals(Path.GetFullPath(sourceDir), Path.GetFullPath(meshDir), StringComparison.OrdinalIgnoreCase))
+        {
+            string stagedDir = Path.GetDirectoryName(stagedMeshAssetPath)?.Replace("\\", "/");
+            string fileName = Path.GetFileName(sourceImagePath);
+            if (!string.IsNullOrWhiteSpace(stagedDir) && !string.IsNullOrWhiteSpace(fileName))
+                return $"{stagedDir}/{fileName}";
+        }
+
+        return ToProjectRelativePath(sourceImagePath);
+    }
+
+    private static string ToProjectRelativePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string fullPath = Path.GetFullPath(path);
+        string normalizedRoot = projectRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (fullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            return fullPath.Substring(normalizedRoot.Length).Replace("\\", "/");
+
+        return path;
+    }
+
     public static bool TryInstantiateMeshOutput(string absolutePath, GameObject root, out GameObject instance)
     {
         return TryInstantiateMeshOutput(absolutePath, root, out instance, forceVertexColorMaterials: false);
+    }
+
+    public static bool TryInstantiateMeshOutput(string absolutePath, GameObject root, out GameObject instance, out string assetPath)
+    {
+        return TryInstantiateMeshOutput(absolutePath, root, out instance, out assetPath, forceVertexColorMaterials: false);
     }
 
     /// <param name="forceVertexColorMaterials">When true and meshes carry vertex colors, replace materials with VertexColorUnlit so albedo matches Tripo vertex bake (refined meshes).</param>
@@ -303,8 +351,18 @@ public static class GenerationControllerEditor
         out GameObject instance,
         bool forceVertexColorMaterials)
     {
+        return TryInstantiateMeshOutput(absolutePath, root, out instance, out _, forceVertexColorMaterials);
+    }
+
+    public static bool TryInstantiateMeshOutput(
+        string absolutePath,
+        GameObject root,
+        out GameObject instance,
+        out string assetPath,
+        bool forceVertexColorMaterials)
+    {
         instance = null;
-        string assetPath = StageFileIntoGeneratedAssets(absolutePath);
+        assetPath = StageFileIntoGeneratedAssets(absolutePath);
         if (string.IsNullOrWhiteSpace(assetPath))
             return false;
 
@@ -452,16 +510,16 @@ public static class GenerationControllerEditor
             AssetDatabase.CreateFolder(parent, name);
     }
 
-    private static void PlaceGeneratedObjectAtProxy(GameObject generatedObject, SpatialProxyIntent proxy)
+    private static void PlaceGeneratedObjectAtProxy(GameObject generatedObject, ProxyIntent proxy)
     {
         if (generatedObject == null)
             return;
         if (proxy == null)
             return;
 
-        generatedObject.transform.rotation = proxy.rotation;
-        FitObjectToTargetSize(generatedObject, proxy.size);
-        AlignObjectBoundsCenterToTarget(generatedObject, proxy.position);
+        generatedObject.transform.rotation = GetProxyRotation(proxy);
+        FitObjectToTargetSize(generatedObject, GetProxySize(proxy));
+        AlignObjectBoundsCenterToTarget(generatedObject, GetProxyPosition(proxy));
     }
 
     private static void PlacePreviewQuad(GameObject quad, Camera captureCamera, SceneIntent intent)
@@ -469,11 +527,11 @@ public static class GenerationControllerEditor
         if (quad == null)
             return;
 
-        if (TryGetPrimaryOccupyProxy(intent, out SpatialProxyIntent proxy))
+        if (TryGetPrimaryOccupyProxy(intent, out ProxyIntent proxy))
         {
-            quad.transform.position = proxy.position;
-            quad.transform.rotation = proxy.rotation;
-            quad.transform.localScale = proxy.size;
+            quad.transform.position = GetProxyPosition(proxy);
+            quad.transform.rotation = GetProxyRotation(proxy);
+            quad.transform.localScale = GetProxySize(proxy);
             return;
         }
 
@@ -488,34 +546,55 @@ public static class GenerationControllerEditor
         quad.transform.localPosition = Vector3.zero;
     }
 
-    private static bool TryGetPrimaryOccupyProxy(SceneIntent intent, out SpatialProxyIntent proxy)
+    private static bool TryGetPrimaryOccupyProxy(SceneIntent intent, out ProxyIntent proxy)
     {
         proxy = null;
-        List<SpatialProxyIntent> proxies = GetOccupyPlacementProxies(intent);
+        List<ProxyIntent> proxies = GetOccupyPlacementProxies(intent);
         if (proxies.Count == 0)
             return false;
         proxy = proxies[0];
         return true;
     }
 
-    private static List<SpatialProxyIntent> GetOccupyPlacementProxies(SceneIntent intent)
+    private static List<ProxyIntent> GetOccupyPlacementProxies(SceneIntent intent)
     {
-        var proxies = new List<SpatialProxyIntent>();
-        if (intent?.spatialProxies == null || intent.spatialProxies.Count == 0)
+        var proxies = new List<ProxyIntent>();
+        if (intent?.Proxies == null || intent.Proxies.Count == 0)
             return proxies;
 
-        for (int i = 0; i < intent.spatialProxies.Count; i++)
+        for (int i = 0; i < intent.Proxies.Count; i++)
         {
-            SpatialProxyIntent candidate = intent.spatialProxies[i];
+            ProxyIntent candidate = intent.Proxies[i];
             if (candidate == null)
                 continue;
 
             // Placement targets are explicit occupy proxies only.
-            if (candidate.role == SpatialProxyRole.Occupy)
+            if (candidate.Role == ProxyRole.Occupy)
                 proxies.Add(candidate);
         }
 
         return proxies;
+    }
+
+    private static Vector3 GetProxyPosition(ProxyIntent proxy)
+    {
+        return proxy?.Pose?.Position == null
+            ? Vector3.zero
+            : new Vector3(proxy.Pose.Position.X, proxy.Pose.Position.Y, proxy.Pose.Position.Z);
+    }
+
+    private static Quaternion GetProxyRotation(ProxyIntent proxy)
+    {
+        return proxy?.Pose?.Rotation == null
+            ? Quaternion.identity
+            : new Quaternion(proxy.Pose.Rotation.X, proxy.Pose.Rotation.Y, proxy.Pose.Rotation.Z, proxy.Pose.Rotation.W);
+    }
+
+    private static Vector3 GetProxySize(ProxyIntent proxy)
+    {
+        return proxy?.Pose?.Scale == null
+            ? Vector3.one
+            : new Vector3(proxy.Pose.Scale.X, proxy.Pose.Scale.Y, proxy.Pose.Scale.Z);
     }
 
     public static void FitObjectToTargetSize(GameObject generatedObject, Vector3 targetSize)

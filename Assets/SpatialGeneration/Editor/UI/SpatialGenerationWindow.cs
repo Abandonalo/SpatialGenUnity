@@ -84,11 +84,10 @@ public class SpatialGenerationWindow : EditorWindow
 
         if (GUILayout.Button("Generate"))
         {
-            var snapshotIntent = SpatialGeneration.Generation.Intent.SceneIntentBuilder.Build();
-            string snapshotJson = SpatialGeneration.Generation.Intent.IntentJson.SerializeSceneIntent(snapshotIntent);
+            var intent = SpatialGeneration.Generation.Intent.SceneIntentBuilder.Build();
+            string snapshotJson = SpatialGeneration.Generation.Intent.IntentJson.SerializeSceneIntent(intent);
             string snapshotPath = WriteSceneIntentSnapshot(snapshotJson);
 
-            var intent = SceneIntentBuilder.Build();
             string combinedPrompt = ComposePrompt(string.Empty, _globalStylePrompt);
             string combinedNegativePrompt = ComposePrompt(string.Empty, _globalNegativeStylePrompt);
 
@@ -99,7 +98,7 @@ public class SpatialGenerationWindow : EditorWindow
             InteractionLogger.Log(new InteractionEvent
             {
                 type = "generate",
-                extra = $"proxies={intent.spatialProxies.Count}, intent_json={snapshotPath}, style_prompt={_globalStylePrompt}, negative_style_prompt={_globalNegativeStylePrompt}"
+                extra = $"proxies={intent.Proxies.Count}, intent_json={snapshotPath}, style_prompt={_globalStylePrompt}, negative_style_prompt={_globalNegativeStylePrompt}"
             });
 
             Debug.Log($"Spatial Generation: SceneIntent snapshot saved to {snapshotPath}");
@@ -366,12 +365,12 @@ public class SpatialGenerationWindow : EditorWindow
     private void RefreshWorkflowTemplateOptions()
     {
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        string handoffDirectory = Path.Combine(projectRoot, "SpatialGenHandoff");
+        string graphDirectory = Path.Combine(projectRoot, "tools", "graphs");
         var options = new List<string>();
 
-        if (Directory.Exists(handoffDirectory))
+        if (Directory.Exists(graphDirectory))
         {
-            string[] files = Directory.GetFiles(handoffDirectory, "*.json", SearchOption.TopDirectoryOnly);
+            string[] files = Directory.GetFiles(graphDirectory, "*.json", SearchOption.TopDirectoryOnly);
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < files.Length; i++)
             {
@@ -382,7 +381,7 @@ public class SpatialGenerationWindow : EditorWindow
         }
 
         if (options.Count == 0)
-            options.Add("SpatialGenHandoff/generation.json");
+            options.Add("tools/graphs/generation.json");
 
         _workflowTemplateOptions = options.ToArray();
     }

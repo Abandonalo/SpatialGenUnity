@@ -36,8 +36,7 @@ namespace SpatialGeneration.Generation.Intent
         public List<PerProxyAssetPrompt> PerProxyAssetPrompts = new();
         public List<PerProxyAssetImage> PerProxyAssetImages = new();
 
-        // Transitional bridge so legacy backends can still materialize proxy meshes.
-        public global::Constraint[] LegacyConstraints;
+        public List<ProxyVolumeConstraint> ProxyConstraints = new();
 
         public ComfyUIRequestPayload Payload = new();
     }
@@ -90,5 +89,23 @@ namespace SpatialGeneration.Generation.Intent
         public string FileName = string.Empty;
 
         public string ImageBase64 = string.Empty;
+    }
+
+    [Serializable]
+    public class ProxyVolumeConstraint
+    {
+        public string Id = string.Empty;
+
+        public string ProxyId = string.Empty;
+
+        public ProxyRole Role = ProxyRole.Occupy;
+
+        public ProxyShape Shape = ProxyShape.Box;
+
+        public Vector3Data Position = Vector3Data.Zero;
+
+        public QuaternionData Rotation = QuaternionData.Identity;
+
+        public Vector3Data Size = Vector3Data.One;
     }
 }

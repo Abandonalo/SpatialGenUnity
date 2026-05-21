@@ -1,0 +1,88 @@
+{
+  "1": {
+    "inputs": { "image": "__RGB_IMAGE__" },
+    "class_type": "LoadImage"
+  },
+  "2": {
+    "inputs": { "image": "__MASK_IMAGE__" },
+    "class_type": "LoadImage"
+  },
+  "3": {
+    "inputs": {
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "cfg": "__CFG__",
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": "__DENOISE__",
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["9", 0]
+    },
+    "class_type": "KSampler"
+  },
+  "4": {
+    "inputs": { "ckpt_name": "__INPAINT_CHECKPOINT__" },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "6": {
+    "inputs": {
+      "text": "__POSITIVE_PROMPT__",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "7": {
+    "inputs": {
+      "text": "__NEGATIVE_PROMPT__",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "8": {
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    },
+    "class_type": "VAEDecode"
+  },
+  "9": {
+    "inputs": {
+      "pixels": ["1", 0],
+      "vae": ["4", 2],
+      "mask": ["121", 0],
+      "grow_mask_by": 2
+    },
+    "class_type": "VAEEncodeForInpaint"
+  },
+  "12": {
+    "inputs": {
+      "image": ["2", 0],
+      "channel": "red"
+    },
+    "class_type": "ImageToMask"
+  },
+  "43": {
+    "inputs": {
+      "filename_prefix": "spatialgen_refined_tile",
+      "images": ["8", 0]
+    },
+    "class_type": "SaveImage"
+  },
+  "120": {
+    "inputs": {
+      "mask": ["12", 0],
+      "value": 0.65
+    },
+    "class_type": "ThresholdMask"
+  },
+  "121": {
+    "inputs": {
+      "mask": ["120", 0],
+      "expand": 0,
+      "tapered_corners": true
+    },
+    "class_type": "GrowMask"
+  }
+}

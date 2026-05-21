@@ -24,7 +24,7 @@ MonoBehaviour:
   comfyBaseUrl: http://127.0.0.1:8188
   comfyWsUrl: ws://127.0.0.1:8188/ws
   comfyClientId: spatialgen-unity-client
-  comfyWorkflowTemplatePath: SpatialGenHandoff/generation.json
+  comfyWorkflowTemplatePath: tools/graphs/generation.json
   comfyInputFolder: SpatialGenHandoff/comfy_inputs
   comfyCheckpointName: v1-5-pruned-emaonly.safetensors
   comfyTripoSrModelName: TripoSRmodel.ckpt

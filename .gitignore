@@ -5,11 +5,20 @@
 [Bb]uilds/
 [Ll]ogs/
 [Mm]emoryCaptures/
+[Uu]ser[Ss]ettings/
+
+# Local environments and editor state
+.venv/
+.vscode/
+.cursor/
+**/.DS_Store
+__pycache__/
+*.py[cod]
+
+# Runtime handoff and generated Spatial Generation assets
 SpatialGenHandoff/
-UserSettings/
-GeneratedAssets/
-Generated/
-Scenes/SampleScene.unity
+Assets/SpatialGeneration/Generated/
+Assets/SpatialGeneration/GeneratedAssets/
 
 *.csproj
 *.sln
@@ -17,7 +26,3 @@ Scenes/SampleScene.unity
 *.pidb
 *.booproj
 *.svd
-
-
-.vscode/
-.cursor/

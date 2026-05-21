@@ -17,16 +17,6 @@ public static class GenerationPipeline
 {
     private static readonly string SessionId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
 
-    public static async Task<GenerationResult> GenerateAsync(SceneIntent intent)
-    {
-        NewBackendRequest request = new()
-        {
-            RequestId = Guid.NewGuid().ToString("N")
-        };
-        IGenerationBackend backend = BackendRegistry.Current;
-        return await backend.GenerateAsync(request);
-    }
-
     public static async Task<GenerationResult> GenerateAsync(
         Camera captureCamera,
         int width,
@@ -96,6 +86,7 @@ public static class GenerationPipeline
             seed, steps, cfg, sampler, constraintSet);
         request.PerProxyAssetPrompts = BuildPerProxyAssetPrompts(sceneIntent);
         request.PerProxyAssetImages = BuildPerProxyAssetImages(sceneIntent);
+        request.ProxyConstraints = BuildProxyVolumeConstraints(sceneIntent);
 
         string artifactDir = EnsureRunArtifactDirectory();
         string requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId;
@@ -140,14 +131,10 @@ public static class GenerationPipeline
         WriteTexturePng(compiledConstraints.MaskAvoid, avoidPath);
         WriteTexturePng(compiledConstraints.MaskFocus, focusPath);
 
-        SceneIntent legacyIntent = SceneIntentBuilder.Build();
-        BackendRequest legacyRequest = ConstraintTranslator.Build(legacyIntent);
         request.RequestId = requestId;
         request.MaskOccupyWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.OccupyVolume);
         request.MaskAvoidWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.KeepEmpty);
         request.MaskFocusWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.FocusRegion);
-        request.LegacyConstraints = legacyRequest.constraints;
-        File.WriteAllText(Path.Combine(artifactDir, "LegacyBackendRequest.json"), JsonUtility.ToJson(legacyRequest, true));
 
         IGenerationBackend backend = BackendRegistry.Current;
         Debug.Log($"Spatial Generation artifacts saved to {artifactDir} (session={SessionId}, request_id={requestId})");
@@ -294,6 +281,33 @@ public static class GenerationPipeline
         }
 
         return images;
+    }
+
+    private static List<SpatialGeneration.Generation.Intent.ProxyVolumeConstraint> BuildProxyVolumeConstraints(NewSceneIntent sceneIntent)
+    {
+        List<SpatialGeneration.Generation.Intent.ProxyVolumeConstraint> constraints = new();
+        if (sceneIntent?.Proxies == null || sceneIntent.Proxies.Count == 0)
+            return constraints;
+
+        for (int i = 0; i < sceneIntent.Proxies.Count; i++)
+        {
+            var proxy = sceneIntent.Proxies[i];
+            if (proxy == null || string.IsNullOrWhiteSpace(proxy.Id))
+                continue;
+
+            constraints.Add(new SpatialGeneration.Generation.Intent.ProxyVolumeConstraint
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                ProxyId = proxy.Id,
+                Role = proxy.Role,
+                Shape = proxy.Shape,
+                Position = proxy.Pose?.Position ?? SpatialGeneration.Generation.Intent.Vector3Data.Zero,
+                Rotation = proxy.Pose?.Rotation ?? SpatialGeneration.Generation.Intent.QuaternionData.Identity,
+                Size = proxy.Pose?.Scale ?? SpatialGeneration.Generation.Intent.Vector3Data.One
+            });
+        }
+
+        return constraints;
     }
 
     private static string EncodeTextureToPngBase64(Texture sourceTexture)

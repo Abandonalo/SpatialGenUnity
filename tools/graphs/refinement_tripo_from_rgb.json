@@ -1,0 +1,51 @@
+{
+  "1": {
+    "inputs": { "image": "__RGB_IMAGE__" },
+    "class_type": "LoadImage"
+  },
+  "50": {
+    "inputs": {
+      "width": "__CROP_WIDTH__",
+      "height": "__CROP_HEIGHT__",
+      "x": "__CROP_X__",
+      "y": "__CROP_Y__",
+      "image": ["1", 0]
+    },
+    "class_type": "ImageCrop"
+  },
+  "66": {
+    "inputs": {
+      "model": ["67", 0],
+      "reference_image": ["50", 0],
+      "reference_mask": ["123", 0],
+      "geometry_resolution": "__GEOMETRY_RESOLUTION__",
+      "threshold": "__TRIPOSR_THRESHOLD__"
+    },
+    "class_type": "TripoSRSampler"
+  },
+  "67": {
+    "inputs": {
+      "model": "__TRIPOSR_MODEL__",
+      "chunk_size": 8192
+    },
+    "class_type": "TripoSRModelLoader"
+  },
+  "68": {
+    "inputs": {
+      "mesh": ["66", 0],
+      "format": "glb"
+    },
+    "class_type": "TripoSRViewer"
+  },
+  "122": {
+    "inputs": { "image": "__TRIPO_SOLID_MASK__" },
+    "class_type": "LoadImage"
+  },
+  "123": {
+    "inputs": {
+      "image": ["122", 0],
+      "channel": "red"
+    },
+    "class_type": "ImageToMask"
+  }
+}

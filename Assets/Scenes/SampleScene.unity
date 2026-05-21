@@ -903,8 +903,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: eced286f39c5e4d4faa6c19af7034364, type: 3}
   m_Name: 
   m_EditorClassIdentifier: SpatialGeneration.Runtime::GeneratedMeshMetadata
-  sourceImagePath: /Users/alo/SpatialGenUnity/Assets/SpatialGeneration/GeneratedAssets/abfaf0710b1041389ede83c0729cd666_f5c84558edfe4af4b0c26f01d76dbb2b_spatialgen_mesh_source_00001_.png
-  meshPath: /Users/alo/SpatialGenUnity/Assets/SpatialGeneration/GeneratedAssets/abfaf0710b1041389ede83c0729cd666_f5c84558edfe4af4b0c26f01d76dbb2b_meshsave_00002_.glb
+  sourceImagePath:
+  meshPath:
   proxyId: f5c84558edfe4af4b0c26f01d76dbb2b
   proxyPosition: {x: 2.47, y: 0, z: 3.46}
   proxyRotation: {x: 0, y: 0, z: 0, w: 1}

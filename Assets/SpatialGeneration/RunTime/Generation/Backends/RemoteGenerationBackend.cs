@@ -14,6 +14,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using NewBackendRequest = SpatialGeneration.Generation.Intent.BackendRequest;
+using ProxyRole = SpatialGeneration.Generation.Intent.ProxyRole;
+using ProxyShape = SpatialGeneration.Generation.Intent.ProxyShape;
+using ProxyVolumeConstraint = SpatialGeneration.Generation.Intent.ProxyVolumeConstraint;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -55,18 +58,18 @@ public class RemoteGenerationBackend : IGenerationBackend
         await EnsureComfyRunningAsync();
 
         if (!CanRunWorkflowWithProvidedInputs(projectRoot, out _))
-            return ConvertConstraintsToResult(request.LegacyConstraints);
+            return ConvertConstraintsToResult(request.ProxyConstraints);
 
-        List<Constraint> occupyConstraints = ExtractConstraintsByType(request?.LegacyConstraints, "occupy");
+        List<ProxyVolumeConstraint> occupyConstraints = ExtractConstraintsByRole(request?.ProxyConstraints, ProxyRole.Occupy);
         int runCount = Mathf.Max(1, occupyConstraints.Count);
         string outputDir = ResolveOutputDirectory(projectRoot);
         var savedOutputs = new List<string>();
 
         for (int runIndex = 0; runIndex < runCount; runIndex++)
         {
-            Constraint occupy = runIndex < occupyConstraints.Count ? occupyConstraints[runIndex] : null;
-            string occupyProxyId = !string.IsNullOrWhiteSpace(occupy?.proxy_id)
-                ? occupy.proxy_id
+            ProxyVolumeConstraint occupy = runIndex < occupyConstraints.Count ? occupyConstraints[runIndex] : null;
+            string occupyProxyId = !string.IsNullOrWhiteSpace(occupy?.ProxyId)
+                ? occupy.ProxyId
                 : $"occupy_{runIndex}";
             SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage = ResolvePerProxyAssetImage(request, occupyProxyId);
             string runPrompt = ResolveRunPrompt(request, occupyProxyId);
@@ -103,7 +106,7 @@ public class RemoteGenerationBackend : IGenerationBackend
         // If ComfyUI finished but produced no downloadable assets, fall back to proxy primitives.
         if (savedOutputs.Count == 0)
         {
-            GenerationResult fallback = ConvertConstraintsToResult(request.LegacyConstraints);
+            GenerationResult fallback = ConvertConstraintsToResult(request.ProxyConstraints);
             fallback.outputFiles.AddRange(savedOutputs);
             return fallback;
         }
@@ -159,26 +162,25 @@ public class RemoteGenerationBackend : IGenerationBackend
         }
     }
 
-    private static List<Constraint> ExtractConstraintsByType(Constraint[] constraints, string type)
+    private static List<ProxyVolumeConstraint> ExtractConstraintsByRole(List<ProxyVolumeConstraint> constraints, ProxyRole role)
     {
-        var filtered = new List<Constraint>();
-        if (constraints == null || string.IsNullOrWhiteSpace(type))
+        var filtered = new List<ProxyVolumeConstraint>();
+        if (constraints == null)
             return filtered;
 
-        string normalizedType = type.Trim().ToLowerInvariant();
-        for (int i = 0; i < constraints.Length; i++)
+        for (int i = 0; i < constraints.Count; i++)
         {
-            Constraint c = constraints[i];
+            ProxyVolumeConstraint c = constraints[i];
             if (c == null)
                 continue;
-            if ((c.type ?? string.Empty).Trim().ToLowerInvariant() == normalizedType)
+            if (c.Role == role)
                 filtered.Add(c);
         }
 
         return filtered;
     }
 
-    private string BuildPerProxyOccupyMaskPath(Constraint occupyConstraint, NewBackendRequest request, string runInputDir, int runIndex)
+    private string BuildPerProxyOccupyMaskPath(ProxyVolumeConstraint occupyConstraint, NewBackendRequest request, string runInputDir, int runIndex)
     {
         if (occupyConstraint == null || string.IsNullOrWhiteSpace(runInputDir))
             return string.Empty;
@@ -219,7 +221,7 @@ public class RemoteGenerationBackend : IGenerationBackend
             if (png == null || png.Length == 0)
                 return string.Empty;
 
-            string proxyToken = SanitizeFileToken(occupyConstraint.proxy_id);
+            string proxyToken = SanitizeFileToken(occupyConstraint.ProxyId);
             if (string.IsNullOrWhiteSpace(proxyToken))
                 proxyToken = $"occupy_{runIndex}";
             string fileName = $"mask_occupy_{proxyToken}_{runIndex}.png";
@@ -238,19 +240,19 @@ public class RemoteGenerationBackend : IGenerationBackend
         }
     }
 
-    private static bool TryProjectConstraintToPixelRect(Camera cam, Constraint constraint, int width, int height, out RectInt rect)
+    private static bool TryProjectConstraintToPixelRect(Camera cam, ProxyVolumeConstraint constraint, int width, int height, out RectInt rect)
     {
         rect = new RectInt(0, 0, 0, 0);
         if (cam == null || constraint == null)
             return false;
 
-        Vector3 size = constraint.size;
+        Vector3 size = ToUnityVector(constraint.Size, Vector3.one);
         Vector3 half = new Vector3(
             Mathf.Max(0.1f, Mathf.Abs(size.x) * 0.5f),
             Mathf.Max(0.1f, Mathf.Abs(size.y) * 0.5f),
             Mathf.Max(0.1f, Mathf.Abs(size.z) * 0.5f));
-        Quaternion rotation = constraint.rotation;
-        Vector3 center = constraint.position;
+        Quaternion rotation = ToUnityQuaternion(constraint.Rotation, Quaternion.identity);
+        Vector3 center = ToUnityVector(constraint.Position, Vector3.zero);
         Vector3[] localCorners =
         {
             new Vector3(-half.x, -half.y, -half.z), new Vector3(half.x, -half.y, -half.z),
@@ -893,7 +895,7 @@ LaunchComfyProcess:
         string prompt,
         string negativePrompt,
         NewBackendRequest request,
-        Constraint occupyConstraint,
+        ProxyVolumeConstraint occupyConstraint,
         SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage)
     {
         if (UsesFastApiProxy())
@@ -945,7 +947,7 @@ LaunchComfyProcess:
         string prompt,
         string negativePrompt,
         NewBackendRequest request,
-        Constraint occupyConstraint,
+        ProxyVolumeConstraint occupyConstraint,
         SpatialGeneration.Generation.Intent.PerProxyAssetImage assetImage)
     {
         string mode = IsRefinement(request) ? "refine" : "generate";
@@ -1041,21 +1043,24 @@ LaunchComfyProcess:
         return string.Empty;
     }
 
-    private string BuildProxyJson(Constraint occupyConstraint, NewBackendRequest request)
+    private string BuildProxyJson(ProxyVolumeConstraint occupyConstraint, NewBackendRequest request)
     {
         if (occupyConstraint == null)
             return "null";
 
-        string assetPrompt = ResolvePerProxyAssetPrompt(request, occupyConstraint.proxy_id);
+        string assetPrompt = ResolvePerProxyAssetPrompt(request, occupyConstraint.ProxyId);
+        Vector3 position = ToUnityVector(occupyConstraint.Position, Vector3.zero);
+        Quaternion rotation = ToUnityQuaternion(occupyConstraint.Rotation, Quaternion.identity);
+        Vector3 size = ToUnityVector(occupyConstraint.Size, Vector3.one);
         return
             "{" +
-            $"\"id\":\"{EscapeJson(occupyConstraint.proxy_id ?? string.Empty)}\"," +
-            $"\"role\":\"{EscapeJson(occupyConstraint.type ?? string.Empty)}\"," +
-            $"\"shape\":\"{EscapeJson(occupyConstraint.shape ?? string.Empty)}\"," +
+            $"\"id\":\"{EscapeJson(occupyConstraint.ProxyId ?? string.Empty)}\"," +
+            $"\"role\":\"{EscapeJson(occupyConstraint.Role.ToString().ToLowerInvariant())}\"," +
+            $"\"shape\":\"{EscapeJson(occupyConstraint.Shape.ToString().ToLowerInvariant())}\"," +
             $"\"label\":{ToJsonStringOrNull(assetPrompt)}," +
-            $"\"position\":{BuildVector3Json(occupyConstraint.position)}," +
-            $"\"rotation\":{BuildQuaternionJson(occupyConstraint.rotation)}," +
-            $"\"size\":{BuildVector3Json(occupyConstraint.size)}" +
+            $"\"position\":{BuildVector3Json(position)}," +
+            $"\"rotation\":{BuildQuaternionJson(rotation)}," +
+            $"\"size\":{BuildVector3Json(size)}" +
             "}";
     }
 
@@ -1106,6 +1111,22 @@ LaunchComfyProcess:
             $"\"z\":{value.z.ToString("0.###", CultureInfo.InvariantCulture)}," +
             $"\"w\":{value.w.ToString("0.###", CultureInfo.InvariantCulture)}" +
             "}";
+    }
+
+    private static Vector3 ToUnityVector(SpatialGeneration.Generation.Intent.Vector3Data value, Vector3 fallback)
+    {
+        if (value == null)
+            return fallback;
+
+        return new Vector3(value.X, value.Y, value.Z);
+    }
+
+    private static Quaternion ToUnityQuaternion(SpatialGeneration.Generation.Intent.QuaternionData value, Quaternion fallback)
+    {
+        if (value == null)
+            return fallback;
+
+        return new Quaternion(value.X, value.Y, value.Z, value.W);
     }
 
     private static string ToJsonStringOrNull(string value)
@@ -1330,26 +1351,29 @@ LaunchComfyProcess:
             || msg.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    private GenerationResult ConvertConstraintsToResult(Constraint[] constraints)
+    private GenerationResult ConvertConstraintsToResult(List<ProxyVolumeConstraint> constraints)
     {
         var result = new GenerationResult();
         if (constraints == null)
             return result;
 
-        foreach (Constraint c in constraints)
+        foreach (ProxyVolumeConstraint c in constraints)
         {
-            PrimitiveType primitive = (c?.shape ?? string.Empty).ToLowerInvariant() switch
+            if (c == null)
+                continue;
+
+            PrimitiveType primitive = c.Shape switch
             {
-                "sphere" => PrimitiveType.Sphere,
-                "cylinder" => PrimitiveType.Cylinder,
+                ProxyShape.Sphere => PrimitiveType.Sphere,
+                ProxyShape.Cylinder => PrimitiveType.Cylinder,
                 _ => PrimitiveType.Cube
             };
 
             result.objects.Add(new GeneratedObject
             {
                 primitiveType = primitive,
-                position = c.position,
-                size = c.size
+                position = ToUnityVector(c.Position, Vector3.zero),
+                size = ToUnityVector(c.Size, Vector3.one)
             });
         }
 

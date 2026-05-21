@@ -36,7 +36,7 @@ namespace SpatialGeneration.Generation.Intent
                     {
                         Position = ToVector3Data(proxy.transform.position),
                         Rotation = ToQuaternionData(proxy.transform.rotation),
-                        Scale = ToVector3Data(proxy.transform.lossyScale)
+                        Scale = ToVector3Data(Vector3.Scale(proxy.size, proxy.transform.lossyScale))
                     }
                 });
             }
