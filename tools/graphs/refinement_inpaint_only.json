@@ -52,7 +52,7 @@
       "pixels": ["1", 0],
       "vae": ["4", 2],
       "mask": ["121", 0],
-      "grow_mask_by": 2
+      "grow_mask_by": 24
     },
     "class_type": "VAEEncodeForInpaint"
   },
@@ -73,14 +73,14 @@
   "120": {
     "inputs": {
       "mask": ["12", 0],
-      "value": 0.65
+      "value": 0.7
     },
     "class_type": "ThresholdMask"
   },
   "121": {
     "inputs": {
       "mask": ["120", 0],
-      "expand": 0,
+      "expand": 12,
       "tapered_corners": true
     },
     "class_type": "GrowMask"
