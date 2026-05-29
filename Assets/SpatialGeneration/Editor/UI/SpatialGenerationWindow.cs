@@ -15,17 +15,13 @@ public class SpatialGenerationWindow : EditorWindow
     private const string DefaultLocalComfyBaseUrl = "http://127.0.0.1:8188";
     private const string DefaultLocalRouterBaseUrl = "http://127.0.0.1:8001";
     private const string DefaultColabBaseUrl = "https://comfyuitunnel.share.zrok.io";
+    private const string DefaultColabNotebookPath = "notebooks/Colab_ComfyUI.ipynb";
+    private const string DefaultColabNotebookUrl = "https://colab.research.google.com/github/Abandonalo/SpatialGenUnity/blob/main/notebooks/Colab_ComfyUI.ipynb";
     private static readonly HttpClient Http = new();
     private string _globalStylePrompt = string.Empty;
     private string _globalNegativeStylePrompt = string.Empty;
     private string _localRefinementPrompt = string.Empty;
     private string[] _workflowTemplateOptions = Array.Empty<string>();
-
-    private enum BackendConnectionPreset
-    {
-        LocalComfyApi,
-        Colab
-    }
 
     [MenuItem("Tools/Spatial Generation")]
     public static void Open()
@@ -108,7 +104,7 @@ public class SpatialGenerationWindow : EditorWindow
 
         if (GUILayout.Button("Check Backend Health"))
         {
-            _ = CheckBackendHealthAsync();
+            _ = CheckBackendHealthAsync(false);
         }
 
         if (GUILayout.Button("Cleanup GeneratedContent"))
@@ -140,7 +136,7 @@ public class SpatialGenerationWindow : EditorWindow
         GUILayout.Label("Backend Configuration", EditorStyles.boldLabel);
 
         EditorGUI.BeginChangeCheck();
-        BackendConnectionPreset selectedPreset = (BackendConnectionPreset)EditorGUILayout.EnumPopup(
+        BackendPreset selectedPreset = (BackendPreset)EditorGUILayout.EnumPopup(
             "Backend Preset",
             GetCurrentPreset(settings));
         if (EditorGUI.EndChangeCheck())
@@ -159,11 +155,11 @@ public class SpatialGenerationWindow : EditorWindow
             PersistBackendSettings(settings);
         }
 
-        BackendConnectionPreset activePreset = GetCurrentPreset(settings);
-        string configuredBaseUrl = activePreset == BackendConnectionPreset.Colab
+        BackendPreset activePreset = GetCurrentPreset(settings);
+        string configuredBaseUrl = activePreset == BackendPreset.Colab
             ? GetConfiguredColabBaseUrl(settings)
             : GetConfiguredLocalBaseUrl(settings);
-        string endpointLabel = activePreset == BackendConnectionPreset.Colab ? "Colab Base URL" : "Local Base URL";
+        string endpointLabel = activePreset == BackendPreset.Colab ? "Colab Base URL" : "Local Base URL";
 
         EditorGUI.BeginChangeCheck();
         string updatedBaseUrl = EditorGUILayout.TextField(endpointLabel, configuredBaseUrl);
@@ -173,7 +169,7 @@ public class SpatialGenerationWindow : EditorWindow
             PersistBackendSettings(settings);
         }
 
-        if (activePreset == BackendConnectionPreset.LocalComfyApi)
+        if (activePreset == BackendPreset.LocalComfyApi)
         {
             EditorGUI.BeginChangeCheck();
             bool updatedAutoStart = EditorGUILayout.Toggle("Auto Start Local ComfyUI", settings.comfyAutoStart);
@@ -183,14 +179,56 @@ public class SpatialGenerationWindow : EditorWindow
                 PersistBackendSettings(settings);
             }
         }
+        else
+        {
+            DrawColabNotebookControls(settings);
+        }
 
         string workflowPath = string.IsNullOrWhiteSpace(settings.comfyWorkflowTemplatePath)
             ? "(none)"
             : settings.comfyWorkflowTemplatePath;
-        string summary = activePreset == BackendConnectionPreset.Colab
-            ? $"Using Colab FastAPI proxy at {settings.remoteUrl}\nWorkflow template: {workflowPath}"
+        string summary = activePreset == BackendPreset.Colab
+            ? $"Using Colab FastAPI proxy at {settings.remoteUrl}\nNotebook: {GetConfiguredColabNotebookUrl(settings)}\nWorkflow template: {workflowPath}"
             : $"Using local ComfyUI API at {settings.comfyBaseUrl}\nAuto start: {(settings.comfyAutoStart ? "enabled" : "disabled")}\nWorkflow template: {workflowPath}";
         EditorGUILayout.HelpBox(summary, MessageType.None);
+    }
+
+    private static void DrawColabNotebookControls(BackendSettings settings)
+    {
+        EditorGUI.BeginChangeCheck();
+        string updatedNotebookPath = EditorGUILayout.TextField("Colab Notebook", GetConfiguredColabNotebookPath(settings));
+        if (EditorGUI.EndChangeCheck())
+        {
+            settings.colabNotebookPath = NormalizePath(updatedNotebookPath);
+            PersistBackendSettings(settings);
+        }
+
+        EditorGUI.BeginChangeCheck();
+        string updatedNotebookUrl = EditorGUILayout.TextField("Colab Web URL", GetConfiguredColabNotebookUrl(settings));
+        if (EditorGUI.EndChangeCheck())
+        {
+            settings.colabNotebookUrl = NormalizeBaseUrl(updatedNotebookUrl, DefaultColabNotebookUrl);
+            PersistBackendSettings(settings);
+        }
+
+        if (GUILayout.Button("Open Colab in Browser"))
+        {
+            Application.OpenURL(GetConfiguredColabNotebookUrl(settings));
+        }
+
+        if (GUILayout.Button("Open Local Notebook File"))
+        {
+            OpenLocalColabNotebook(settings);
+        }
+
+        if (GUILayout.Button("I'm Back - Check Colab Backend"))
+        {
+            _ = CheckBackendHealthAsync(true);
+        }
+
+        EditorGUILayout.HelpBox(
+            "Flow: open Colab in the browser, choose a GPU runtime there, run all notebook cells until the reserved zrok share is serving the FastAPI proxy, then return to Unity and use \"I'm Back - Check Colab Backend\". When health passes, Generate and refinement can run from Unity.",
+            MessageType.Info);
     }
 
     private void DrawRefinementTools()
@@ -328,7 +366,7 @@ public class SpatialGenerationWindow : EditorWindow
         return $"{trimmedBasePrompt}, {trimmedStylePrompt}";
     }
 
-    private static async Task CheckBackendHealthAsync()
+    private static async Task CheckBackendHealthAsync(bool showDialog)
     {
         BackendSettings settings = BackendRegistry.Settings;
         string baseUrl = string.IsNullOrWhiteSpace(settings.comfyBaseUrl)
@@ -337,7 +375,10 @@ public class SpatialGenerationWindow : EditorWindow
 
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            Debug.LogError("Spatial Generation: No backend base URL is configured.");
+            string message = "Spatial Generation: No backend base URL is configured.";
+            Debug.LogError(message);
+            if (showDialog)
+                EditorUtility.DisplayDialog("Colab Backend Not Ready", message, "OK");
             return;
         }
 
@@ -350,15 +391,39 @@ public class SpatialGenerationWindow : EditorWindow
 
             if (response.IsSuccessStatusCode)
             {
-                Debug.Log($"Spatial Generation backend health OK: {healthUrl}\n{body}");
+                string message = $"Spatial Generation backend health OK: {healthUrl}\n{body}";
+                Debug.Log(message);
+                if (showDialog)
+                {
+                    EditorUtility.DisplayDialog(
+                        "Colab Backend Ready",
+                        "Colab is reachable from Unity. You can now use Generate or refinement from the Spatial Generation window.",
+                        "OK");
+                }
                 return;
             }
 
-            Debug.LogError($"Spatial Generation backend health failed: {(int)response.StatusCode} {response.ReasonPhrase}\n{healthUrl}\n{body}");
+            string failureMessage = $"Spatial Generation backend health failed: {(int)response.StatusCode} {response.ReasonPhrase}\n{healthUrl}\n{body}";
+            Debug.LogError(failureMessage);
+            if (showDialog)
+            {
+                EditorUtility.DisplayDialog(
+                    "Colab Backend Not Ready",
+                    $"Unity reached the Colab URL, but health failed.\n\n{healthUrl}\n\nKeep the Colab notebook running and wait for the FastAPI/zrok cells to finish, then try again.",
+                    "OK");
+            }
         }
         catch (Exception ex)
         {
-            Debug.LogError($"Spatial Generation backend health request failed: {healthUrl}\n{ex.Message}");
+            string failureMessage = $"Spatial Generation backend health request failed: {healthUrl}\n{ex.Message}";
+            Debug.LogError(failureMessage);
+            if (showDialog)
+            {
+                EditorUtility.DisplayDialog(
+                    "Colab Backend Not Ready",
+                    $"Unity could not reach the Colab backend yet.\n\n{healthUrl}\n\nRun the notebook in Colab until the FastAPI proxy and zrok share are active, then come back and check again.",
+                    "OK");
+            }
         }
     }
 
@@ -401,23 +466,31 @@ public class SpatialGenerationWindow : EditorWindow
         return 0;
     }
 
-    private static BackendConnectionPreset GetCurrentPreset(BackendSettings settings)
+    private static BackendPreset GetCurrentPreset(BackendSettings settings)
     {
-        // Distinguish by whether comfyBaseUrl points at a local host, rather than
-        // by whether remoteUrl is empty. Both presets now populate remoteUrl
-        // (refinement requires the FastAPI router, which serves /refine).
-        return IsLocalUrl(settings?.comfyBaseUrl)
-            ? BackendConnectionPreset.LocalComfyApi
-            : BackendConnectionPreset.Colab;
+        if (settings == null)
+            return BackendPreset.LocalComfyApi;
+
+        // Preserve older assets that predate the serialized preset field.
+        if (settings.backendPreset == BackendPreset.LocalComfyApi &&
+            !string.IsNullOrWhiteSpace(settings.comfyBaseUrl) &&
+            !IsLocalUrl(settings.comfyBaseUrl))
+        {
+            return BackendPreset.Colab;
+        }
+
+        return settings.backendPreset;
     }
 
-    private static void ApplyBackendPreset(BackendSettings settings, BackendConnectionPreset preset)
+    private static void ApplyBackendPreset(BackendSettings settings, BackendPreset preset)
     {
         settings.backendKind = BackendKind.RemoteHttp;
+        settings.backendPreset = preset;
+        EnsureColabNotebookSettings(settings);
 
         switch (preset)
         {
-            case BackendConnectionPreset.LocalComfyApi:
+            case BackendPreset.LocalComfyApi:
                 // Local setup: ComfyUI on :8188, FastAPI router on :8001.
                 // Refinement (/refine) is served only by the router, so
                 // remoteUrl must point at the router's /generate, not be empty.
@@ -426,25 +499,28 @@ public class SpatialGenerationWindow : EditorWindow
                 settings.comfyWsUrl = BuildWebSocketUrl(settings.comfyBaseUrl);
                 break;
 
-            case BackendConnectionPreset.Colab:
+            case BackendPreset.Colab:
                 // Colab setup: ComfyUI and FastAPI router both served from
                 // the tunnelled base URL.
                 settings.comfyBaseUrl = GetConfiguredColabBaseUrl(settings);
                 settings.remoteUrl = $"{settings.comfyBaseUrl.TrimEnd('/')}/generate";
                 settings.comfyWsUrl = string.Empty;
+                settings.comfyAutoStart = false;
                 break;
         }
     }
 
-    private static void ApplyEndpointOverride(BackendSettings settings, BackendConnectionPreset preset, string baseUrl)
+    private static void ApplyEndpointOverride(BackendSettings settings, BackendPreset preset, string baseUrl)
     {
-        string normalizedBaseUrl = NormalizeBaseUrl(baseUrl, preset == BackendConnectionPreset.Colab ? DefaultColabBaseUrl : DefaultLocalComfyBaseUrl);
+        settings.backendPreset = preset;
+        string normalizedBaseUrl = NormalizeBaseUrl(baseUrl, preset == BackendPreset.Colab ? DefaultColabBaseUrl : DefaultLocalComfyBaseUrl);
         settings.comfyBaseUrl = normalizedBaseUrl;
 
-        if (preset == BackendConnectionPreset.Colab)
+        if (preset == BackendPreset.Colab)
         {
             settings.remoteUrl = $"{normalizedBaseUrl.TrimEnd('/')}/generate";
             settings.comfyWsUrl = string.Empty;
+            settings.comfyAutoStart = false;
             return;
         }
 
@@ -465,13 +541,60 @@ public class SpatialGenerationWindow : EditorWindow
 
     private static string GetConfiguredColabBaseUrl(BackendSettings settings)
     {
-        if (!string.IsNullOrWhiteSpace(settings?.remoteUrl) && Uri.TryCreate(settings.remoteUrl, UriKind.Absolute, out Uri remoteUri))
+        if (!string.IsNullOrWhiteSpace(settings?.remoteUrl) &&
+            Uri.TryCreate(settings.remoteUrl, UriKind.Absolute, out Uri remoteUri) &&
+            !IsLocalUrl($"{remoteUri.Scheme}://{remoteUri.Authority}"))
+        {
             return $"{remoteUri.Scheme}://{remoteUri.Authority}";
+        }
 
         if (!string.IsNullOrWhiteSpace(settings?.comfyBaseUrl) && !IsLocalUrl(settings.comfyBaseUrl))
             return NormalizeBaseUrl(settings.comfyBaseUrl, DefaultColabBaseUrl);
 
         return DefaultColabBaseUrl;
+    }
+
+    private static string GetConfiguredColabNotebookPath(BackendSettings settings)
+    {
+        EnsureColabNotebookSettings(settings);
+        return settings.colabNotebookPath;
+    }
+
+    private static string GetConfiguredColabNotebookUrl(BackendSettings settings)
+    {
+        EnsureColabNotebookSettings(settings);
+        return settings.colabNotebookUrl;
+    }
+
+    private static void EnsureColabNotebookSettings(BackendSettings settings)
+    {
+        if (settings == null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(settings.colabNotebookPath))
+            settings.colabNotebookPath = DefaultColabNotebookPath;
+        if (string.IsNullOrWhiteSpace(settings.colabNotebookUrl))
+            settings.colabNotebookUrl = DefaultColabNotebookUrl;
+    }
+
+    private static void OpenLocalColabNotebook(BackendSettings settings)
+    {
+        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string notebookPath = GetConfiguredColabNotebookPath(settings);
+        string absolutePath = Path.IsPathRooted(notebookPath)
+            ? notebookPath
+            : Path.Combine(projectRoot, notebookPath);
+
+        if (!File.Exists(absolutePath))
+        {
+            EditorUtility.DisplayDialog(
+                "Colab Notebook Not Found",
+                $"Could not find the configured Colab notebook:\n{absolutePath}",
+                "OK");
+            return;
+        }
+
+        EditorUtility.OpenWithDefaultApp(absolutePath);
     }
 
     private static string NormalizeBaseUrl(string baseUrl, string fallback)

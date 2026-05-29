@@ -2,11 +2,18 @@ using UnityEngine;
 
 public enum BackendKind { Mock, LocalFile, RemoteHttp }
 
+public enum BackendPreset { LocalComfyApi, Colab }
+
 [CreateAssetMenu(menuName = "Spatial Generation/Backend Settings", fileName = "SpatialGenerationBackendSettings")]
 public class BackendSettings : ScriptableObject
 {
     // Keep runtime defaults minimal; editable values live in Resources/SpatialGenerationBackendSettings.asset.
     public BackendKind backendKind;
+
+    [Header("Backend Preset")]
+    public BackendPreset backendPreset;
+    public string colabNotebookPath;
+    public string colabNotebookUrl;
 
     [Header("Local File Handoff")]
     public string handoffFolder;

@@ -326,10 +326,13 @@ public class RemoteGenerationBackend : IGenerationBackend
             {
                 throw new Exception(
                     $"FastAPI router is not reachable at {routerBaseUrl}. " +
-                    "Start it with ./tools/start_backend.sh.");
+                    GetRouterStartHint());
             }
-            // Fall through so ComfyUI (which the router forwards to) is also
-            // brought up / auto-started if needed.
+
+            if (IsColabPreset())
+                return;
+
+            // Local router mode still needs local ComfyUI running behind it.
         }
 
         bool comfyHealthy = await IsComfyHealthyAsync();
@@ -1759,6 +1762,39 @@ LaunchComfyProcess:
     private bool UsesFastApiProxy()
     {
         return !string.IsNullOrWhiteSpace(_settings?.remoteUrl);
+    }
+
+    private bool IsColabPreset()
+    {
+        if (_settings?.backendPreset == BackendPreset.Colab)
+            return true;
+
+        return !IsLocalUrl(GetComfyBaseUrl());
+    }
+
+    private static bool IsLocalUrl(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri uri))
+            return false;
+
+        return uri.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+               uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetRouterStartHint()
+    {
+        if (IsColabPreset())
+        {
+            string notebookPath = string.IsNullOrWhiteSpace(_settings?.colabNotebookPath)
+                ? "notebooks/Colab_ComfyUI.ipynb"
+                : _settings.colabNotebookPath;
+            return $"Run {notebookPath} and confirm the Colab Base URL is current.";
+        }
+
+        return "Start it with ./tools/start_backend.sh.";
     }
 
     // The FastAPI router URL (e.g. http://127.0.0.1:8001) derived from

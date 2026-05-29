@@ -13,16 +13,19 @@ MonoBehaviour:
   m_Name: SpatialGenerationBackendSettings
   m_EditorClassIdentifier: Assembly-CSharp::BackendSettings
   backendKind: 2
+  backendPreset: 1
+  colabNotebookPath: notebooks/Colab_ComfyUI.ipynb
+  colabNotebookUrl: https://colab.research.google.com/github/Abandonalo/SpatialGenUnity/blob/main/notebooks/Colab_ComfyUI.ipynb
   handoffFolder: SpatialGenHandoff
   requestFileName: request.json
   responseFileName: response.json
   pollIntervalSeconds: 0.25
   maxWaitSeconds: 120
-  remoteUrl: http://127.0.0.1:8001/generate
+  remoteUrl: https://comfyuitunnel.share.zrok.io/generate
   remoteTimeoutSeconds: 60
-  comfyAutoStart: 1
-  comfyBaseUrl: http://127.0.0.1:8188
-  comfyWsUrl: ws://127.0.0.1:8188/ws
+  comfyAutoStart: 0
+  comfyBaseUrl: https://comfyuitunnel.share.zrok.io
+  comfyWsUrl:
   comfyClientId: spatialgen-unity-client
   comfyWorkflowTemplatePath: tools/graphs/generation.json
   comfyInputFolder: SpatialGenHandoff/comfy_inputs
