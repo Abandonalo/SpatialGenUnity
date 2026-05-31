@@ -4,6 +4,8 @@ public enum BackendKind { Mock, LocalFile, RemoteHttp }
 
 public enum BackendPreset { LocalComfyApi, Colab }
 
+public enum ColabGenerationModel { Hunyuan21, TripoSR }
+
 [CreateAssetMenu(menuName = "Spatial Generation/Backend Settings", fileName = "SpatialGenerationBackendSettings")]
 public class BackendSettings : ScriptableObject
 {
@@ -14,6 +16,7 @@ public class BackendSettings : ScriptableObject
     public BackendPreset backendPreset;
     public string colabNotebookPath;
     public string colabNotebookUrl;
+    public ColabGenerationModel colabGenerationModel;
 
     [Header("Local File Handoff")]
     public string handoffFolder;

@@ -211,6 +211,16 @@ public class SpatialGenerationWindow : EditorWindow
             PersistBackendSettings(settings);
         }
 
+        EditorGUI.BeginChangeCheck();
+        ColabGenerationModel updatedModel = (ColabGenerationModel)EditorGUILayout.EnumPopup(
+            "Colab Model",
+            settings.colabGenerationModel);
+        if (EditorGUI.EndChangeCheck())
+        {
+            settings.colabGenerationModel = updatedModel;
+            PersistBackendSettings(settings);
+        }
+
         if (GUILayout.Button("Open Colab in Browser"))
         {
             Application.OpenURL(GetConfiguredColabNotebookUrl(settings));

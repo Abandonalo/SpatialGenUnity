@@ -16,6 +16,7 @@ MonoBehaviour:
   backendPreset: 1
   colabNotebookPath: notebooks/Colab_ComfyUI.ipynb
   colabNotebookUrl: https://colab.research.google.com/github/Abandonalo/SpatialGenUnity/blob/main/notebooks/Colab_ComfyUI.ipynb
+  colabGenerationModel: 1
   handoffFolder: SpatialGenHandoff
   requestFileName: request.json
   responseFileName: response.json

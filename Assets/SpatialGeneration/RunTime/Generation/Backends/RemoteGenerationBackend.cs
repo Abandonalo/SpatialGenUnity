@@ -978,12 +978,25 @@ LaunchComfyProcess:
             $"\"depth_image\":{ToJsonStringOrNull(depthImageBase64)}," +
             $"\"mask_image\":{ToJsonStringOrNull(maskImageBase64)}," +
             $"\"input_mode\":\"{inputMode}\"," +
+            $"\"colab_generation_model\":\"{EscapeJson(ResolveColabGenerationModel())}\"," +
             $"\"workflow\":{workflowValue}," +
             $"\"constraint_set_json\":{constraintSetJsonValue}," +
             $"\"proxy\":{proxyJson}," +
             $"\"asset_image\":{assetImageJson}," +
             $"\"generation\":{BuildGenerationJson(request?.Payload?.Generation)}" +
             "}";
+    }
+
+    private string ResolveColabGenerationModel()
+    {
+        if (_settings == null || _settings.backendPreset != BackendPreset.Colab)
+            return string.Empty;
+
+        return _settings.colabGenerationModel switch
+        {
+            ColabGenerationModel.TripoSR => "tripo_sr",
+            _ => "hunyuan_2_1"
+        };
     }
 
     private static bool IsRefinement(NewBackendRequest request)
