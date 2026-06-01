@@ -1291,7 +1291,7 @@ LaunchComfyProcess:
             {
                 // Per-request timeout from networking hiccup; continue polling.
             }
-            catch
+            catch (Exception ex) when (IsRecoverableHistoryPollingFailure(ex))
             {
                 // Keep polling through transient HTTP failures.
             }
@@ -1367,6 +1367,14 @@ LaunchComfyProcess:
         return msg.IndexOf("aborted", StringComparison.OrdinalIgnoreCase) >= 0
             || msg.IndexOf("closed", StringComparison.OrdinalIgnoreCase) >= 0
             || msg.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static bool IsRecoverableHistoryPollingFailure(Exception ex)
+    {
+        if (ex is OperationCanceledException)
+            return true;
+
+        return ex is HttpRequestException;
     }
 
     private GenerationResult ConvertConstraintsToResult(List<ProxyVolumeConstraint> constraints)

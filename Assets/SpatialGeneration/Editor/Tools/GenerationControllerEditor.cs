@@ -103,6 +103,10 @@ public static class GenerationControllerEditor
             EditorUtility.ClearProgressBar();
             _isGenerating = false;
             Debug.LogError($"Spatial Generation failed: {ex.Message}\n{ex.StackTrace}");
+            EditorUtility.DisplayDialog(
+                "Spatial Generation Failed",
+                $"Generation stopped because the backend reported an error.\n\n{ex.Message}",
+                "OK");
         }
     }
 

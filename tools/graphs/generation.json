@@ -158,19 +158,6 @@
         "title": "Mask To Image"
       }
     },
-    "26": {
-      "inputs": {
-        "filename_prefix": "spatialgen_rmbg_source",
-        "images": [
-          "64",
-          0
-        ]
-      },
-      "class_type": "SaveImage",
-      "_meta": {
-        "title": "Save RMBG Source Image"
-      }
-    },
     "27": {
       "inputs": {
         "filename_prefix": "spatialgen_rmbg_mask",
@@ -203,7 +190,7 @@
           0
         ],
         "reference_image": [
-          "64",
+          "50",
           0
         ],
         "reference_mask": [
