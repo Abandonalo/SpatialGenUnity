@@ -52,7 +52,7 @@ public class RefinementController : MonoBehaviour
     // Entry point for the 2D-based multi-view refinement pipeline. Renders
     // the selection from every canonical camera (front/left/right/top),
     // bundles per-view RGB/depth/mask into a single request, and sends it
-    // to the FastAPI router's /refine_multi_view endpoint. All views share
+    // to the FastAPI router's /refine endpoint. All views share
     // a single fixed seed so the resulting inpaints stay mutually
     // consistent and the reconstruction view's refined image feeds into
     // TripoSR for the final mesh update.
@@ -406,8 +406,8 @@ public class RefinementController : MonoBehaviour
 
         string baseUrl = settings.remoteUrl.TrimEnd('/');
         if (baseUrl.EndsWith("/generate", StringComparison.OrdinalIgnoreCase))
-            return $"{baseUrl.Substring(0, baseUrl.Length - "/generate".Length)}/refine_multi_view";
-        return $"{baseUrl}/refine_multi_view";
+            return $"{baseUrl.Substring(0, baseUrl.Length - "/generate".Length)}/refine";
+        return $"{baseUrl}/refine";
     }
 
     public async void RunRefinement(string globalPrompt, string localPrompt)

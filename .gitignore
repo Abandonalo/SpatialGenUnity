@@ -15,6 +15,7 @@
 __pycache__/
 *.py[cod]
 
+
 # Runtime handoff and generated Spatial Generation assets
 SpatialGenHandoff/
 Assets/SpatialGeneration/Generated/
@@ -26,3 +27,4 @@ Assets/SpatialGeneration/GeneratedAssets/
 *.pidb
 *.booproj
 *.svd
+Assets/Scenes/SampleScene.unity

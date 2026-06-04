@@ -17,9 +17,6 @@ from .models import (
     MultiViewRefinementRequestModel,
     MultiViewRefinementResponseModel,
     ProxyGenerateRequest,
-    REFINEMENT_DEFAULT_NEGATIVE,
-    RefinementRequestModel,
-    RefinementResponseModel,
     RunRequest,
     RunResponse,
 )
@@ -66,53 +63,8 @@ def generate(req: ProxyGenerateRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/refine", response_model=RefinementResponseModel)
-def refine(req: RefinementRequestModel) -> RefinementResponseModel:
-    try:
-        # Refinement acts only on the user's selected region: the untouched
-        # geometry outside the mask is preserved by SetLatentNoiseMask, and the
-        # intent for the selection is expressed solely by the local prompt.
-        # Mixing the global (scene-wide) prompt dilutes that intent, so use
-        # the local prompt as the positive conditioning on its own.
-        effective_prompt = (req.localPrompt or "").strip() or (req.globalPrompt or "").strip()
-        run_request = RunRequest(
-            mode="refine",
-            positive_prompt=effective_prompt,
-            negative_prompt=REFINEMENT_DEFAULT_NEGATIVE,
-            rgb_image=req.rgbImageBase64,
-            depth_image=req.depthImageBase64,
-            mask_image=req.maskImageBase64,
-            seed=_normalize_seed(-1),
-            steps=max(1, req.steps),
-            cfg=max(0.0, req.cfgScale),
-            # Unity client hardcodes denoise (e.g. 0.4); pass through clamped so
-            # KSampler matches the client without re-flooring old 0.85 behavior.
-            denoise=max(0.0, min(1.0, req.denoiseStrength)),
-            tripo_model=_default_tripo_model(),
-            geometry_resolution=_default_geometry_resolution(),
-            tripo_threshold=_default_tripo_threshold(),
-        )
-        graph = route_request(run_request)
-        result = send_to_comfy(graph)
-        return RefinementResponseModel(
-            requestId=req.requestId,
-            refinedImageBase64=result.image_base64 or "",
-            meshBase64=result.mesh_base64 or "",
-            success=True,
-            errorMessage="",
-        )
-    except Exception as exc:
-        return RefinementResponseModel(
-            requestId=req.requestId,
-            refinedImageBase64="",
-            meshBase64="",
-            success=False,
-            errorMessage=str(exc),
-        )
-
-
-@app.post("/refine_multi_view", response_model=MultiViewRefinementResponseModel)
-def refine_multi_view(req: MultiViewRefinementRequestModel) -> MultiViewRefinementResponseModel:
+@app.post("/refine", response_model=MultiViewRefinementResponseModel)
+def refine(req: MultiViewRefinementRequestModel) -> MultiViewRefinementResponseModel:
     try:
         response = handle_multi_view_refine(
             req,
