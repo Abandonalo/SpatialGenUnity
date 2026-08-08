@@ -2,18 +2,19 @@ using System;
 using UnityEngine;
 
 /// <summary>
-/// Payload published by <see cref="RefinementController"/> when a refined mesh
-/// has been written to disk. Editor-side code (<c>RefinementMeshLoader</c>)
-/// subscribes to <c>RefinementController.RefinedMeshReady</c> to instantiate
-/// the mesh into the scene, using the selection bounds to place and scale it
-/// so it replaces exactly the region the user chose to refine.
+/// Published by <see cref="RefinementController"/> once a refined region mesh is on disk.
+/// The editor-side <c>RefinementMeshLoader</c> subscribes to
+/// <see cref="RefinementController.RefinedMeshReady"/> and splices the mesh into the scene:
+/// the region is replaced, everything outside <see cref="Region"/> is preserved verbatim.
 /// </summary>
 [Serializable]
 public class RefinedMeshContext
 {
     public string requestId;
+
+    /// <summary>Absolute path of the .glb the backend returned.</summary>
     public string meshAbsolutePath;
-    public Vector3 selectionCenter;
-    public Vector3 selectionSize;
-    public Quaternion selectionRotation;
+
+    /// <summary>The box the user selected. Doubles as the split plane set and the placement target.</summary>
+    public RegionSelection Region;
 }

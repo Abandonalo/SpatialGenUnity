@@ -1,108 +1,101 @@
+"""FastAPI router in front of ComfyUI.
+
+Unity talks only to this service. It owns graph selection, prompt policy and the choice
+of 3D lifter, so the editor stays a thin client that submits conditioning images and
+collects files. The same app runs locally and inside the Colab notebook.
+"""
+
 import os
 import random
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 
 from .comfy_client import (
-    build_proxy_result,
-    get_history,
+    build_run_result,
     get_view_bytes,
     guess_media_type,
-    send_to_comfy,
+    probe_comfy,
     submit_prompt,
 )
+from .jobs import RefinementJobs
 from .models import (
-    MultiViewRefinementRequestModel,
-    MultiViewRefinementResponseModel,
-    ProxyGenerateRequest,
+    GENERATION_DEFAULT_NEGATIVE,
+    GENERATION_ISOLATION_CUES,
+    GenerateRequest,
+    HealthStatus,
+    MultiViewRefinementRequest,
+    MultiViewRefinementResponse,
     RunRequest,
-    RunResponse,
+    RunResult,
+    SubmitResponse,
 )
-from .multi_view_router import handle_multi_view_refine
+from .multi_view_router import handle_refine
 from .router import route_request
 
 
-app = FastAPI(title="SpatialGen Comfy Router", version="0.1.0")
+app = FastAPI(title="SpatialGen Comfy Router", version="1.0.0")
+
+_refinements = RefinementJobs()
 
 
-@app.get("/health")
-def health() -> dict:
-    return {"ok": True}
+@app.get("/health", response_model=HealthStatus)
+def health() -> HealthStatus:
+    """Reports the router *and* the ComfyUI behind it.
+
+    The router answering says nothing about whether ComfyUI is up, and a run that only
+    fails at submit time is far harder to diagnose than one refused up front.
+    """
+    comfy_url = os.getenv("COMFY_BASE_URL", "http://127.0.0.1:8188")
+    reachable, detail = probe_comfy()
+    return HealthStatus(
+        ok=True,
+        comfy_url=comfy_url,
+        comfy_reachable=reachable,
+        detail=detail,
+    )
 
 
-@app.post("/run", response_model=RunResponse)
-def run(req: RunRequest) -> RunResponse:
+@app.post("/generate", response_model=SubmitResponse)
+def generate(req: GenerateRequest) -> SubmitResponse:
+    """Queues one asset generation and returns the ComfyUI prompt id to poll."""
     try:
-        graph = route_request(req)
-        result = send_to_comfy(graph)
-        return RunResponse(
-            success=True,
-            image_base64=result.image_base64,
-            mesh_base64=result.mesh_base64,
-        )
-    except Exception as exc:
-        return RunResponse(
-            success=False,
-            error=str(exc),
-        )
-
-
-@app.post("/generate")
-def generate(req: ProxyGenerateRequest) -> dict:
-    try:
-        run_request = _proxy_request_to_run_request(req)
-        graph = route_request(run_request)
-        prompt_id = submit_prompt(graph)
-        return {
-            "prompt_id": prompt_id,
-            "id": prompt_id,
-        }
-    except Exception as exc:
+        graph = route_request(_to_run_request(req))
+        return SubmitResponse(prompt_id=submit_prompt(graph))
+    except Exception as exc:  # noqa: BLE001 - surfaced to Unity as a 400 with the reason
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/refine", response_model=MultiViewRefinementResponseModel)
-def refine(req: MultiViewRefinementRequestModel) -> MultiViewRefinementResponseModel:
+@app.get("/result/{prompt_id}", response_model=RunResult)
+def result(prompt_id: str) -> RunResult:
     try:
-        response = handle_multi_view_refine(
+        return build_run_result(prompt_id)
+    except Exception as exc:  # noqa: BLE001 - a failed lookup is a failed run to the client
+        return RunResult(
+            prompt_id=prompt_id, status="error", completed=True, message=str(exc)
+        )
+
+
+@app.post("/refine", response_model=MultiViewRefinementResponse)
+def refine(req: MultiViewRefinementRequest) -> MultiViewRefinementResponse:
+    """Starts a region refinement. Poll ``GET /refine/{requestId}`` for the result."""
+    if not req.requestId:
+        raise HTTPException(status_code=400, detail="requestId is required")
+
+    return _refinements.start(
+        req.requestId,
+        lambda: handle_refine(
             req,
-            tripo_model=_default_tripo_model(),
-            geometry_resolution=_default_geometry_resolution(),
-            tripo_threshold=_default_tripo_threshold(),
-        )
-        return response
-    except Exception as exc:
-        return MultiViewRefinementResponseModel(
-            requestId=req.requestId,
-            refinedViews=[],
-            meshBase64="",
-            success=False,
-            errorMessage=str(exc),
-        )
+            tripo_model=_tripo_model(),
+            geometry_resolution=_geometry_resolution(),
+            tripo_threshold=_tripo_threshold(),
+        ),
+    )
 
 
-@app.get("/result/{prompt_id}")
-def result(prompt_id: str) -> dict:
-    try:
-        return build_proxy_result(prompt_id)
-    except Exception as exc:
-        return {
-            "prompt_id": prompt_id,
-            "status": "error",
-            "completed": True,
-            "files": [],
-            "images": [],
-            "meshes": [],
-            "message": str(exc),
-            "exception_message": str(exc),
-        }
-
-
-@app.get("/history/{prompt_id}")
-def history(prompt_id: str) -> dict:
-    return get_history(prompt_id)
+@app.get("/refine/{request_id}", response_model=MultiViewRefinementResponse)
+def refine_status(request_id: str) -> MultiViewRefinementResponse:
+    return _refinements.get(request_id)
 
 
 @app.get("/view")
@@ -111,70 +104,54 @@ def view(
     subfolder: str = Query(""),
     type: str = Query("output"),
 ) -> Response:
-    data = get_view_bytes(filename, subfolder, type)
-    return Response(content=data, media_type=guess_media_type(filename))
+    """Proxies a ComfyUI output file so Unity only needs one reachable host."""
+    return Response(content=get_view_bytes(filename, subfolder, type), media_type=guess_media_type(filename))
 
 
-def _proxy_request_to_run_request(req: ProxyGenerateRequest) -> RunRequest:
-    # Honour the caller's explicit mode; only fall back to heuristic inference
-    # when the caller did not specify one. Previously the heuristic would
-    # silently flip /generate requests to "refine" whenever an asset image was
-    # attached, which routed them through the (ControlNet-stripped) refinement
-    # workflow and produced degraded/planar meshes instead of full-scene
-    # generations.
-    mode = (req.mode or "").strip() or _infer_mode(req)
-    positive_prompt = (req.positive_prompt or req.prompt or "").strip()
-    if not positive_prompt:
-        raise ValueError("positive_prompt or prompt is required")
+def _to_run_request(req: GenerateRequest) -> RunRequest:
+    """Applies prompt policy and picks the graph mode for the requested lifter."""
+    prompt = req.prompt.strip()
+    if not prompt:
+        raise ValueError("prompt is required")
+
+    model = (req.generation_model or "").strip().lower()
+    uses_hunyuan = model not in ("tripo_sr", "triposr", "tripo")
+
+    # Hunyuan reconstructs from a reference image directly; the TripoSR path first
+    # diffuses one under ControlNet, so it needs the isolation cues that keep the
+    # generated image a single object on a plain background.
+    positive = prompt if uses_hunyuan else f"{prompt}, {GENERATION_ISOLATION_CUES}"
+    negative = ", ".join(part for part in (req.negative_prompt.strip(), GENERATION_DEFAULT_NEGATIVE) if part)
 
     return RunRequest(
-        mode=mode,
-        positive_prompt=positive_prompt,
-        negative_prompt=req.negative_prompt or "",
-        rgb_image=_first_non_empty(req.rgb_image, _asset_image_base64(req)),
-        depth_image=req.depth_image,
-        mask_image=req.mask_image,
-        seed=_normalize_seed(req.generation.seed),
+        mode="generate_hunyuan" if uses_hunyuan else "generate",
+        positive_prompt=positive,
+        negative_prompt=negative,
+        rgb_image=req.rgb_image or None,
+        depth_image=req.depth_image or None,
+        canny_image=req.edges_image or None,
+        mask_image=req.mask_image or None,
+        seed=req.generation.seed if req.generation.seed >= 0 else random.randint(0, 2**31 - 1),
         steps=req.generation.steps,
         cfg=req.generation.cfg,
-        tripo_model=req.tripo_model or _default_tripo_model(),
-        geometry_resolution=req.geometry_resolution or _default_geometry_resolution(),
-        tripo_threshold=req.tripo_threshold if req.tripo_threshold is not None else _default_tripo_threshold(),
+        sampler=req.generation.sampler,
+        width=req.generation.width,
+        height=req.generation.height,
+        tripo_model=_tripo_model(),
+        geometry_resolution=req.geometry_resolution or _geometry_resolution(),
+        tripo_threshold=req.tripo_threshold if req.tripo_threshold is not None else _tripo_threshold(),
     )
 
 
-def _infer_mode(req: ProxyGenerateRequest) -> str:
-    if any((_asset_image_base64(req), req.rgb_image, req.depth_image, req.mask_image)):
-        return "refine"
-    return "generate"
-
-
-def _asset_image_base64(req: ProxyGenerateRequest) -> Optional[str]:
-    if req.asset_image is None:
-        return None
-    return req.asset_image.image_base64
-
-
-def _first_non_empty(*values: Optional[str]) -> Optional[str]:
-    for value in values:
-        if value:
-            return value
-    return None
-
-
-def _normalize_seed(seed: int) -> int:
-    return seed if seed >= 0 else random.randint(0, 2**31 - 1)
-
-
-def _default_tripo_model() -> str:
+def _tripo_model() -> str:
     return os.getenv("SPATIALGEN_TRIPO_MODEL", "TripoSRmodel.ckpt")
 
 
-def _default_geometry_resolution() -> int:
+def _geometry_resolution() -> int:
     return int(os.getenv("SPATIALGEN_GEOMETRY_RESOLUTION", "512"))
 
 
-def _default_tripo_threshold() -> float:
+def _tripo_threshold() -> float:
     return float(os.getenv("SPATIALGEN_TRIPO_THRESHOLD", "25"))
 
 
@@ -182,7 +159,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "tools.comfy_router_backend.app:app",
+        app,
         host="0.0.0.0",
         port=int(os.getenv("SPATIALGEN_BACKEND_PORT", "8001")),
         reload=False,

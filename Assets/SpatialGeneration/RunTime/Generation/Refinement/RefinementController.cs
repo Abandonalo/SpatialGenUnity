@@ -1,36 +1,38 @@
 using System;
 using System.IO;
-using System.Net.Http;
-using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
+using SpatialGeneration.Generation.Backends;
 
+/// <summary>
+/// Runs a region-scoped refinement.
+///
+/// The user's selection box is the unit of work throughout: the canonical cameras frame it,
+/// the inpaint mask is its projection, the lifted mesh covers it, and the editor splices that
+/// mesh back in place of the box's contents. Geometry outside the box is never regenerated,
+/// which is what lets scene stability be measured rather than asserted.
+/// </summary>
 [ExecuteAlways]
 public class RefinementController : MonoBehaviour
 {
-    private const string GeneratedRootName = "GeneratedContent";
-
-    // HttpClient's default timeout is 100s, which is well below the multi-minute
-    // TripoSR run time at higher geometry resolutions. Disable the built-in
-    // timeout so the only timeout that applies is the CancellationTokenSource we
-    // build from BackendSettings.comfyExecutionTimeoutSeconds in SendToBackend.
-    private static readonly HttpClient Http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+    /// <summary>How much scene context around the selection the cameras include.</summary>
+    private const float ContextPadding = 1.6f;
 
     public RegionSelectionManager selectionManager;
-    public RegionMaskRenderer maskRenderer;
 
-    [Header("Multi-View Refinement")]
-    [Tooltip("Optional multi-view rig. When assigned, refinement uses RunMultiViewRefinement to produce per-view inpaints.")]
+    [Header("Multi-view rig")]
+    [Tooltip("Created automatically on first use if left empty.")]
     public MultiViewRenderer multiViewRenderer;
-    [Tooltip("Deterministic seed shared across all canonical views during multi-view refinement. " +
-             "Use a fixed value (>=0) for reproducible output; -1 picks a random seed once per request.")]
-    public int multiViewSeed = 1234567;
-    [Tooltip("View whose refined image feeds the TripoSR reconstruction.")]
+
+    [Tooltip("View whose refined image is lifted back to 3D.")]
     public ViewType reconstructionView = ViewType.Front;
 
-    public int steps = 20;
-    public float cfgScale = 8f;
+    [Header("Sampling")]
+    [Tooltip("Shared by every view so the four inpaints stay mutually consistent. -1 randomises per run.")]
+    public int seed = 1234567;
+
+    public int steps = RefinementDefaults.Steps;
+    public float cfgScale = RefinementDefaults.Cfg;
 
     [SerializeField] private string sessionId;
     private bool isRunning;
@@ -38,441 +40,39 @@ public class RefinementController : MonoBehaviour
     public bool IsRunning => isRunning;
 
     /// <summary>
-    /// Clears the in-flight refinement flag. Use from the editor if the UI is stuck on
-    /// "Refining..." after a domain reload, stopped play mode, or interrupted async work.
+    /// Raised when a refined region mesh is on disk. The editor-side loader returns true once
+    /// it has spliced the mesh into the scene.
     /// </summary>
-    public void ClearRefiningRunningState()
-    {
-        isRunning = false;
-    }
+    public static event Func<RefinedMeshContext, bool> RefinedMeshReady;
 
-    /// <summary>Extension hook: return a GeneratedContent child name to restrict screen-space mesh masks, or null.</summary>
-    public string ResolveMultiViewScreenSpaceMaskRestrict() => null;
+    /// <summary>Clears a stuck busy flag after a domain reload or an interrupted run.</summary>
+    public void ClearRunningState() => isRunning = false;
 
-    // Entry point for the 2D-based multi-view refinement pipeline. Renders
-    // the selection from every canonical camera (front/left/right/top),
-    // bundles per-view RGB/depth/mask into a single request, and sends it
-    // to the FastAPI router's /refine endpoint. All views share
-    // a single fixed seed so the resulting inpaints stay mutually
-    // consistent and the reconstruction view's refined image feeds into
-    // TripoSR for the final mesh update.
-    public async void RunMultiViewRefinement(string globalPrompt, string localPrompt)
+    public async void RunRefinement(string localPrompt)
     {
         if (isRunning)
         {
-            Debug.LogWarning("Spatial Generation: A refinement request is already running.");
+            Debug.LogWarning("Spatial Generation: a refinement is already running.");
             return;
         }
 
-        EnsureReferences();
-
-        RegionSelection selection = ResolveRefinementSelectionOrNull(out bool syncedToManager);
+        RegionSelection selection = selectionManager != null ? selectionManager.CurrentSelection : null;
         if (selection == null)
         {
-            Debug.LogWarning("Spatial Generation: No region selection is active.");
+            Debug.LogWarning("Spatial Generation: no region is selected.");
             return;
         }
-        if (syncedToManager && selectionManager != null)
-            selectionManager.SetSelection(selection);
 
-        // Provision (or refresh) the canonical multi-view rig so the four
-        // cameras always frame the current selection, regardless of whether
-        // the user wired a MultiViewRenderer into the scene by hand.
-        EnsureMultiViewRig(selection);
+        if (string.IsNullOrWhiteSpace(localPrompt))
+        {
+            Debug.LogWarning("Spatial Generation: describe the change you want before refining.");
+            return;
+        }
 
         isRunning = true;
         try
         {
-            if (string.IsNullOrWhiteSpace(sessionId))
-                sessionId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
-
-            // Always use the interactive selection for the mask pass. Clamping to the mesh AABB can replace the
-            // region with the full generated mesh bounds whenever the user box contains that AABB, which paints
-            // the entire object white in mask.png. Air outside the mesh still yields black (no fragments).
-            RegionSelection maskForInpaint = selection;
-            if (RegionSelectionManager.TryGetGeneratedContentMeshBounds(out Bounds genClip)
-                && RegionSelectionManager.SelectionWorldAabbSpansMostOfMesh(selection, genClip))
-            {
-                Debug.LogWarning(
-                    "Spatial Generation: The region cube spans most of the generated mesh on multiple axes — " +
-                    "the inpaint mask will cover almost the whole silhouette. Resize the cube in the Scene view " +
-                    "or choose Reset Selection for a tighter default centered on your asset.");
-            }
-
-
-            // Refinement intent lives entirely in the local prompt. Mixing in
-            // the global style prompt dilutes the per-region change the user
-            // asked for ("make the roof black"), so we use local-only and
-            // fall back to global only if local was left empty.
-            string baseMvPrompt = !string.IsNullOrWhiteSpace(localPrompt)
-                ? localPrompt.Trim()
-                : (globalPrompt ?? string.Empty).Trim();
-
-            int seed = multiViewSeed >= 0
-                ? multiViewSeed
-                : UnityEngine.Random.Range(0, int.MaxValue);
-
-            if (multiViewRenderer == null)
-                throw new InvalidOperationException("MultiViewRenderer is required for multi-view refinement.");
-
-            string maskRestrict = ResolveMultiViewScreenSpaceMaskRestrict();
-
-            float cfgOut = Mathf.Min(18f, Mathf.Max(0f, cfgScale) * 1.16f);
-
-            // Logs @ denoise 0.945: Front masked RGB plateau ~[0.60,0.58,0.61]; neutral-gray frac still falling — allow full mask denoise + more steps.
-            float denoiseOut = Mathf.Clamp(RefinementDefaults.KSDenoise * 3.45f, 0.94f, 1f);
-            int stepsMv = Mathf.Min(50, Mathf.Max(1, steps) + 22);
-
-            MultiViewData capturedViews = multiViewRenderer.RenderAllViews(maskForInpaint, maskRestrict);
-
-            MultiViewRefinementRequest request = new MultiViewRefinementRequest
-            {
-                requestId = Guid.NewGuid().ToString("N"),
-                sessionId = sessionId,
-                mode = "refine",
-                positivePrompt = baseMvPrompt,
-                negativePrompt = string.Empty,
-                seed = seed,
-                steps = stepsMv,
-                cfg = cfgOut,
-                denoise = denoiseOut,
-                reconstructionView = reconstructionView.ToString(),
-                views = capturedViews.views,
-                selection = CloneSelection(selection)
-            };
-
-            IGenerationBackend backend = BackendRegistry.Current;
-            if (backend != null)
-                await backend.EnsureReadyAsync();
-
-            string responseJson = await SendToBackend(
-                JsonUtility.ToJson(request),
-                ResolveMultiViewUrl(BackendRegistry.Settings));
-            MultiViewRefinementResponse response = JsonUtility.FromJson<MultiViewRefinementResponse>(responseJson);
-
-            if (response == null)
-                throw new InvalidOperationException("Backend returned an empty multi-view refinement response.");
-            if (!response.success)
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(response.errorMessage) ? "Multi-view refinement failed." : response.errorMessage);
-
-            ApplyMultiViewResponse(response, selection);
-            Debug.Log($"Spatial Generation: Multi-view refinement '{response.requestId}' completed with {response.refinedViews?.Count ?? 0} views.");
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError($"Spatial Generation multi-view refinement failed: {ex.Message}\n{ex.StackTrace}");
-        }
-        finally
-        {
-            isRunning = false;
-        }
-    }
-
-    private void ApplyMultiViewResponse(MultiViewRefinementResponse response, RegionSelection selection)
-    {
-        if (!string.IsNullOrWhiteSpace(response.meshBase64))
-        {
-            string meshPath = WriteMeshArtifact(response.requestId, response.meshBase64);
-            var ctx = new RefinedMeshContext
-            {
-                requestId = response.requestId,
-                meshAbsolutePath = meshPath,
-                selectionCenter = selection.center,
-                selectionSize = selection.size,
-                selectionRotation = selection.rotation
-            };
-            TryInstantiateRefinedMesh(ctx);
-        }
-
-        // Fallback: if no mesh was returned, surface the reconstruction-view
-        // refined image through the existing 2D preview path so the user
-        // still gets visual feedback.
-        if (string.IsNullOrWhiteSpace(response.meshBase64) && response.refinedViews != null)
-        {
-            string target = reconstructionView.ToString();
-            RefinedViewResult chosen = response.refinedViews.Find(v => v.viewType == target);
-            if (chosen == null && response.refinedViews.Count > 0)
-                chosen = response.refinedViews[0];
-
-            if (chosen != null && !string.IsNullOrWhiteSpace(chosen.refinedImageBase64))
-            {
-                // Reuse single-view 2D preview, but without a mask composite
-                // because the canonical cameras don't share the original
-                // request's selection-aligned mask texture.
-                ApplyRefinedImage(response.requestId, chosen.refinedImageBase64, selection, null);
-            }
-        }
-    }
-
-    // Ensure there is a MultiViewRenderer + MultiViewCameraManager provisioned
-    // and that the four canonical cameras are positioned to frame the current
-    // selection. The rig is created lazily (as a child of this controller) on
-    // first use so the user does not have to hand-place cameras, and the
-    // framing is refreshed every run because the selection bounds change.
-    private void EnsureMultiViewRig(RegionSelection selection)
-    {
-        if (selection == null)
-            throw new ArgumentNullException(nameof(selection));
-
-        if (multiViewRenderer == null)
-        {
-            GameObject existing = null;
-            for (int i = 0; i < transform.childCount; i++)
-            {
-                Transform child = transform.GetChild(i);
-                if (child != null && child.name == "MultiViewRig")
-                {
-                    existing = child.gameObject;
-                    break;
-                }
-            }
-
-            GameObject rigGo = existing != null ? existing : new GameObject("MultiViewRig");
-            if (existing == null)
-                rigGo.transform.SetParent(transform, worldPositionStays: false);
-
-            MultiViewCameraManager mgr = rigGo.GetComponent<MultiViewCameraManager>();
-            if (mgr == null)
-                mgr = rigGo.AddComponent<MultiViewCameraManager>();
-
-            MultiViewRenderer rend = rigGo.GetComponent<MultiViewRenderer>();
-            if (rend == null)
-                rend = rigGo.AddComponent<MultiViewRenderer>();
-            rend.cameraManager = mgr;
-
-            multiViewRenderer = rend;
-        }
-
-        MultiViewCameraManager cm = multiViewRenderer.cameraManager;
-        if (cm == null)
-        {
-            cm = multiViewRenderer.gameObject.GetComponent<MultiViewCameraManager>()
-                 ?? multiViewRenderer.gameObject.AddComponent<MultiViewCameraManager>();
-            multiViewRenderer.cameraManager = cm;
-        }
-
-        // Frame the canonical cameras around the WHOLE generated scene, not
-        // the selection. The selection mask (tight to the region) still
-        // drives KSampler's SetLatentNoiseMask, so only the selection pixels
-        // are inpainted, while the rest of the scene is re-encoded identity.
-        // Framing the full scene lets TripoSR lift a refined mesh that spans
-        // the entire original geometry instead of the cropped selection.
-        Bounds frameBounds = ResolveSceneFramingBounds(selection);
-
-        float maxExtent = Mathf.Max(
-            Mathf.Abs(frameBounds.size.x),
-            Mathf.Abs(frameBounds.size.y),
-            Mathf.Abs(frameBounds.size.z));
-        float padding = 1.2f;
-        float halfHeight = Mathf.Max(0.1f, maxExtent * 0.5f * padding);
-        float distance = Mathf.Max(1f, maxExtent * 2f);
-
-        cm.captureResolution = new Vector2Int(512, 512);
-        cm.orthographic = true;
-        cm.orthographicSize = halfHeight;
-        cm.rigTarget = frameBounds.center;
-        cm.rigDistance = distance;
-        cm.topHeight = distance;
-        cm.nearClip = 0.01f;
-        cm.farClip = Mathf.Max(distance + maxExtent * 4f, 1000f);
-        cm.AutoSetupCameras();
-
-        Quaternion r = ResolveSpatialProxyRotationForSelection(selection);
-        Vector3 c = frameBounds.center;
-        // Match MultiViewCameraManager.AutoSetupCameras: front from proxy +X,
-        // left from -Z, right from +Z.
-        PlaceCamera(cm.frontCamera, c + r * new Vector3(distance, 0f, 0f),
-                    r * Quaternion.LookRotation(Vector3.left, Vector3.up));
-        PlaceCamera(cm.leftCamera, c + r * new Vector3(0f, 0f, -distance),
-                    r * Quaternion.LookRotation(Vector3.forward, Vector3.up));
-        PlaceCamera(cm.rightCamera, c + r * new Vector3(0f, 0f, distance),
-                    r * Quaternion.LookRotation(Vector3.back, Vector3.up));
-        PlaceCamera(cm.topCamera, c + r * new Vector3(0f, distance, 0f),
-                    r * Quaternion.LookRotation(Vector3.down, Vector3.forward));
-    }
-
-    private static Quaternion ResolveSpatialProxyRotationForSelection(RegionSelection selection)
-    {
-        Quaternion fallback = selection != null ? selection.rotation : Quaternion.identity;
-        GeneratedMeshMetadata[] metas = UnityEngine.Object.FindObjectsByType<GeneratedMeshMetadata>(
-            FindObjectsInactive.Include,
-            FindObjectsSortMode.None);
-        if (metas == null || metas.Length == 0)
-            return fallback;
-
-        Vector3 reference = selection != null ? selection.center : Vector3.zero;
-        float bestDistance = float.PositiveInfinity;
-        Quaternion bestRotation = fallback;
-        bool found = false;
-
-        for (int i = 0; i < metas.Length; i++)
-        {
-            GeneratedMeshMetadata meta = metas[i];
-            if (meta == null)
-                continue;
-
-            float distance = (meta.proxyPosition - reference).sqrMagnitude;
-            if (distance >= bestDistance)
-                continue;
-
-            bestDistance = distance;
-            bestRotation = meta.proxyRotation;
-            found = true;
-        }
-
-        return found ? bestRotation : fallback;
-    }
-
-    // Combined bounds of the existing Generated_Mesh* under GeneratedContent,
-    // falling back to the selection when no scene is present. This is the
-    // framing target for the canonical multi-view cameras: we want TripoSR
-    // to lift the entire original scene so the refined mesh can REPLACE
-    // the original, with only the selected region's content changed.
-    private static Bounds ResolveSceneFramingBounds(RegionSelection selection)
-    {
-        GameObject root = GameObject.Find(GeneratedRootName);
-        if (root != null)
-        {
-            Renderer[] rs = root.GetComponentsInChildren<Renderer>(true);
-            Bounds combined = new Bounds();
-            bool has = false;
-            for (int i = 0; i < rs.Length; i++)
-            {
-                Renderer r = rs[i];
-                if (r == null) continue;
-                string n = r.gameObject.name ?? string.Empty;
-                // Skip prior refinement artifacts so repeated runs don't
-                // progressively balloon the framing bounds.
-                if (n.StartsWith("Refined_", StringComparison.Ordinal))
-                    continue;
-                if (!has) { combined = r.bounds; has = true; }
-                else combined.Encapsulate(r.bounds);
-            }
-            if (has && combined.size.sqrMagnitude > 1e-6f)
-            {
-                // Ensure the selection is fully inside the framing box.
-                combined.Encapsulate(new Bounds(selection.center, selection.size));
-                return combined;
-            }
-        }
-        return new Bounds(selection.center, selection.size);
-    }
-
-    private static void PlaceCamera(Camera cam, Vector3 worldPos, Quaternion worldRot)
-    {
-        if (cam == null)
-            return;
-        cam.transform.position = worldPos;
-        cam.transform.rotation = worldRot;
-    }
-
-    private static string CombinePrompts(string globalPrompt, string localPrompt)
-    {
-        string g = (globalPrompt ?? string.Empty).Trim();
-        string l = (localPrompt ?? string.Empty).Trim();
-        if (g.Length == 0)
-            return l;
-        if (l.Length == 0)
-            return g;
-        return $"{g}, {l}";
-    }
-
-    private static RegionSelection CloneSelection(RegionSelection selection)
-    {
-        if (selection == null)
-            return null;
-        return new RegionSelection
-        {
-            selectionId = selection.selectionId,
-            center = selection.center,
-            size = selection.size,
-            rotation = selection.rotation
-        };
-    }
-
-    private RegionSelection ResolveRefinementSelectionOrNull(out bool wroteSelectionBackToManager)
-    {
-        wroteSelectionBackToManager = false;
-        return selectionManager != null ? selectionManager.CurrentSelection : null;
-    }
-
-    private static string ResolveMultiViewUrl(BackendSettings settings)
-    {
-        if (string.IsNullOrWhiteSpace(settings?.remoteUrl))
-        {
-            throw new InvalidOperationException(
-                "Multi-view refinement requires the FastAPI router. Set BackendSettings.remoteUrl to the /generate URL.");
-        }
-
-        string baseUrl = settings.remoteUrl.TrimEnd('/');
-        if (baseUrl.EndsWith("/generate", StringComparison.OrdinalIgnoreCase))
-            return $"{baseUrl.Substring(0, baseUrl.Length - "/generate".Length)}/refine";
-        return $"{baseUrl}/refine";
-    }
-
-    public async void RunRefinement(string globalPrompt, string localPrompt)
-    {
-        if (isRunning)
-        {
-            Debug.LogWarning("Spatial Generation: A refinement request is already running.");
-            return;
-        }
-
-        EnsureReferences();
-        RegionSelection selection = ResolveRefinementSelectionOrNull(out bool syncedToManager);
-        if (selection == null)
-        {
-            Debug.LogWarning("Spatial Generation: No region selection is active.");
-            return;
-        }
-        if (syncedToManager && selectionManager != null)
-            selectionManager.SetSelection(selection);
-
-        isRunning = true;
-
-        Texture2D rgb = null;
-        Texture2D depth = null;
-        Texture2D mask = null;
-
-        try
-        {
-            if (string.IsNullOrWhiteSpace(sessionId))
-                sessionId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
-
-            maskRenderer.SetupCamera(selectionManager != null ? selectionManager.GetWorldBounds() : RegionSelectionManager.BuildWorldBounds(selection));
-
-            rgb = maskRenderer.RenderRGB();
-            depth = maskRenderer.RenderDepth();
-            mask = maskRenderer.RenderMask(selection);
-
-            RefinementRequest request = RefinementRequestBuilder.Build(
-                globalPrompt,
-                localPrompt,
-                rgb,
-                depth,
-                mask,
-                selection,
-                sessionId,
-                RefinementDefaults.KSDenoise,
-                steps,
-                cfgScale);
-
-            WriteDebugArtifacts(request, rgb, depth, mask);
-
-            IGenerationBackend backend = BackendRegistry.Current;
-            if (backend != null)
-                await backend.EnsureReadyAsync();
-
-            string responseJson = await SendToBackend(JsonUtility.ToJson(request));
-            RefinementResponse response = JsonUtility.FromJson<RefinementResponse>(responseJson);
-            if (response == null)
-                throw new InvalidOperationException("Backend returned an empty refinement response.");
-
-            if (!response.success)
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(response.errorMessage) ? "Refinement failed." : response.errorMessage);
-
-            ApplyResponse(response, selection, mask);
-            Debug.Log($"Spatial Generation: Refinement '{response.requestId}' completed successfully.");
+            await RunRefinementAsync(selection.Clone(), localPrompt.Trim());
         }
         catch (Exception ex)
         {
@@ -481,314 +81,234 @@ public class RefinementController : MonoBehaviour
         finally
         {
             isRunning = false;
-
-            if (rgb != null)
-                UnityEngine.Object.DestroyImmediate(rgb);
-            if (depth != null)
-                UnityEngine.Object.DestroyImmediate(depth);
-            if (mask != null)
-                UnityEngine.Object.DestroyImmediate(mask);
         }
     }
 
-    private async Task<string> SendToBackend(string json)
+    private async Task RunRefinementAsync(RegionSelection selection, string localPrompt)
     {
-        return await SendToBackend(json, ResolveRefinementUrl(BackendRegistry.Settings));
-    }
+        if (string.IsNullOrWhiteSpace(sessionId))
+            sessionId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
 
-    private async Task<string> SendToBackend(string json, string endpoint)
-    {
         BackendSettings settings = BackendRegistry.Settings;
+        await BackendRegistry.Current.EnsureReadyAsync();
 
-        int timeoutSeconds = 30;
-        if (settings != null)
+        EnsureMultiViewRig(selection);
+        MultiViewData views = multiViewRenderer.RenderAllViews(selection);
+
+        var request = new MultiViewRefinementRequest
         {
-            timeoutSeconds = Mathf.Max(
-                30,
-                settings.remoteTimeoutSeconds,
-                settings.comfyExecutionTimeoutSeconds);
+            requestId = Guid.NewGuid().ToString("N"),
+            sessionId = sessionId,
+            positivePrompt = localPrompt,
+            seed = seed >= 0 ? seed : UnityEngine.Random.Range(0, int.MaxValue),
+            steps = Mathf.Max(1, steps),
+            cfg = Mathf.Max(0f, cfgScale),
+            denoise = RefinementDefaults.Denoise,
+            reconstructionView = reconstructionView.ToString(),
+            views = views.views
+        };
+
+        ApplyReconstructionCrop(request, selection);
+
+        string artifactDir = WriteRequestArtifacts(request, views);
+
+        MultiViewRefinementResponse response = await SubmitAsync(request, settings);
+        if (!response.success)
+        {
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(response.errorMessage)
+                ? "Refinement failed without a reported reason."
+                : response.errorMessage);
         }
 
-        using var content = new StringContent(json ?? string.Empty, Encoding.UTF8, "application/json");
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-        using HttpResponseMessage response = await Http.PostAsync(endpoint, content, timeoutCts.Token);
-        string responseBody = await response.Content.ReadAsStringAsync();
+        // Keep the refined 2D view next to the mesh: it is the record of what the model
+        // actually painted, and the first thing to look at when a result surprises you.
+        foreach (RefinedViewResult refined in response.refinedViews)
+            WriteBase64Png(refined.refinedImageBase64, Path.Combine(artifactDir, $"{refined.viewType}_refined.png"));
 
-        if (!response.IsSuccessStatusCode)
+        if (string.IsNullOrWhiteSpace(response.meshBase64))
+            throw new InvalidOperationException("Refinement returned no mesh; the region cannot be replaced.");
+
+        string meshPath = WriteMeshArtifact(artifactDir, response.requestId, response.meshBase64);
+        bool applied = RefinedMeshReady?.Invoke(new RefinedMeshContext
         {
-            throw new InvalidOperationException(
-                $"Refinement endpoint returned {(int)response.StatusCode} {response.ReasonPhrase}.\n{responseBody}");
+            requestId = response.requestId,
+            meshAbsolutePath = meshPath,
+            Region = selection
+        }) ?? false;
+
+        if (!applied)
+        {
+            Debug.LogWarning(
+                $"Spatial Generation: refined mesh saved to {meshPath} but could not be placed. " +
+                "Import it manually, or check the console for importer errors.");
+            return;
         }
 
-        return responseBody;
+        Debug.Log($"Spatial Generation: refinement '{response.requestId}' applied to region '{selection.selectionId}'.");
     }
 
-    private void ApplyResponse(RefinementResponse response, RegionSelection selection, Texture2D maskTexture)
+    /// <summary>
+    /// Tells the router which part of the refined image to lift.
+    ///
+    /// The cameras deliberately include context around the selection so the inpaint has
+    /// something to blend against, but lifting that whole frame would produce a mesh covering
+    /// the neighbours too. Cropping to the selection's own footprint keeps the reconstruction
+    /// scoped to the region the user asked about.
+    /// </summary>
+    private void ApplyReconstructionCrop(MultiViewRefinementRequest request, RegionSelection selection)
     {
-        // The flat-quad preview used to be the primary feedback path, but a 2D
-        // plane hanging at selection.center intersects the real 3D geometry and
-        // looks like a "cross cut" slice from any non-capture viewing angle.
-        // TripoSR returns a full refined mesh via meshBase64 — loading that as
-        // the scene's generated mesh produces a coherent 3D result from every
-        // angle. Fall back to the image preview only when the mesh path fails
-        // (e.g. runtime player, or mesh import unavailable).
-        bool meshApplied = false;
-        if (!string.IsNullOrWhiteSpace(response.meshBase64))
-        {
-            string meshPath = WriteMeshArtifact(response.requestId, response.meshBase64);
-            var ctx = new RefinedMeshContext
-            {
-                requestId = response.requestId,
-                meshAbsolutePath = meshPath,
-                selectionCenter = selection.center,
-                selectionSize = selection.size,
-                selectionRotation = selection.rotation
-            };
-            meshApplied = TryInstantiateRefinedMesh(ctx);
-        }
+        Camera camera = multiViewRenderer.cameraManager.GetCamera(reconstructionView);
+        if (camera == null || !selection.TryGetViewportUvBounds(camera, out Vector4 uv))
+            return;
 
-        if (!meshApplied && !string.IsNullOrWhiteSpace(response.refinedImageBase64))
-            ApplyRefinedImage(response.requestId, response.refinedImageBase64, selection, maskTexture);
+        request.cropMinX = uv.x;
+        request.cropMinY = uv.y;
+        request.cropMaxX = uv.z;
+        request.cropMaxY = uv.w;
     }
 
-    // Raised when a refinement produces a new mesh on disk and the runtime
-    // wants the (editor-side) importer to instantiate it into the scene.
-    // Editor code subscribes via RefinementMeshLoader. Subscriber must return
-    // true when the mesh has been instantiated successfully; false lets the
-    // controller fall back to the 2D quad preview.
-    public static event Func<RefinedMeshContext, bool> RefinedMeshReady;
-
-    private bool TryInstantiateRefinedMesh(RefinedMeshContext ctx)
+    private static async Task<MultiViewRefinementResponse> SubmitAsync(
+        MultiViewRefinementRequest request, BackendSettings settings)
     {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(ctx.meshAbsolutePath) || !File.Exists(ctx.meshAbsolutePath))
-                return false;
+        string endpoint = settings.Endpoint("refine");
+        string body = await RouterClient.PostJsonAsync(
+            endpoint, JsonUtility.ToJson(request), settings.requestTimeoutSeconds);
 
-            Func<RefinedMeshContext, bool> handler = RefinedMeshReady;
-            if (handler == null)
-                return false;
+        MultiViewRefinementResponse response = Parse(body);
+        if (!response.IsPending)
+            return response;
 
-            return handler(ctx);
-        }
-        catch (Exception ex)
+        // The Colab router queues refinements and answers immediately, so poll for the result.
+        string statusUrl = $"{endpoint}/{Uri.EscapeDataString(request.requestId)}";
+        DateTime deadline = DateTime.UtcNow.AddSeconds(Math.Max(60, settings.executionTimeoutSeconds));
+
+        while (DateTime.UtcNow < deadline)
         {
-            Debug.LogWarning($"Spatial Generation: Failed to load refined mesh ({ex.Message}); falling back to image preview.");
-            return false;
+            await Task.Delay(2000);
+            response = Parse(await RouterClient.GetStringAsync(statusUrl, settings.requestTimeoutSeconds));
+            if (!response.IsPending)
+                return response;
         }
+
+        throw new TimeoutException(
+            $"Refinement '{request.requestId}' did not finish within {settings.executionTimeoutSeconds}s.");
     }
 
-    private void ApplyRefinedImage(string requestId, string imageBase64, RegionSelection selection, Texture2D maskTexture)
+    private static MultiViewRefinementResponse Parse(string json)
     {
-        byte[] imageBytes = Convert.FromBase64String(imageBase64);
-        Texture2D refinedTexture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-        if (!refinedTexture.LoadImage(imageBytes, false))
+        MultiViewRefinementResponse response = JsonUtility.FromJson<MultiViewRefinementResponse>(json);
+        return response ?? throw new InvalidOperationException("Backend returned an empty refinement response.");
+    }
+
+    /// <summary>
+    /// Creates the canonical camera rig if needed and frames it on the selection.
+    ///
+    /// Framing on the selection (rather than the whole scene) is what keeps the edit local:
+    /// the lifted mesh then covers the region at full capture resolution instead of being a
+    /// low-detail reconstruction of everything. The padding leaves enough surrounding
+    /// geometry in frame for the inpaint to blend against.
+    /// </summary>
+    private void EnsureMultiViewRig(RegionSelection selection)
+    {
+        if (multiViewRenderer == null)
+            multiViewRenderer = CreateRig();
+
+        MultiViewCameraManager cameras = multiViewRenderer.cameraManager;
+        if (cameras == null)
         {
-            UnityEngine.Object.DestroyImmediate(refinedTexture);
-            throw new InvalidOperationException("Refinement image payload could not be decoded.");
+            cameras = multiViewRenderer.GetComponent<MultiViewCameraManager>()
+                      ?? multiViewRenderer.gameObject.AddComponent<MultiViewCameraManager>();
+            multiViewRenderer.cameraManager = cameras;
         }
 
-        // Use the selection mask as the preview's alpha channel so we overlay
-        // only the inpainted region instead of a full opaque rectangle that
-        // contains scene/background pixels from the camera capture.
-        CompositeMaskAsAlpha(refinedTexture, maskTexture);
+        Bounds region = selection.GetWorldBounds();
+        float extent = Mathf.Max(region.size.x, Mathf.Max(region.size.y, region.size.z));
+        float distance = Mathf.Max(1f, extent * 3f);
 
-        GameObject root = GameObject.Find(GeneratedRootName);
-        if (root == null)
-            root = new GameObject(GeneratedRootName);
+        cameras.captureResolution = new Vector2Int(RefinementDefaults.ViewResolution, RefinementDefaults.ViewResolution);
+        cameras.orthographicSize = Mathf.Max(0.05f, extent * 0.5f * ContextPadding);
+        cameras.rigTarget = region.center;
+        cameras.rigDistance = distance;
+        cameras.nearClip = 0.01f;
+        cameras.farClip = distance + extent * 6f;
 
-        Transform existing = root.transform.Find("RefinementPreview");
-        GameObject preview = existing != null ? existing.gameObject : GameObject.CreatePrimitive(PrimitiveType.Quad);
-        preview.name = "RefinementPreview";
-        preview.transform.SetParent(root.transform, true);
+        // Orient the rig with the selection so "Front" means the region's own front face.
+        cameras.rigRotation = selection.rotation;
+        cameras.ApplyLayout();
+    }
 
+    private MultiViewRenderer CreateRig()
+    {
+        const string rigName = "MultiViewRig";
+        Transform existing = transform.Find(rigName);
+        GameObject rig = existing != null ? existing.gameObject : new GameObject(rigName);
         if (existing == null)
-        {
-            Collider collider = preview.GetComponent<Collider>();
-            if (collider != null)
-                UnityEngine.Object.DestroyImmediate(collider);
-        }
+            rig.transform.SetParent(transform, worldPositionStays: false);
 
-        Vector3[] corners = RegionSelectionManager.GetWorldCorners(selection);
-        Camera cameraToUse = maskRenderer != null && maskRenderer.renderCamera != null
-            ? maskRenderer.renderCamera
-            : Camera.main;
-
-        Quaternion rotation = cameraToUse != null
-            ? cameraToUse.transform.rotation
-            : selection.rotation;
-        Vector3 right = rotation * Vector3.right;
-        Vector3 up = rotation * Vector3.up;
-        Vector3 forward = rotation * Vector3.forward;
-
-        float minX = float.PositiveInfinity;
-        float maxX = float.NegativeInfinity;
-        float minY = float.PositiveInfinity;
-        float maxY = float.NegativeInfinity;
-        float meanZ = 0f;
-
-        for (int i = 0; i < corners.Length; i++)
-        {
-            Vector3 delta = corners[i] - selection.center;
-            float x = Vector3.Dot(delta, right);
-            float y = Vector3.Dot(delta, up);
-            float z = Vector3.Dot(delta, forward);
-            minX = Mathf.Min(minX, x);
-            maxX = Mathf.Max(maxX, x);
-            minY = Mathf.Min(minY, y);
-            maxY = Mathf.Max(maxY, y);
-            meanZ += z;
-        }
-
-        meanZ /= Mathf.Max(1, corners.Length);
-        preview.transform.position = selection.center + forward * meanZ;
-        preview.transform.rotation = rotation;
-        preview.transform.localScale = new Vector3(
-            Mathf.Max(0.01f, maxX - minX),
-            Mathf.Max(0.01f, maxY - minY),
-            1f);
-
-        Renderer renderer = preview.GetComponent<Renderer>();
-        // A flat quad at selection.center that uses a normal depth test
-        // visually intersects the underlying 3D mesh and looks like a
-        // "cross cut" slice of the roof. Force the preview to draw on top
-        // of all scene geometry so the refined content replaces the original
-        // from any viewing angle.
-        Shader shader = Shader.Find("Hidden/SpatialGen/RefinementOverlay");
-        if (shader == null)
-            shader = Shader.Find("Unlit/Transparent");
-        if (shader == null)
-            shader = Shader.Find("Sprites/Default");
-        if (shader == null)
-            shader = Shader.Find("Unlit/Texture");
-        if (shader == null)
-            shader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader == null)
-            shader = Shader.Find("Standard");
-
-        Material material = renderer.sharedMaterial;
-        if (material == null || material.shader != shader)
-            material = new Material(shader);
-        material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Overlay;
-
-        material.mainTexture = refinedTexture;
-        renderer.sharedMaterial = material;
-
-        preview.hideFlags = HideFlags.None;
-        Debug.Log($"Spatial Generation: Applied refinement preview for request '{requestId}'.");
+        MultiViewCameraManager cameras = rig.GetComponent<MultiViewCameraManager>()
+                                         ?? rig.AddComponent<MultiViewCameraManager>();
+        MultiViewRenderer renderer = rig.GetComponent<MultiViewRenderer>()
+                                     ?? rig.AddComponent<MultiViewRenderer>();
+        renderer.cameraManager = cameras;
+        return renderer;
     }
 
-    private static void CompositeMaskAsAlpha(Texture2D refinedTexture, Texture2D maskTexture)
+    private string WriteRequestArtifacts(MultiViewRefinementRequest request, MultiViewData views)
     {
-        if (refinedTexture == null || maskTexture == null)
-            return;
+        string artifactDir = Path.Combine(
+            Path.GetFullPath(Path.Combine(Application.dataPath, "..")),
+            "Logs", "Refinement", sessionId, request.requestId);
+        Directory.CreateDirectory(artifactDir);
 
-        Color[] rgba;
-        Color[] mask;
-        try
+        // The base64 payloads would bloat the JSON past anything readable, so views are
+        // written out as PNGs beside a payload-free copy of the request.
+        MultiViewRefinementRequest summary = request.WithoutViewPayloads();
+        File.WriteAllText(Path.Combine(artifactDir, "request.json"), JsonUtility.ToJson(summary, true));
+
+        foreach (ViewData view in views.views)
         {
-            rgba = refinedTexture.GetPixels();
-            mask = maskTexture.width == refinedTexture.width && maskTexture.height == refinedTexture.height
-                ? maskTexture.GetPixels()
-                : maskTexture.GetPixels(); // mismatched sizes are unexpected; log via instrumentation and skip scaling for now
-        }
-        catch
-        {
-            return;
+            WriteBase64Png(view.rgbBase64, Path.Combine(artifactDir, $"{view.viewType}_rgb.png"));
+            WriteBase64Png(view.depthBase64, Path.Combine(artifactDir, $"{view.viewType}_depth.png"));
+            WriteBase64Png(view.edgesBase64, Path.Combine(artifactDir, $"{view.viewType}_edges.png"));
+            WriteBase64Png(view.maskBase64, Path.Combine(artifactDir, $"{view.viewType}_mask.png"));
         }
 
-        if (rgba == null || mask == null || rgba.Length != mask.Length)
-            return;
-
-        for (int i = 0; i < rgba.Length; i++)
-            rgba[i].a = Mathf.Clamp01(mask[i].grayscale);
-
-        refinedTexture.SetPixels(rgba);
-        refinedTexture.Apply(false, false);
+        return artifactDir;
     }
 
-    private string WriteMeshArtifact(string requestId, string meshBase64)
+    /// <summary>
+    /// Stages the .glb outside <c>Assets/</c>. Writing it under Assets would make Unity import
+    /// it and mint a .meta, which the editor's staging copy would then duplicate into a second
+    /// folder and trigger a GUID conflict.
+    /// </summary>
+    private static string WriteMeshArtifact(string artifactDir, string requestId, string meshBase64)
     {
-        byte[] meshBytes = Convert.FromBase64String(meshBase64);
-        // Stage the .glb OUTSIDE the Assets tree. If we wrote under Assets,
-        // Unity would auto-import and create a .meta file with a fresh GUID;
-        // the editor's StageFileIntoGeneratedAssets later copies the entire
-        // source directory (.glb + .meta) into Assets/.../Generated/run_*,
-        // duplicating the .meta and triggering a GUID conflict warning.
-        // Writing under Logs/ keeps the .glb outside AssetDatabase so the
-        // subsequent copy into Assets imports fresh.
-        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        string safeSession = string.IsNullOrWhiteSpace(sessionId) ? "adhoc" : sessionId;
-        string safeReqId = string.IsNullOrWhiteSpace(requestId) ? "refinement_mesh" : requestId;
-        string stagingDir = Path.Combine(projectRoot, "Logs", "Refinement", safeSession, safeReqId);
-        Directory.CreateDirectory(stagingDir);
-
-        string path = Path.Combine(stagingDir, $"{safeReqId}.glb");
-        File.WriteAllBytes(path, meshBytes);
-
-        Debug.Log($"Spatial Generation: Saved refinement mesh artifact to {path}");
+        string fileName = string.IsNullOrWhiteSpace(requestId) ? "refined_region" : requestId;
+        string path = Path.Combine(artifactDir, $"{fileName}.glb");
+        File.WriteAllBytes(path, Convert.FromBase64String(meshBase64));
         return path;
     }
 
-    private void WriteDebugArtifacts(RefinementRequest request, Texture2D rgb, Texture2D depth, Texture2D mask)
+    private static void WriteBase64Png(string base64, string path)
     {
-        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        string artifactDir = Path.Combine(projectRoot, "Logs", "Refinement", sessionId, request.requestId);
-        Directory.CreateDirectory(artifactDir);
-
-        File.WriteAllText(Path.Combine(artifactDir, "request.json"), JsonUtility.ToJson(request, true));
-        WritePng(rgb, Path.Combine(artifactDir, "rgb.png"));
-        WritePng(depth, Path.Combine(artifactDir, "depth.png"));
-        WritePng(mask, Path.Combine(artifactDir, "mask.png"));
-    }
-
-    private static void WritePng(Texture2D texture, string path)
-    {
-        if (texture == null || string.IsNullOrWhiteSpace(path))
+        if (string.IsNullOrWhiteSpace(base64))
             return;
 
-        byte[] bytes = texture.EncodeToPNG();
-        if (bytes == null || bytes.Length == 0)
-            return;
-
-        File.WriteAllBytes(path, bytes);
-    }
-
-    private static string ResolveRefinementUrl(BackendSettings settings)
-    {
-        // /refine is served only by the FastAPI router (see tools/comfy_router_backend/app.py).
-        // Falling back to comfyBaseUrl would send the request straight to ComfyUI, which
-        // returns 405 because it has no /refine route, so require remoteUrl explicitly.
-        if (string.IsNullOrWhiteSpace(settings?.remoteUrl))
+        try
         {
-            throw new InvalidOperationException(
-                "Refinement requires the FastAPI router. Set BackendSettings.remoteUrl to " +
-                "the router's /generate URL (e.g. http://127.0.0.1:8001/generate).");
+            File.WriteAllBytes(path, Convert.FromBase64String(base64));
         }
-
-        string baseUrl = settings.remoteUrl.TrimEnd('/');
-        if (baseUrl.EndsWith("/generate", StringComparison.OrdinalIgnoreCase))
-            return $"{baseUrl.Substring(0, baseUrl.Length - "/generate".Length)}/refine";
-        return $"{baseUrl}/refine";
+        catch (FormatException)
+        {
+            // Debug artifacts must never take down a run.
+        }
     }
 
-    private void EnsureReferences()
+    private void Reset() => selectionManager = GetComponent<RegionSelectionManager>();
+
+    private void OnValidate()
     {
         if (selectionManager == null)
             selectionManager = GetComponent<RegionSelectionManager>();
-        if (maskRenderer == null)
-            maskRenderer = GetComponent<RegionMaskRenderer>();
-
-        if (selectionManager == null || maskRenderer == null)
-        {
-            throw new InvalidOperationException(
-                "RefinementController requires RegionSelectionManager and RegionMaskRenderer references.");
-        }
-    }
-
-    private void Reset()
-    {
-        selectionManager = GetComponent<RegionSelectionManager>();
-        maskRenderer = GetComponent<RegionMaskRenderer>();
     }
 }

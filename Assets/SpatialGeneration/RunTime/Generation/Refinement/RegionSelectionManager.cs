@@ -1,506 +1,7 @@
 using System;
-using System.Collections.Generic;
 using UnityEngine;
 
-[ExecuteAlways]
-public class RegionSelectionManager : MonoBehaviour
-{
-    private const string GeneratedContentRootName = "GeneratedContent";
-
-    /// <summary>Unity layer used by <see cref="MultiViewRenderer"/> screen-space mask pass (see Tags &amp; Layers).</summary>
-    public const string MaskSelectionLayerName = "SpatialGenMaskSelection";
-
-    [SerializeField] private RegionSelection currentSelection;
-    [SerializeField] private bool isSelecting;
-
-    public RegionSelection CurrentSelection => currentSelection;
-    public bool IsSelecting => isSelecting;
-
-    public void BeginSelection()
-    {
-        isSelecting = true;
-
-        if (currentSelection != null)
-            return;
-
-        if (TryInitializeFromGeneratedMeshBounds())
-            return;
-        if (TryInitializeFromSceneGeometry(0.4f))
-            return;
-
-        Vector3 origin = transform.position;
-        Quaternion rotation = Quaternion.identity;
-
-        Camera sceneCamera = Camera.main;
-        if (sceneCamera != null)
-        {
-            origin = sceneCamera.transform.position + sceneCamera.transform.forward * 3f;
-            rotation = sceneCamera.transform.rotation;
-        }
-
-        currentSelection = new RegionSelection
-        {
-            selectionId = Guid.NewGuid().ToString("N"),
-            center = origin,
-            size = Vector3.one,
-            rotation = rotation
-        };
-    }
-
-    public void UpdateSelection(Vector3 start, Vector3 end)
-    {
-        Vector3 min = Vector3.Min(start, end);
-        Vector3 max = Vector3.Max(start, end);
-
-        currentSelection ??= new RegionSelection();
-        currentSelection.selectionId = string.IsNullOrWhiteSpace(currentSelection.selectionId)
-            ? Guid.NewGuid().ToString("N")
-            : currentSelection.selectionId;
-        currentSelection.center = (min + max) * 0.5f;
-        currentSelection.size = ClampSize(max - min);
-        currentSelection.rotation = Quaternion.identity;
-        isSelecting = true;
-    }
-
-    public void ConfirmSelection()
-    {
-        if (currentSelection == null)
-            return;
-
-        currentSelection.size = ClampSize(currentSelection.size);
-        if (string.IsNullOrWhiteSpace(currentSelection.selectionId))
-            currentSelection.selectionId = Guid.NewGuid().ToString("N");
-
-        isSelecting = false;
-    }
-
-    /// <summary>
-    /// Fits the selection to renderer bounds under <c>Generated_Mesh*</c> children of
-    /// <c>GeneratedContent</c> (same filtering as refinement mesh replacement).
-    /// Uses a smaller default coverage than scene-wide init so inpaint masks target
-    /// a sub-region instead of the full asset silhouette.
-    /// </summary>
-    public bool TryInitializeFromGeneratedMeshBounds(float coverage = 0.25f)
-    {
-        if (!TryGetPrimaryGeneratedContentMeshBounds(out Bounds meshBounds))
-            return false;
-
-        ApplyBoundsSelection(meshBounds, coverage);
-        return true;
-    }
-
-    public bool TryInitializeFromSceneGeometry(float coverage = 0.7f)
-    {
-        if (!TryGetSceneGeometryBounds(out Bounds geometryBounds))
-            return false;
-
-        ApplyBoundsSelection(geometryBounds, coverage);
-        return true;
-    }
-
-    public void ApplyBoundsSelection(Bounds geometryBounds, float coverage = 0.7f)
-    {
-        currentSelection = new RegionSelection
-        {
-            selectionId = currentSelection != null && !string.IsNullOrWhiteSpace(currentSelection.selectionId)
-                ? currentSelection.selectionId
-                : Guid.NewGuid().ToString("N"),
-            center = geometryBounds.center,
-            size = ClampSize(geometryBounds.size * Mathf.Clamp(coverage, 0.01f, 1f)),
-            rotation = Quaternion.identity
-        };
-    }
-
-    public void ClearSelection()
-    {
-        currentSelection = null;
-        isSelecting = false;
-    }
-
-    public Bounds GetWorldBounds()
-    {
-        if (currentSelection == null)
-            return new Bounds(transform.position, Vector3.zero);
-
-        return BuildWorldBounds(currentSelection);
-    }
-
-    public void SetSelection(RegionSelection selection)
-    {
-        if (selection == null)
-        {
-            ClearSelection();
-            return;
-        }
-
-        currentSelection = CloneSelection(selection);
-        currentSelection.size = ClampSize(currentSelection.size);
-        if (string.IsNullOrWhiteSpace(currentSelection.selectionId))
-            currentSelection.selectionId = Guid.NewGuid().ToString("N");
-    }
-
-    public Vector3[] GetWorldCorners()
-    {
-        return currentSelection == null
-            ? Array.Empty<Vector3>()
-            : GetWorldCorners(currentSelection);
-    }
-
-    private void OnDrawGizmos()
-    {
-        if (currentSelection == null)
-            return;
-
-        Matrix4x4 previous = Gizmos.matrix;
-        Color previousColor = Gizmos.color;
-
-        Gizmos.matrix = Matrix4x4.TRS(currentSelection.center, currentSelection.rotation, Vector3.one);
-        Gizmos.color = isSelecting
-            ? new Color(1f, 0.8f, 0.2f, 0.95f)
-            : new Color(0.2f, 1f, 0.7f, 0.95f);
-        Gizmos.DrawWireCube(Vector3.zero, currentSelection.size);
-
-        Gizmos.matrix = previous;
-        Gizmos.color = previousColor;
-    }
-
-    public static Bounds BuildWorldBounds(RegionSelection selection)
-    {
-        Vector3[] corners = GetWorldCorners(selection);
-        if (corners.Length == 0)
-            return new Bounds(Vector3.zero, Vector3.zero);
-
-        Bounds bounds = new Bounds(corners[0], Vector3.zero);
-        for (int i = 1; i < corners.Length; i++)
-            bounds.Encapsulate(corners[i]);
-
-        return bounds;
-    }
-
-    /// <summary>
-    /// World AABB combining active <see cref="GeneratedContentRootName"/> mesh subtrees.
-    /// </summary>
-    public static bool TryGetGeneratedContentMeshBounds(out Bounds bounds)
-    {
-        return TryGetPrimaryGeneratedContentMeshBounds(out bounds);
-    }
-
-    /// <summary>
-    /// For refinement masks only: if the selection is axis-aligned, clamp its extents to
-    /// <paramref name="meshWorldAabb"/> so slack outside the generated asset is not inpainted.
-    /// <para />
-    /// When the selection is <b>rotated</b>, the selection is returned unchanged: replacing it with the
-    /// world-axis-aligned hull of an OBB (the old behavior) inflates thin roof slabs to a box that
-    /// covers most of the mesh and produces a full-object mask.
-    /// </summary>
-    public static RegionSelection BuildMaskSelectionClippedToGeneratedMesh(
-        RegionSelection source,
-        Bounds meshWorldAabb)
-    {
-        if (source == null)
-            return null;
-
-        if (meshWorldAabb.size.sqrMagnitude < 1e-8f)
-            return CloneSelection(source);
-
-        if (Quaternion.Angle(source.rotation, Quaternion.identity) < 0.05f)
-        {
-            Vector3 omin = source.center - source.size * 0.5f;
-            Vector3 omax = source.center + source.size * 0.5f;
-            Vector3 nmin = Vector3.Max(omin, meshWorldAabb.min);
-            Vector3 nmax = Vector3.Min(omax, meshWorldAabb.max);
-            if (nmin.x >= nmax.x || nmin.y >= nmax.y || nmin.z >= nmax.z)
-                return CloneSelection(source);
-
-            return new RegionSelection
-            {
-                selectionId = source.selectionId,
-                center = (nmin + nmax) * 0.5f,
-                size = ClampSize(nmax - nmin),
-                rotation = Quaternion.identity
-            };
-        }
-
-        // Rotated OBB: do NOT replace with the world-axis-aligned bounds of the OBB (BuildWorldBounds).
-        // The hull AABB of a thin, tilted roof slab can inflate to the full house footprint and floor
-        // height, which makes the mask shader paint the entire silhouette white — exactly the bug users
-        // see in mask.png. Air outside the mesh still draws black (no geometry). Preserve orientation/size.
-        return CloneSelection(source);
-    }
-
-    /// <summary>
-    /// True when the selection's world AABB is a large fraction of the mesh AABB in extent
-    /// (inpaint mask will trace most of the silhouette). Combines (1) at least two edges ≥
-    /// <paramref name="axisRatio"/>, (2) volume ≥ <paramref name="volumeSpanMin"/>, and
-    /// (3) every edge ≥ <paramref name="minAxisSpanMin"/> so slabs (e.g. roof: big X/Z, small Y)
-    /// are not flagged when volume barely clears the bar (e.g. 0.226 vs 0.22).
-    /// </summary>
-    public static bool SelectionWorldAabbSpansMostOfMesh(
-        RegionSelection selection,
-        Bounds meshWorldAabb,
-        float axisRatio = 0.9f,
-        float volumeSpanMin = 0.22f,
-        float minAxisSpanMin = 0.42f)
-    {
-        if (selection == null || meshWorldAabb.size.sqrMagnitude < 1e-8f)
-            return false;
-
-        Bounds w = BuildWorldBounds(selection);
-        float mx = Mathf.Max(meshWorldAabb.size.x, 1e-6f);
-        float my = Mathf.Max(meshWorldAabb.size.y, 1e-6f);
-        float mz = Mathf.Max(meshWorldAabb.size.z, 1e-6f);
-        float rx = w.size.x / mx;
-        float ry = w.size.y / my;
-        float rz = w.size.z / mz;
-        int big = (rx >= axisRatio ? 1 : 0) + (ry >= axisRatio ? 1 : 0) + (rz >= axisRatio ? 1 : 0);
-
-        float volMesh = mx * my * mz;
-        float volSel = w.size.x * w.size.y * w.size.z;
-        float volumeRatio = volMesh > 1e-18f ? volSel / volMesh : 0f;
-        float minR = Mathf.Min(rx, Mathf.Min(ry, rz));
-
-        bool spansMost = big >= 2
-            && volumeRatio >= volumeSpanMin
-            && minR >= minAxisSpanMin;
-
-        return spansMost;
-    }
-
-    public static Vector3[] GetWorldCorners(RegionSelection selection)
-    {
-        if (selection == null)
-            return Array.Empty<Vector3>();
-
-        Vector3 halfExtents = ClampSize(selection.size) * 0.5f;
-        Vector3[] localCorners =
-        {
-            new Vector3(-halfExtents.x, -halfExtents.y, -halfExtents.z),
-            new Vector3(halfExtents.x, -halfExtents.y, -halfExtents.z),
-            new Vector3(-halfExtents.x, halfExtents.y, -halfExtents.z),
-            new Vector3(halfExtents.x, halfExtents.y, -halfExtents.z),
-            new Vector3(-halfExtents.x, -halfExtents.y, halfExtents.z),
-            new Vector3(halfExtents.x, -halfExtents.y, halfExtents.z),
-            new Vector3(-halfExtents.x, halfExtents.y, halfExtents.z),
-            new Vector3(halfExtents.x, halfExtents.y, halfExtents.z)
-        };
-
-        Vector3[] worldCorners = new Vector3[localCorners.Length];
-        for (int i = 0; i < localCorners.Length; i++)
-            worldCorners[i] = selection.center + selection.rotation * localCorners[i];
-
-        return worldCorners;
-    }
-
-    private static RegionSelection CloneSelection(RegionSelection selection)
-    {
-        return new RegionSelection
-        {
-            selectionId = selection.selectionId,
-            center = selection.center,
-            size = selection.size,
-            rotation = selection.rotation
-        };
-    }
-
-    private static Vector3 ClampSize(Vector3 size)
-    {
-        return new Vector3(
-            Mathf.Max(0.01f, Mathf.Abs(size.x)),
-            Mathf.Max(0.01f, Mathf.Abs(size.y)),
-            Mathf.Max(0.01f, Mathf.Abs(size.z)));
-    }
-
-    /// <summary>
-    /// Active <c>Generated_Mesh*</c> subtrees first, then active <c>Refined_Mesh*</c>
-    /// after originals are deactivated (post-refinement).
-    /// </summary>
-    private static bool TryGetPrimaryGeneratedContentMeshBounds(out Bounds bounds)
-    {
-        bounds = default;
-        GameObject root = GameObject.Find(GeneratedContentRootName);
-        if (root == null)
-            return false;
-
-        Renderer[] rs = root.GetComponentsInChildren<Renderer>(true);
-
-        if (AccumulateSubtreeBounds(rs, root.transform, IsGeneratedMeshSubtreeRoot, out Bounds fromGen))
-            bounds = fromGen;
-        else if (AccumulateSubtreeBounds(rs, root.transform, IsRefinedMeshSubtreeRoot, out Bounds fromRef))
-            bounds = fromRef;
-        else
-            return false;
-
-        return bounds.size.sqrMagnitude > 1e-6f;
-    }
-
-    private static bool IsGeneratedMeshSubtreeRoot(Transform rootChild)
-    {
-        string n = rootChild.gameObject.name ?? string.Empty;
-        return n.StartsWith("Generated_Mesh", StringComparison.Ordinal);
-    }
-
-    private static bool IsRefinedMeshSubtreeRoot(Transform rootChild)
-    {
-        string n = rootChild.gameObject.name ?? string.Empty;
-        return n.StartsWith("Refined_Mesh", StringComparison.Ordinal);
-    }
-
-    private static bool AccumulateSubtreeBounds(
-        Renderer[] renderers,
-        Transform generatedRoot,
-        Func<Transform, bool> subtreeRootPredicate,
-        out Bounds combined)
-    {
-        combined = default;
-        bool has = false;
-        for (int i = 0; i < renderers.Length; i++)
-        {
-            Renderer r = renderers[i];
-            if (r == null || !r.gameObject.activeInHierarchy)
-                continue;
-
-            Transform rootChild = FindDirectChildOfGeneratedRoot(generatedRoot, r.transform);
-            if (rootChild == null || !subtreeRootPredicate(rootChild))
-                continue;
-
-            if (!has)
-            {
-                combined = r.bounds;
-                has = true;
-            }
-            else
-                combined.Encapsulate(r.bounds);
-        }
-
-        return has;
-    }
-
-    private static Transform FindDirectChildOfGeneratedRoot(Transform generatedRoot, Transform descendant)
-    {
-        Transform t = descendant;
-        while (t != null && t.parent != generatedRoot)
-            t = t.parent;
-        return t;
-    }
-
-    private bool TryGetSceneGeometryBounds(out Bounds bounds)
-    {
-        bounds = default;
-        Renderer[] renderers = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
-        bool hasBounds = false;
-
-        for (int i = 0; i < renderers.Length; i++)
-        {
-            Renderer renderer = renderers[i];
-            if (!IsCandidateGeometry(renderer))
-                continue;
-
-            if (!hasBounds)
-            {
-                bounds = renderer.bounds;
-                hasBounds = true;
-                continue;
-            }
-
-            bounds.Encapsulate(renderer.bounds);
-        }
-
-        return hasBounds;
-    }
-
-    private bool IsCandidateGeometry(Renderer renderer)
-    {
-        if (renderer == null || !renderer.enabled)
-            return false;
-
-        GameObject go = renderer.gameObject;
-        if (go == null)
-            return false;
-        if (go == gameObject || go.transform.IsChildOf(transform))
-            return false;
-        if ((go.hideFlags & HideFlags.HideInHierarchy) != 0)
-            return false;
-        if (go.GetComponentInParent<RegionSelectionManager>() != null)
-            return false;
-        if (go.GetComponentInParent<SpatialProxy>() != null)
-            return false;
-
-        Bounds candidateBounds = renderer.bounds;
-        if (candidateBounds.size.sqrMagnitude <= 1e-6f)
-            return false;
-
-        return true;
-    }
-
-    /// <summary>
-    /// For screen-space masks: same renderers as <see cref="TryGetPrimaryGeneratedContentMeshBounds"/>
-    /// (Generated_Mesh* / Refined_Mesh* under <c>GeneratedContent</c>), temporarily moved to <paramref name="maskLayer"/>).
-    /// When <paramref name="restrictToGeneratedContentDirectChildName"/> is non-empty, only that direct subtree
-    /// under <c>GeneratedContent</c> is lifted (the default <c>Generated_Mesh*</c>/<c>Refined_Mesh*</c> filter is waived for that subtree).
-    /// </summary>
-    public static bool TryBeginScreenSpaceMaskPass(int maskLayer, List<(Renderer renderer, int savedLayer)> savedLayers,
-        string restrictToGeneratedContentDirectChildName = null)
-    {
-        savedLayers.Clear();
-        if (maskLayer < 0)
-            return false;
-
-        GameObject rootGo = GameObject.Find(GeneratedContentRootName);
-        if (rootGo == null)
-            return false;
-
-        Transform generatedRoot = rootGo.transform;
-        Renderer[] rs = generatedRoot.GetComponentsInChildren<Renderer>(true);
-        bool any = false;
-        bool restrictSubtree = !string.IsNullOrEmpty(restrictToGeneratedContentDirectChildName);
-
-        for (int i = 0; i < rs.Length; i++)
-        {
-            Renderer r = rs[i];
-            if (r == null || !r.gameObject.activeInHierarchy)
-                continue;
-
-            Transform rootChild = FindDirectChildOfGeneratedRoot(generatedRoot, r.transform);
-            if (rootChild == null)
-                continue;
-
-            if (restrictSubtree)
-            {
-                if (!string.Equals(
-                        rootChild.gameObject.name ?? string.Empty,
-                        restrictToGeneratedContentDirectChildName,
-                        StringComparison.Ordinal))
-                    continue;
-            }
-            else if (!IsGeneratedMeshSubtreeRoot(rootChild) && !IsRefinedMeshSubtreeRoot(rootChild))
-            {
-                continue;
-            }
-
-            savedLayers.Add((r, r.gameObject.layer));
-            r.gameObject.layer = maskLayer;
-            any = true;
-        }
-
-        return any;
-    }
-
-    public static void EndScreenSpaceMaskPass(List<(Renderer renderer, int savedLayer)> savedLayers)
-    {
-        if (savedLayers == null)
-            return;
-
-        for (int i = 0; i < savedLayers.Count; i++)
-        {
-            (Renderer renderer, int savedLayer) = savedLayers[i];
-            if (renderer != null)
-                renderer.gameObject.layer = savedLayer;
-        }
-
-        savedLayers.Clear();
-    }
-}
-
+/// <summary>An oriented box the user drew in the scene to scope a local edit.</summary>
 [Serializable]
 public class RegionSelection
 {
@@ -509,8 +10,306 @@ public class RegionSelection
     public Vector3 size;
     public Quaternion rotation = Quaternion.identity;
 
-    public Bounds ToBounds()
+    public RegionSelection Clone() => new()
     {
-        return new Bounds(center, size);
+        selectionId = selectionId,
+        center = center,
+        size = size,
+        rotation = rotation
+    };
+
+    /// <summary>World-space corners of the oriented box.</summary>
+    public Vector3[] GetWorldCorners()
+    {
+        Vector3 h = ClampSize(size) * 0.5f;
+        Vector3[] local =
+        {
+            new(-h.x, -h.y, -h.z), new(h.x, -h.y, -h.z),
+            new(-h.x, h.y, -h.z), new(h.x, h.y, -h.z),
+            new(-h.x, -h.y, h.z), new(h.x, -h.y, h.z),
+            new(-h.x, h.y, h.z), new(h.x, h.y, h.z)
+        };
+
+        var world = new Vector3[local.Length];
+        for (int i = 0; i < local.Length; i++)
+            world[i] = center + rotation * local[i];
+
+        return world;
+    }
+
+    /// <summary>Axis-aligned hull of the oriented box.</summary>
+    public Bounds GetWorldBounds()
+    {
+        Vector3[] corners = GetWorldCorners();
+        var bounds = new Bounds(corners[0], Vector3.zero);
+        for (int i = 1; i < corners.Length; i++)
+            bounds.Encapsulate(corners[i]);
+        return bounds;
+    }
+
+    /// <summary>Maps world space into the box's local frame, where the box is an AABB of ±size/2.</summary>
+    public Matrix4x4 WorldToLocal() => Matrix4x4.TRS(center, rotation, Vector3.one).inverse;
+
+    /// <summary>Axis-aligned bounds, in viewport UV, of the corners in front of <paramref name="camera"/>.</summary>
+    public bool TryGetViewportUvBounds(Camera camera, out Vector4 minMaxXy)
+    {
+        minMaxXy = default;
+        if (camera == null)
+            return false;
+
+        bool any = false;
+        float minX = 1f, minY = 1f, maxX = 0f, maxY = 0f;
+
+        foreach (Vector3 corner in GetWorldCorners())
+        {
+            Vector3 viewport = camera.WorldToViewportPoint(corner);
+            if (viewport.z <= 0f)
+                continue;
+
+            any = true;
+            minX = Mathf.Min(minX, viewport.x);
+            minY = Mathf.Min(minY, viewport.y);
+            maxX = Mathf.Max(maxX, viewport.x);
+            maxY = Mathf.Max(maxY, viewport.y);
+        }
+
+        if (!any)
+            return false;
+
+        minX = Mathf.Clamp01(minX);
+        minY = Mathf.Clamp01(minY);
+        maxX = Mathf.Clamp01(maxX);
+        maxY = Mathf.Clamp01(maxY);
+        if (maxX <= minX || maxY <= minY)
+            return false;
+
+        minMaxXy = new Vector4(minX, minY, maxX, maxY);
+        return true;
+    }
+
+    public static Vector3 ClampSize(Vector3 size) => new(
+        Mathf.Max(0.01f, Mathf.Abs(size.x)),
+        Mathf.Max(0.01f, Mathf.Abs(size.y)),
+        Mathf.Max(0.01f, Mathf.Abs(size.z)));
+}
+
+/// <summary>
+/// Holds the region the user is editing and seeds sensible defaults from whatever
+/// geometry is already in the scene.
+/// </summary>
+[ExecuteAlways]
+public class RegionSelectionManager : MonoBehaviour
+{
+    public const string GeneratedContentRootName = "GeneratedContent";
+
+    [SerializeField] private RegionSelection currentSelection;
+
+    public RegionSelection CurrentSelection => currentSelection;
+
+    public void SetSelection(RegionSelection selection)
+    {
+        if (selection == null)
+        {
+            currentSelection = null;
+            return;
+        }
+
+        currentSelection = selection.Clone();
+        currentSelection.size = RegionSelection.ClampSize(currentSelection.size);
+        if (string.IsNullOrWhiteSpace(currentSelection.selectionId))
+            currentSelection.selectionId = Guid.NewGuid().ToString("N");
+    }
+
+    /// <summary>
+    /// Picks a default region: a fraction of the generated mesh if one exists, otherwise a
+    /// fraction of the scene, otherwise a unit box in front of the camera.
+    /// </summary>
+    public void ResetToDefault()
+    {
+        if (TryGetGeneratedContentBounds(out Bounds generated))
+        {
+            ApplyBounds(generated, 0.25f);
+            return;
+        }
+
+        if (TryGetSceneGeometryBounds(out Bounds scene))
+        {
+            ApplyBounds(scene, 0.4f);
+            return;
+        }
+
+        Camera camera = Camera.main;
+        Vector3 origin = camera != null
+            ? camera.transform.position + camera.transform.forward * 3f
+            : transform.position;
+
+        SetSelection(new RegionSelection
+        {
+            selectionId = Guid.NewGuid().ToString("N"),
+            center = origin,
+            size = Vector3.one,
+            rotation = camera != null ? camera.transform.rotation : Quaternion.identity
+        });
+    }
+
+    /// <summary>Centers the selection on <paramref name="bounds"/> at the given coverage fraction.</summary>
+    public void ApplyBounds(Bounds bounds, float coverage)
+    {
+        SetSelection(new RegionSelection
+        {
+            selectionId = currentSelection?.selectionId ?? Guid.NewGuid().ToString("N"),
+            center = bounds.center,
+            size = bounds.size * Mathf.Clamp(coverage, 0.01f, 1f),
+            rotation = Quaternion.identity
+        });
+    }
+
+    /// <summary>
+    /// Combined renderer bounds of the generated asset: <c>Generated_Mesh*</c> subtrees while
+    /// they are active, otherwise the <c>Refined_Mesh*</c> that replaced them.
+    /// </summary>
+    public static bool TryGetGeneratedContentBounds(out Bounds bounds)
+    {
+        bounds = default;
+        GameObject root = GameObject.Find(GeneratedContentRootName);
+        if (root == null)
+            return false;
+
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+        if (!AccumulateSubtreeBounds(renderers, root.transform, "Generated_Mesh", out bounds) &&
+            !AccumulateSubtreeBounds(renderers, root.transform, "Refined_Mesh", out bounds))
+        {
+            return false;
+        }
+
+        return bounds.size.sqrMagnitude > 1e-6f;
+    }
+
+    /// <summary>
+    /// True when the selection covers so much of the asset that the inpaint mask would trace
+    /// the whole silhouette. Requires a large span on at least two axes *and* a large volume
+    /// share, so thin slabs (a roof: wide in X/Z, thin in Y) are not flagged.
+    /// </summary>
+    public static bool SelectionSpansMostOfMesh(RegionSelection selection, Bounds meshBounds)
+    {
+        const float axisRatio = 0.9f;
+        const float minVolumeShare = 0.22f;
+        const float minAxisShare = 0.42f;
+
+        if (selection == null || meshBounds.size.sqrMagnitude < 1e-8f)
+            return false;
+
+        Vector3 selectionSize = selection.GetWorldBounds().size;
+        Vector3 meshSize = new(
+            Mathf.Max(meshBounds.size.x, 1e-6f),
+            Mathf.Max(meshBounds.size.y, 1e-6f),
+            Mathf.Max(meshBounds.size.z, 1e-6f));
+
+        Vector3 ratio = new(
+            selectionSize.x / meshSize.x,
+            selectionSize.y / meshSize.y,
+            selectionSize.z / meshSize.z);
+
+        int wideAxes = (ratio.x >= axisRatio ? 1 : 0) + (ratio.y >= axisRatio ? 1 : 0) + (ratio.z >= axisRatio ? 1 : 0);
+        float volumeShare = (selectionSize.x * selectionSize.y * selectionSize.z) /
+                            (meshSize.x * meshSize.y * meshSize.z);
+        float smallestAxisShare = Mathf.Min(ratio.x, Mathf.Min(ratio.y, ratio.z));
+
+        return wideAxes >= 2 && volumeShare >= minVolumeShare && smallestAxisShare >= minAxisShare;
+    }
+
+    private bool TryGetSceneGeometryBounds(out Bounds bounds)
+    {
+        bounds = default;
+        bool has = false;
+
+        foreach (Renderer renderer in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
+        {
+            if (!IsCandidateGeometry(renderer))
+                continue;
+
+            if (!has)
+            {
+                bounds = renderer.bounds;
+                has = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        return has;
+    }
+
+    private bool IsCandidateGeometry(Renderer renderer)
+    {
+        if (renderer == null || !renderer.enabled)
+            return false;
+
+        GameObject go = renderer.gameObject;
+        if (go == gameObject || go.transform.IsChildOf(transform))
+            return false;
+        if ((go.hideFlags & HideFlags.HideInHierarchy) != 0)
+            return false;
+        if (go.GetComponentInParent<SpatialProxy>() != null)
+            return false;
+
+        return renderer.bounds.size.sqrMagnitude > 1e-6f;
+    }
+
+    private static bool AccumulateSubtreeBounds(
+        Renderer[] renderers, Transform root, string subtreeNamePrefix, out Bounds combined)
+    {
+        combined = default;
+        bool has = false;
+
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer == null || !renderer.gameObject.activeInHierarchy)
+                continue;
+
+            // Imported GLBs put renderers on grandchildren with glTF node names, so the
+            // subtree has to be identified by walking up to the direct child of the root.
+            Transform subtreeRoot = FindDirectChild(root, renderer.transform);
+            if (subtreeRoot == null || !subtreeRoot.name.StartsWith(subtreeNamePrefix, StringComparison.Ordinal))
+                continue;
+
+            if (!has)
+            {
+                combined = renderer.bounds;
+                has = true;
+            }
+            else
+            {
+                combined.Encapsulate(renderer.bounds);
+            }
+        }
+
+        return has;
+    }
+
+    public static Transform FindDirectChild(Transform root, Transform descendant)
+    {
+        Transform current = descendant;
+        while (current != null && current.parent != root)
+            current = current.parent;
+        return current;
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (currentSelection == null)
+            return;
+
+        Matrix4x4 previousMatrix = Gizmos.matrix;
+        Color previousColor = Gizmos.color;
+
+        Gizmos.matrix = Matrix4x4.TRS(currentSelection.center, currentSelection.rotation, Vector3.one);
+        Gizmos.color = new Color(0.2f, 1f, 0.7f, 0.95f);
+        Gizmos.DrawWireCube(Vector3.zero, currentSelection.size);
+
+        Gizmos.matrix = previousMatrix;
+        Gizmos.color = previousColor;
     }
 }

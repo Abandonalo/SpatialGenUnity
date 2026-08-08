@@ -11,39 +11,28 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cc28637a099294207af4ee0eabde0647, type: 3}
   m_Name: SpatialGenerationBackendSettings
-  m_EditorClassIdentifier: Assembly-CSharp::BackendSettings
-  backendKind: 2
+  m_EditorClassIdentifier: 
+  backendKind: 0
   backendPreset: 1
+  localRouterUrl: http://127.0.0.1:8001
+  colabRouterUrl: https://comfyuitunnel.share.zrok.io
+  autoStartComfy: 1
+  comfyLaunchCommand: 
+  comfyWorkingDirectory: 
+  comfyBootTimeoutSeconds: 180
+  generationModel: 0
   colabNotebookPath: notebooks/Colab_ComfyUI.ipynb
   colabNotebookUrl: https://colab.research.google.com/github/Abandonalo/SpatialGenUnity/blob/main/notebooks/Colab_ComfyUI.ipynb
-  colabGenerationModel: 0
-  handoffFolder: SpatialGenHandoff
-  requestFileName: request.json
-  responseFileName: response.json
-  pollIntervalSeconds: 0.25
-  maxWaitSeconds: 120
-  remoteUrl: https://comfyuitunnel.share.zrok.io/generate
-  remoteTimeoutSeconds: 60
-  comfyAutoStart: 0
-  comfyBaseUrl: https://comfyuitunnel.share.zrok.io
-  comfyWsUrl: 
-  comfyClientId: spatialgen-unity-client
-  comfyWorkflowTemplatePath: tools/graphs/generation.json
-  comfyInputFolder: SpatialGenHandoff/comfy_inputs
-  comfyCheckpointName: v1-5-pruned-emaonly.safetensors
-  comfyTripoSrModelName: TripoSRmodel.ckpt
-  comfyGeometryResolution: 512
-  comfyTripoSrThreshold: 25
-  comfyOutputAssetFolder: Assets/SpatialGeneration/GeneratedAssets
-  comfyLaunchCommand: /Applications/ComfyUI.app/Contents/MacOS/ComfyUI
-  comfyLaunchArguments: 
-  comfyWorkingDirectory: /Applications/ComfyUI.app/Contents/MacOS
-  comfyBootTimeoutSeconds: 90
-  comfyExecutionTimeoutSeconds: 1200
+  requestTimeoutSeconds: 60
+  executionTimeoutSeconds: 1200
   seed: -1
   steps: 30
   cfg: 7
   sampler: euler
   captureWidth: 512
   captureHeight: 512
+  geometryResolution: 512
+  tripoSrThreshold: 25
+  preserveAssetProportions: 0
+  outputFolder: Assets/SpatialGeneration/GeneratedAssets
   blockOnValidationErrors: 1

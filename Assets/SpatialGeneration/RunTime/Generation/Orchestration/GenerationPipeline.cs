@@ -3,402 +3,207 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
-using NewBackendRequest = SpatialGeneration.Generation.Intent.BackendRequest;
-using NewBackendRequestBuilder = SpatialGeneration.Generation.Intent.BackendRequestBuilder;
-using NewCompiledConstraints = SpatialGeneration.Generation.Intent.CompiledConstraints;
-using NewConstraintSet = SpatialGeneration.Generation.Intent.ConstraintSet;
-using NewConstraintTranslator = SpatialGeneration.Generation.Intent.ConstraintTranslator;
-using NewIntentJson = SpatialGeneration.Generation.Intent.IntentJson;
-using NewSceneIntent = SpatialGeneration.Generation.Intent.SceneIntent;
-using NewSceneIntentBuilder = SpatialGeneration.Generation.Intent.SceneIntentBuilder;
-using NewSceneStage = SpatialGeneration.Generation.Intent.SceneStage;
+using SpatialGeneration.Generation.Intent;
+using SpatialGeneration.Utils;
 
+/// <summary>
+/// Drives one Generate action end to end: snapshot the authored scene, render each occupy
+/// proxy's conditioning images, and ask the backend for one asset per proxy.
+///
+/// Everything a run consumed is written to <c>Logs/&lt;session&gt;/&lt;run&gt;/</c> so a
+/// generation can be reconstructed after the fact.
+/// </summary>
 public static class GenerationPipeline
 {
-    private static readonly string SessionId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
+    private static readonly string SessionId =
+        $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
 
     public static async Task<GenerationResult> GenerateAsync(
-        Camera captureCamera,
-        int width,
-        int height,
         string prompt,
         string negativePrompt,
-        int seed,
-        int steps,
-        float cfg,
-        string sampler,
-        NewSceneStage stage = NewSceneStage.Creation)
+        SceneStage stage = SceneStage.Creation)
     {
-        if (captureCamera == null)
-            throw new ArgumentNullException(nameof(captureCamera));
+        BackendSettings settings = BackendRegistry.Settings;
+        SceneIntent sceneIntent = SceneIntentBuilder.Build(stage);
+        ConstraintSet constraints = ConstraintTranslator.Translate(sceneIntent);
 
-        int safeWidth = Mathf.Max(64, width);
-        int safeHeight = Mathf.Max(64, height);
+        ReportValidationProblems(constraints.Validate(sceneIntent), settings.blockOnValidationErrors);
 
-        NewSceneIntent sceneIntent = NewSceneIntentBuilder.Build(stage);
-        NewConstraintSet constraintSet = NewConstraintTranslator.Translate(sceneIntent);
-        NewCompiledConstraints compiledConstraints =
-            SpatialGeneration.Generation.Intent.ConstraintCompiler.Compile(sceneIntent, constraintSet, captureCamera, safeWidth, safeHeight);
+        List<ProxyIntent> occupyProxies = CollectOccupyProxies(sceneIntent);
+        if (occupyProxies.Count == 0)
+            throw new InvalidOperationException("No Occupy proxies in the scene. Add one before generating.");
 
-        var validationReport = SpatialGeneration.Generation.Intent.ConstraintDebugValidator.Validate(
-            sceneIntent, constraintSet, compiledConstraints, safeWidth, safeHeight);
-        SpatialGeneration.Generation.Intent.ConstraintDebugValidator.LogToConsole(validationReport);
+        string artifactDir = CreateArtifactDirectory();
+        WriteText(Path.Combine(artifactDir, "SceneIntent.json"), IntentJson.SerializeSceneIntent(sceneIntent));
+        WriteText(Path.Combine(artifactDir, "ConstraintSet.json"), IntentJson.SerializeConstraintSet(constraints));
 
-        bool blockOnValidationErrors = BackendRegistry.Settings != null && BackendRegistry.Settings.blockOnValidationErrors;
-        if (validationReport.HasErrors && blockOnValidationErrors)
-            throw new Exception("Constraint validation failed. See console errors for details.");
-        if (validationReport.HasErrors && !blockOnValidationErrors)
-            Debug.LogWarning("Constraint validation reported errors, but generation will continue (blockOnValidationErrors=false).");
+        IGenerationBackend backend = BackendRegistry.Current;
+        await backend.EnsureReadyAsync();
 
-        HashSet<string> depthProxyIds = new();
-        if (constraintSet?.Constraints != null)
+        var result = new GenerationResult { ArtifactDirectory = artifactDir };
+        Dictionary<string, SpatialProxy> liveProxies = BuildLiveProxyLookup();
+
+        foreach (ProxyIntent proxy in occupyProxies)
         {
-            for (int i = 0; i < constraintSet.Constraints.Count; i++)
-            {
-                var c = constraintSet.Constraints[i];
-                if (c != null && !string.IsNullOrEmpty(c.ProxyId))
-                    depthProxyIds.Add(c.ProxyId);
-            }
+            AssetGenerationRequest request = BuildAssetRequest(
+                proxy, liveProxies, settings, prompt, negativePrompt, artifactDir);
+
+            result.Assets.Add(await backend.GenerateAssetAsync(request));
         }
 
-        Shader depthShader = Shader.Find("Hidden/SpatialGen/EncodeLinearDepth");
-        if (depthShader == null)
-            throw new Exception("Depth shader not found. Add Hidden/SpatialGen/EncodeLinearDepth.");
+        Debug.Log($"Spatial Generation: run artifacts saved to {artifactDir} (session={SessionId}).");
+        return result;
+    }
 
-        Material depthMaterial = new(depthShader);
-        depthMaterial.SetFloat("_MaxDepth", Mathf.Max(0.01f, captureCamera.farClipPlane));
+    private static AssetGenerationRequest BuildAssetRequest(
+        ProxyIntent proxy,
+        Dictionary<string, SpatialProxy> liveProxies,
+        BackendSettings settings,
+        string prompt,
+        string negativePrompt,
+        string artifactDir)
+    {
+        using ProxyConditioning conditioning = ProxyConditioningRenderer.Render(
+            proxy, settings.captureWidth, settings.captureHeight);
 
-        Texture2D depthTexture;
+        WriteConditioningArtifacts(artifactDir, proxy.Id, conditioning);
+
+        liveProxies.TryGetValue(proxy.Id ?? string.Empty, out SpatialProxy liveProxy);
+        Texture2D referenceImage = liveProxy != null && liveProxy.assetImage != null
+            ? TextureUtils.MakeReadable(liveProxy.assetImage)
+            : null;
+
         try
         {
-            depthTexture = SpatialGeneration.Generation.Intent.ConstraintCompiler.RenderProxyPass(
-                sceneIntent, captureCamera, safeWidth, safeHeight, depthProxyIds, depthMaterial, 1f);
+            return new AssetGenerationRequest
+            {
+                RequestId = Guid.NewGuid().ToString("N"),
+                ProxyId = proxy.Id ?? string.Empty,
+                // The per-proxy asset prompt leads so it outranks the shared style prompt.
+                Prompt = JoinPrompts(proxy.AssetPrompt, prompt),
+                NegativePrompt = negativePrompt ?? string.Empty,
+                DepthBase64 = TextureUtils.EncodePngBase64(conditioning.Depth),
+                EdgesBase64 = TextureUtils.EncodePngBase64(conditioning.Edges),
+                MaskBase64 = TextureUtils.EncodePngBase64(conditioning.Mask),
+                ReferenceImageBase64 = TextureUtils.EncodePngBase64(referenceImage),
+                Volume = ToVolume(proxy),
+                Seed = settings.seed,
+                Steps = settings.steps,
+                Cfg = settings.cfg,
+                Sampler = settings.sampler,
+                Width = settings.captureWidth,
+                Height = settings.captureHeight
+            };
         }
         finally
         {
-            UnityEngine.Object.DestroyImmediate(depthMaterial);
+            TextureUtils.Destroy(referenceImage);
         }
-
-        Texture2D edgesTexture = BuildSimpleEdgeMap(depthTexture);
-
-        NewBackendRequest request = NewBackendRequestBuilder.Build(
-            prompt, negativePrompt, depthTexture, edgesTexture, compiledConstraints,
-            seed, steps, cfg, sampler, constraintSet);
-        request.PerProxyAssetPrompts = BuildPerProxyAssetPrompts(sceneIntent);
-        request.PerProxyAssetImages = BuildPerProxyAssetImages(sceneIntent);
-        request.ProxyConstraints = BuildProxyVolumeConstraints(sceneIntent);
-
-        string artifactDir = EnsureRunArtifactDirectory();
-        string requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId;
-
-        string sceneIntentJsonPath = Path.Combine(artifactDir, "SceneIntent.json");
-        string constraintSetJsonPath = Path.Combine(artifactDir, "ConstraintSet.json");
-        string backendRequestJsonPath = Path.Combine(artifactDir, "BackendRequest.json");
-        string generationParamsJsonPath = Path.Combine(artifactDir, "GenerationParams.json");
-        string depthPath = Path.Combine(artifactDir, "depth.png");
-        string edgesPath = Path.Combine(artifactDir, "edges.png");
-        string occupyPath = Path.Combine(artifactDir, "mask_occupy.png");
-        string avoidPath = Path.Combine(artifactDir, "mask_avoid.png");
-        string focusPath = Path.Combine(artifactDir, "mask_focus.png");
-
-        File.WriteAllText(sceneIntentJsonPath, NewIntentJson.SerializeSceneIntent(sceneIntent));
-        File.WriteAllText(constraintSetJsonPath, NewIntentJson.SerializeConstraintSet(constraintSet));
-        File.WriteAllText(backendRequestJsonPath, NewBackendRequestBuilder.ToJson(request, true));
-        File.WriteAllText(generationParamsJsonPath, JsonUtility.ToJson(new GenerationRunMetadata
-        {
-            SessionId = SessionId,
-            RequestId = requestId,
-            TimestampUtc = DateTime.UtcNow.ToString("O"),
-            Stage = stage.ToString(),
-            Prompt = prompt ?? string.Empty,
-            NegativePrompt = negativePrompt ?? string.Empty,
-            Seed = seed,
-            Steps = steps,
-            Cfg = cfg,
-            Sampler = sampler ?? string.Empty,
-            Width = safeWidth,
-            Height = safeHeight,
-            CameraName = captureCamera.name,
-            ConflictPolicy = constraintSet?.ConflictPolicy ?? string.Empty,
-            ValidationErrorCount = validationReport.Errors.Count,
-            ValidationWarningCount = validationReport.Warnings.Count,
-            BlockOnValidationErrors = blockOnValidationErrors
-        }, true));
-
-        WriteTexturePng(depthTexture, depthPath);
-        WriteTexturePng(edgesTexture, edgesPath);
-        WriteTexturePng(compiledConstraints.MaskOccupy, occupyPath);
-        WriteTexturePng(compiledConstraints.MaskAvoid, avoidPath);
-        WriteTexturePng(compiledConstraints.MaskFocus, focusPath);
-
-        request.RequestId = requestId;
-        request.MaskOccupyWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.OccupyVolume);
-        request.MaskAvoidWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.KeepEmpty);
-        request.MaskFocusWeight = ResolveMaskWeight(constraintSet, SpatialGeneration.Generation.Intent.ConstraintType.FocusRegion);
-
-        IGenerationBackend backend = BackendRegistry.Current;
-        Debug.Log($"Spatial Generation artifacts saved to {artifactDir} (session={SessionId}, request_id={requestId})");
-        return await backend.GenerateAsync(request);
     }
 
-    private static string EnsureRunArtifactDirectory()
+    private static void WriteConditioningArtifacts(string artifactDir, string proxyId, ProxyConditioning conditioning)
+    {
+        string token = SanitizeFileToken(proxyId);
+        TextureUtils.WritePng(conditioning.Depth, Path.Combine(artifactDir, $"{token}_depth.png"));
+        TextureUtils.WritePng(conditioning.Edges, Path.Combine(artifactDir, $"{token}_edges.png"));
+        TextureUtils.WritePng(conditioning.Mask, Path.Combine(artifactDir, $"{token}_mask.png"));
+    }
+
+    private static void ReportValidationProblems(List<string> problems, bool blockOnErrors)
+    {
+        if (problems.Count == 0)
+            return;
+
+        foreach (string problem in problems)
+            Debug.LogError($"Constraint validation: {problem}");
+
+        if (blockOnErrors)
+            throw new InvalidOperationException(
+                $"Constraint validation failed with {problems.Count} problem(s). See the console for details.");
+
+        Debug.LogWarning("Continuing despite constraint validation errors (blockOnValidationErrors is off).");
+    }
+
+    private static List<ProxyIntent> CollectOccupyProxies(SceneIntent sceneIntent)
+    {
+        var occupy = new List<ProxyIntent>();
+        if (sceneIntent?.Proxies == null)
+            return occupy;
+
+        foreach (ProxyIntent proxy in sceneIntent.Proxies)
+        {
+            if (proxy != null && proxy.Role == ProxyRole.Occupy && !string.IsNullOrWhiteSpace(proxy.Id))
+                occupy.Add(proxy);
+        }
+
+        return occupy;
+    }
+
+    private static Dictionary<string, SpatialProxy> BuildLiveProxyLookup()
+    {
+        var lookup = new Dictionary<string, SpatialProxy>(StringComparer.Ordinal);
+        foreach (SpatialProxy proxy in UnityEngine.Object.FindObjectsByType<SpatialProxy>(FindObjectsSortMode.None))
+        {
+            if (proxy != null && !string.IsNullOrWhiteSpace(proxy.ProxyId))
+                lookup[proxy.ProxyId] = proxy;
+        }
+
+        return lookup;
+    }
+
+    private static ProxyVolume ToVolume(ProxyIntent proxy) => new()
+    {
+        Role = proxy.Role,
+        Shape = proxy.Shape,
+        Label = proxy.Label ?? string.Empty,
+        Position = ToVector3(proxy.Pose?.Position, Vector3.zero),
+        Rotation = ToQuaternion(proxy.Pose?.Rotation, Quaternion.identity),
+        Size = ToVector3(proxy.Pose?.Scale, Vector3.one)
+    };
+
+    private static string JoinPrompts(params string[] parts)
+    {
+        var kept = new List<string>();
+        foreach (string part in parts)
+        {
+            string trimmed = (part ?? string.Empty).Trim().Trim(',');
+            if (trimmed.Length > 0)
+                kept.Add(trimmed);
+        }
+
+        return string.Join(", ", kept);
+    }
+
+    private static string CreateArtifactDirectory()
     {
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         string runTimestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
-        string artifactDir = Path.Combine(projectRoot, "Logs", SessionId, runTimestamp);
+        string artifactDir = Path.Combine(projectRoot, "Logs", "SpatialGeneration", SessionId, runTimestamp);
         Directory.CreateDirectory(artifactDir);
         return artifactDir;
     }
 
-    private static void WriteTexturePng(Texture2D texture, string path)
-    {
-        if (texture == null) return;
-        byte[] bytes = texture.EncodeToPNG();
-        File.WriteAllBytes(path, bytes);
-    }
-
-    private static Texture2D BuildSimpleEdgeMap(Texture2D source)
-    {
-        if (source == null) return null;
-        int width = source.width;
-        int height = source.height;
-        Texture2D edges = new(width, height, TextureFormat.RGBA32, false);
-        Color[] src = source.GetPixels();
-        Color[] dst = new Color[src.Length];
-
-        for (int y = 1; y < height - 1; y++)
-        {
-            for (int x = 1; x < width - 1; x++)
-            {
-                int i = y * width + x;
-                float gx =
-                    -src[(y - 1) * width + (x - 1)].r + src[(y - 1) * width + (x + 1)].r +
-                    -2f * src[y * width + (x - 1)].r + 2f * src[y * width + (x + 1)].r +
-                    -src[(y + 1) * width + (x - 1)].r + src[(y + 1) * width + (x + 1)].r;
-                float gy =
-                    src[(y - 1) * width + (x - 1)].r + 2f * src[(y - 1) * width + x].r + src[(y - 1) * width + (x + 1)].r -
-                    src[(y + 1) * width + (x - 1)].r - 2f * src[(y + 1) * width + x].r - src[(y + 1) * width + (x + 1)].r;
-                float edge = Mathf.Clamp01(Mathf.Sqrt(gx * gx + gy * gy));
-                dst[i] = new Color(edge, edge, edge, 1f);
-            }
-        }
-
-        for (int x = 0; x < width; x++)
-        {
-            dst[x] = Color.black;
-            dst[(height - 1) * width + x] = Color.black;
-        }
-        for (int y = 0; y < height; y++)
-        {
-            dst[y * width] = Color.black;
-            dst[y * width + (width - 1)] = Color.black;
-        }
-
-        edges.SetPixels(dst);
-        edges.Apply(false);
-        return edges;
-    }
-
-    private static float ResolveMaskWeight(NewConstraintSet constraintSet, SpatialGeneration.Generation.Intent.ConstraintType type)
-    {
-        if (constraintSet?.Constraints == null || constraintSet.Constraints.Count == 0) return 1f;
-        float weight = 0f;
-        for (int i = 0; i < constraintSet.Constraints.Count; i++)
-        {
-            var c = constraintSet.Constraints[i];
-            if (c == null || c.Type != type) continue;
-            weight = Mathf.Max(weight, c.Weight);
-        }
-        return weight <= 0f ? 1f : Mathf.Clamp01(weight);
-    }
-
-    private static List<SpatialGeneration.Generation.Intent.PerProxyAssetPrompt> BuildPerProxyAssetPrompts(NewSceneIntent sceneIntent)
-    {
-        List<SpatialGeneration.Generation.Intent.PerProxyAssetPrompt> prompts = new();
-        if (sceneIntent?.Proxies == null || sceneIntent.Proxies.Count == 0)
-            return prompts;
-
-        for (int i = 0; i < sceneIntent.Proxies.Count; i++)
-        {
-            var proxy = sceneIntent.Proxies[i];
-            if (proxy == null ||
-                proxy.Role != SpatialGeneration.Generation.Intent.ProxyRole.Occupy ||
-                string.IsNullOrWhiteSpace(proxy.Id) ||
-                string.IsNullOrWhiteSpace(proxy.AssetPrompt))
-            {
-                continue;
-            }
-
-            prompts.Add(new SpatialGeneration.Generation.Intent.PerProxyAssetPrompt
-            {
-                ProxyId = proxy.Id,
-                AssetPrompt = proxy.AssetPrompt.Trim()
-            });
-        }
-
-        return prompts;
-    }
-
-    private static List<SpatialGeneration.Generation.Intent.PerProxyAssetImage> BuildPerProxyAssetImages(NewSceneIntent sceneIntent)
-    {
-        List<SpatialGeneration.Generation.Intent.PerProxyAssetImage> images = new();
-        if (sceneIntent?.Proxies == null || sceneIntent.Proxies.Count == 0)
-            return images;
-
-        SpatialProxy[] liveProxies = UnityEngine.Object.FindObjectsByType<SpatialProxy>(FindObjectsSortMode.None);
-        Dictionary<string, SpatialProxy> proxiesById = new();
-        for (int i = 0; i < liveProxies.Length; i++)
-        {
-            SpatialProxy liveProxy = liveProxies[i];
-            if (liveProxy == null || string.IsNullOrWhiteSpace(liveProxy.ProxyId) || liveProxy.assetImage == null)
-                continue;
-
-            proxiesById[liveProxy.ProxyId] = liveProxy;
-        }
-
-        for (int i = 0; i < sceneIntent.Proxies.Count; i++)
-        {
-            var proxy = sceneIntent.Proxies[i];
-            if (proxy == null ||
-                proxy.Role != SpatialGeneration.Generation.Intent.ProxyRole.Occupy ||
-                string.IsNullOrWhiteSpace(proxy.Id) ||
-                !proxiesById.TryGetValue(proxy.Id, out SpatialProxy liveProxy) ||
-                liveProxy.assetImage == null)
-            {
-                continue;
-            }
-
-            string imageBase64 = EncodeTextureToPngBase64(liveProxy.assetImage);
-            if (string.IsNullOrWhiteSpace(imageBase64))
-                continue;
-
-            images.Add(new SpatialGeneration.Generation.Intent.PerProxyAssetImage
-            {
-                ProxyId = proxy.Id,
-                FileName = BuildProxyImageFileName(proxy.Id, liveProxy.assetImage.name),
-                ImageBase64 = imageBase64
-            });
-        }
-
-        return images;
-    }
-
-    private static List<SpatialGeneration.Generation.Intent.ProxyVolumeConstraint> BuildProxyVolumeConstraints(NewSceneIntent sceneIntent)
-    {
-        List<SpatialGeneration.Generation.Intent.ProxyVolumeConstraint> constraints = new();
-        if (sceneIntent?.Proxies == null || sceneIntent.Proxies.Count == 0)
-            return constraints;
-
-        for (int i = 0; i < sceneIntent.Proxies.Count; i++)
-        {
-            var proxy = sceneIntent.Proxies[i];
-            if (proxy == null || string.IsNullOrWhiteSpace(proxy.Id))
-                continue;
-
-            constraints.Add(new SpatialGeneration.Generation.Intent.ProxyVolumeConstraint
-            {
-                Id = Guid.NewGuid().ToString("N"),
-                ProxyId = proxy.Id,
-                Role = proxy.Role,
-                Shape = proxy.Shape,
-                Position = proxy.Pose?.Position ?? SpatialGeneration.Generation.Intent.Vector3Data.Zero,
-                Rotation = proxy.Pose?.Rotation ?? SpatialGeneration.Generation.Intent.QuaternionData.Identity,
-                Size = proxy.Pose?.Scale ?? SpatialGeneration.Generation.Intent.Vector3Data.One
-            });
-        }
-
-        return constraints;
-    }
-
-    private static string EncodeTextureToPngBase64(Texture sourceTexture)
-    {
-        if (sourceTexture == null)
-            return string.Empty;
-
-        RenderTexture tempRt = null;
-        RenderTexture previousActive = null;
-        Texture2D readable = null;
-
-        try
-        {
-            int width = Mathf.Max(1, sourceTexture.width);
-            int height = Mathf.Max(1, sourceTexture.height);
-            tempRt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
-            Graphics.Blit(sourceTexture, tempRt);
-
-            previousActive = RenderTexture.active;
-            RenderTexture.active = tempRt;
-
-            readable = new Texture2D(width, height, TextureFormat.RGBA32, false);
-            readable.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-            readable.Apply(false, false);
-
-            byte[] pngBytes = readable.EncodeToPNG();
-            return pngBytes == null || pngBytes.Length == 0
-                ? string.Empty
-                : Convert.ToBase64String(pngBytes);
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"Failed to encode proxy asset image '{sourceTexture.name}' as PNG. {ex.Message}");
-            return string.Empty;
-        }
-        finally
-        {
-            if (previousActive != null || RenderTexture.active != null)
-                RenderTexture.active = previousActive;
-            if (readable != null)
-                UnityEngine.Object.DestroyImmediate(readable);
-            if (tempRt != null)
-                RenderTexture.ReleaseTemporary(tempRt);
-        }
-    }
-
-    private static string BuildProxyImageFileName(string proxyId, string textureName)
-    {
-        string safeProxyId = SanitizeFileToken(proxyId);
-        string safeTextureName = SanitizeFileToken(textureName);
-        string baseName = string.IsNullOrWhiteSpace(safeTextureName) ? safeProxyId : $"{safeProxyId}_{safeTextureName}";
-        if (string.IsNullOrWhiteSpace(baseName))
-            baseName = "proxy_image";
-        return $"{baseName}.png";
-    }
+    private static void WriteText(string path, string contents) => File.WriteAllText(path, contents);
 
     private static string SanitizeFileToken(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
+            return "proxy";
 
         char[] chars = value.Trim().ToCharArray();
         for (int i = 0; i < chars.Length; i++)
         {
-            char ch = chars[i];
-            if (!(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-'))
+            if (!char.IsLetterOrDigit(chars[i]) && chars[i] != '_' && chars[i] != '-')
                 chars[i] = '_';
         }
 
-        return new string(chars).Trim('_');
+        string sanitized = new string(chars).Trim('_');
+        return string.IsNullOrWhiteSpace(sanitized) ? "proxy" : sanitized;
     }
 
-    [Serializable]
-    private class GenerationRunMetadata
-    {
-        public string SessionId;
-        public string RequestId;
-        public string TimestampUtc;
-        public string Stage;
-        public string Prompt;
-        public string NegativePrompt;
-        public int Seed;
-        public int Steps;
-        public float Cfg;
-        public string Sampler;
-        public int Width;
-        public int Height;
-        public string CameraName;
-        public string ConflictPolicy;
-        public int ValidationErrorCount;
-        public int ValidationWarningCount;
-        public bool BlockOnValidationErrors;
-    }
+    private static Vector3 ToVector3(Vector3Data value, Vector3 fallback) =>
+        value == null ? fallback : new Vector3(value.X, value.Y, value.Z);
+
+    private static Quaternion ToQuaternion(QuaternionData value, Quaternion fallback) =>
+        value == null ? fallback : new Quaternion(value.X, value.Y, value.Z, value.W);
 }

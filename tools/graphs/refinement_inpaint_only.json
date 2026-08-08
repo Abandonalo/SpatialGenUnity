@@ -1,12 +1,108 @@
 {
+  "_comment": "Region inpaint for the refinement stage. The mask is the selection box intersected with visible surfaces, and ControlNet depth holds the untouched geometry in place so the edit stays inside the mask instead of drifting the whole view. Output feeds refinement_tripo_from_rgb.json.",
+
   "1": {
     "inputs": { "image": "__RGB_IMAGE__" },
-    "class_type": "LoadImage"
+    "class_type": "LoadImage",
+    "_meta": { "title": "Scene View (from Unity)" }
   },
   "2": {
     "inputs": { "image": "__MASK_IMAGE__" },
-    "class_type": "LoadImage"
+    "class_type": "LoadImage",
+    "_meta": { "title": "Region Mask (from Unity)" }
   },
+  "10": {
+    "inputs": { "image": "__DEPTH_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Scene Depth (from Unity)" }
+  },
+  "11": {
+    "inputs": { "image": "__CANNY_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Scene Edges (from Unity)" }
+  },
+
+  "4": {
+    "inputs": { "ckpt_name": "__INPAINT_CHECKPOINT__" },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": { "title": "Load Inpaint Checkpoint" }
+  },
+
+  "6": {
+    "inputs": { "text": "__POSITIVE_PROMPT__", "clip": ["4", 1] },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Positive Prompt" }
+  },
+  "7": {
+    "inputs": { "text": "__NEGATIVE_PROMPT__", "clip": ["4", 1] },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Negative Prompt" }
+  },
+
+  "12": {
+    "inputs": { "image": ["2", 0], "channel": "red" },
+    "class_type": "ImageToMask",
+    "_meta": { "title": "Mask To Channel" }
+  },
+  "120": {
+    "inputs": { "mask": ["12", 0], "value": 0.7 },
+    "class_type": "ThresholdMask",
+    "_meta": { "title": "Harden Mask" }
+  },
+  "121": {
+    "inputs": { "mask": ["120", 0], "expand": 12, "tapered_corners": true },
+    "class_type": "GrowMask",
+    "_meta": { "title": "Feather Mask Edge" }
+  },
+
+  "16": {
+    "inputs": { "control_net_name": "__CONTROLNET_DEPTH__" },
+    "class_type": "ControlNetLoader",
+    "_meta": { "title": "Load ControlNet (Depth)" }
+  },
+  "17": {
+    "inputs": { "control_net_name": "__CONTROLNET_CANNY__" },
+    "class_type": "ControlNetLoader",
+    "_meta": { "title": "Load ControlNet (Canny)" }
+  },
+  "18": {
+    "inputs": {
+      "strength": "__CN_DEPTH_STRENGTH__",
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "control_net": ["16", 0],
+      "image": ["10", 0]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": { "title": "Apply Depth Control" }
+  },
+  "19": {
+    "inputs": {
+      "strength": "__CN_CANNY_STRENGTH__",
+      "start_percent": 0,
+      "end_percent": 0.7,
+      "positive": ["18", 0],
+      "negative": ["18", 1],
+      "control_net": ["17", 0],
+      "image": ["11", 0]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": { "title": "Apply Edge Control" }
+  },
+
+  "9": {
+    "inputs": {
+      "pixels": ["1", 0],
+      "vae": ["4", 2],
+      "mask": ["121", 0],
+      "grow_mask_by": 24
+    },
+    "class_type": "VAEEncodeForInpaint",
+    "_meta": { "title": "Encode For Inpaint" }
+  },
+
   "3": {
     "inputs": {
       "seed": "__SEED__",
@@ -16,73 +112,22 @@
       "scheduler": "karras",
       "denoise": "__DENOISE__",
       "model": ["4", 0],
-      "positive": ["6", 0],
-      "negative": ["7", 0],
+      "positive": ["19", 0],
+      "negative": ["19", 1],
       "latent_image": ["9", 0]
     },
-    "class_type": "KSampler"
+    "class_type": "KSampler",
+    "_meta": { "title": "KSampler" }
   },
-  "4": {
-    "inputs": { "ckpt_name": "__INPAINT_CHECKPOINT__" },
-    "class_type": "CheckpointLoaderSimple"
-  },
-  "6": {
-    "inputs": {
-      "text": "__POSITIVE_PROMPT__",
-      "clip": ["4", 1]
-    },
-    "class_type": "CLIPTextEncode"
-  },
-  "7": {
-    "inputs": {
-      "text": "__NEGATIVE_PROMPT__",
-      "clip": ["4", 1]
-    },
-    "class_type": "CLIPTextEncode"
-  },
+
   "8": {
-    "inputs": {
-      "samples": ["3", 0],
-      "vae": ["4", 2]
-    },
-    "class_type": "VAEDecode"
-  },
-  "9": {
-    "inputs": {
-      "pixels": ["1", 0],
-      "vae": ["4", 2],
-      "mask": ["121", 0],
-      "grow_mask_by": 24
-    },
-    "class_type": "VAEEncodeForInpaint"
-  },
-  "12": {
-    "inputs": {
-      "image": ["2", 0],
-      "channel": "red"
-    },
-    "class_type": "ImageToMask"
+    "inputs": { "samples": ["3", 0], "vae": ["4", 2] },
+    "class_type": "VAEDecode",
+    "_meta": { "title": "VAE Decode" }
   },
   "43": {
-    "inputs": {
-      "filename_prefix": "spatialgen_refined_tile",
-      "images": ["8", 0]
-    },
-    "class_type": "SaveImage"
-  },
-  "120": {
-    "inputs": {
-      "mask": ["12", 0],
-      "value": 0.7
-    },
-    "class_type": "ThresholdMask"
-  },
-  "121": {
-    "inputs": {
-      "mask": ["120", 0],
-      "expand": 12,
-      "tapered_corners": true
-    },
-    "class_type": "GrowMask"
+    "inputs": { "filename_prefix": "spatialgen_refined_view", "images": ["8", 0] },
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save Refined View" }
   }
 }

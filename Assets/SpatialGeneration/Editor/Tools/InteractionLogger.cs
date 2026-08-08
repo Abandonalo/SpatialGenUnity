@@ -119,9 +119,8 @@ public static class InteractionLogger
     }
 
     public static void RevealLogFolder()
-{
-    EnsureInitialized();
-    EditorUtility.RevealInFinder(Path.GetDirectoryName(_jsonlPath));
-}
-
+    {
+        EnsureInitialized();
+        EditorUtility.RevealInFinder(Path.GetDirectoryName(_jsonlPath));
+    }
 }

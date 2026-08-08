@@ -1,219 +1,181 @@
 {
-    "3": {
-      "inputs": {
-        "seed": "__SEED__",
-        "steps": "__STEPS__",
-        "cfg": "__CFG__",
-        "sampler_name": "euler",
-        "scheduler": "normal",
-        "denoise": 1,
-        "model": [
-          "4",
-          0
-        ],
-        "positive": [
-          "6",
-          0
-        ],
-        "negative": [
-          "7",
-          0
-        ],
-        "latent_image": [
-          "5",
-          0
-        ]
-      },
-      "class_type": "KSampler",
-      "_meta": {
-        "title": "KSampler"
-      }
+  "_comment": "Text-to-3D under spatial control. The proxy the user placed in Unity is rendered to a depth map and an edge map; ControlNet binds the diffusion to that geometry, so the generated image inherits the primitive's placement, scale and proportions. RemBG then isolates the object and TripoSR lifts it to a mesh. Placeholders are filled by tools/comfy_router_backend/graph_injector.py.",
+
+  "4": {
+    "inputs": { "ckpt_name": "__CHECKPOINT__" },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": { "title": "Load Checkpoint" }
+  },
+
+  "6": {
+    "inputs": { "text": "__POSITIVE_PROMPT__", "clip": ["4", 1] },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Positive Prompt" }
+  },
+  "7": {
+    "inputs": { "text": "__NEGATIVE_PROMPT__", "clip": ["4", 1] },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Negative Prompt" }
+  },
+
+  "10": {
+    "inputs": { "image": "__DEPTH_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Proxy Depth (from Unity)" }
+  },
+  "11": {
+    "inputs": { "image": "__CANNY_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Proxy Edges (from Unity)" }
+  },
+
+  "12": {
+    "inputs": { "control_net_name": "__CONTROLNET_DEPTH__" },
+    "class_type": "ControlNetLoader",
+    "_meta": { "title": "Load ControlNet (Depth)" }
+  },
+  "13": {
+    "inputs": { "control_net_name": "__CONTROLNET_CANNY__" },
+    "class_type": "ControlNetLoader",
+    "_meta": { "title": "Load ControlNet (Canny)" }
+  },
+
+  "14": {
+    "inputs": {
+      "strength": "__CN_DEPTH_STRENGTH__",
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "control_net": ["12", 0],
+      "image": ["10", 0]
     },
-    "4": {
-      "inputs": {
-        "ckpt_name": "__CHECKPOINT__"
-      },
-      "class_type": "CheckpointLoaderSimple",
-      "_meta": {
-        "title": "Load Checkpoint"
-      }
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": { "title": "Apply Depth Control" }
+  },
+  "15": {
+    "inputs": {
+      "strength": "__CN_CANNY_STRENGTH__",
+      "start_percent": 0,
+      "end_percent": 0.7,
+      "positive": ["14", 0],
+      "negative": ["14", 1],
+      "control_net": ["13", 0],
+      "image": ["11", 0]
     },
-    "5": {
-      "inputs": {
-        "width": 512,
-        "height": 512,
-        "batch_size": 1
-      },
-      "class_type": "EmptyLatentImage",
-      "_meta": {
-        "title": "Empty Latent Image"
-      }
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": { "title": "Apply Edge Control" }
+  },
+
+  "5": {
+    "inputs": { "width": 512, "height": 512, "batch_size": 1 },
+    "class_type": "EmptyLatentImage",
+    "_meta": { "title": "Empty Latent" }
+  },
+
+  "3": {
+    "inputs": {
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "cfg": "__CFG__",
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": ["4", 0],
+      "positive": ["15", 0],
+      "negative": ["15", 1],
+      "latent_image": ["5", 0]
     },
-    "6": {
-      "inputs": {
-        "text": "__MESH_PROMPT__",
-        "clip": [
-          "4",
-          1
-        ]
-      },
-      "class_type": "CLIPTextEncode",
-      "_meta": {
-        "title": "CLIP Text Encode (Mesh Source Prompt)"
-      }
+    "class_type": "KSampler",
+    "_meta": { "title": "KSampler" }
+  },
+
+  "8": {
+    "inputs": { "samples": ["3", 0], "vae": ["4", 2] },
+    "class_type": "VAEDecode",
+    "_meta": { "title": "VAE Decode" }
+  },
+
+  "43": {
+    "inputs": { "filename_prefix": "spatialgen_mesh_source", "images": ["8", 0] },
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save Mesh Source Image" }
+  },
+
+  "50": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "width": 512,
+      "height": 512,
+      "crop": "center",
+      "image": ["8", 0]
     },
-    "7": {
-      "inputs": {
-        "text": "__MESH_NEG_PROMPT__",
-        "clip": [
-          "4",
-          1
-        ]
-      },
-      "class_type": "CLIPTextEncode",
-      "_meta": {
-        "title": "CLIP Text Encode (Mesh Source Negative Prompt)"
-      }
+    "class_type": "ImageScale",
+    "_meta": { "title": "Scale To Reconstruction Size" }
+  },
+
+  "65": {
+    "inputs": { "model": "u2net: general purpose", "providers": "CPU" },
+    "class_type": "RemBGSession+",
+    "_meta": { "title": "RemBG Session" }
+  },
+  "64": {
+    "inputs": { "rembg_session": ["65", 0], "image": ["50", 0] },
+    "class_type": "ImageRemoveBackground+",
+    "_meta": { "title": "Remove Background" }
+  },
+  "70": {
+    "inputs": { "image": "__MASK_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Proxy Silhouette (from Unity)" }
+  },
+  "71": {
+    "inputs": { "image": ["70", 0], "channel": "red" },
+    "class_type": "ImageToMask",
+    "_meta": { "title": "Proxy Silhouette To Mask" }
+  },
+  "72": {
+    "inputs": {
+      "destination": ["64", 1],
+      "source": ["71", 0],
+      "x": 0,
+      "y": 0,
+      "operation": "multiply"
     },
-    "8": {
-      "inputs": {
-        "samples": [
-          "3",
-          0
-        ],
-        "vae": [
-          "4",
-          2
-        ]
-      },
-      "class_type": "VAEDecode",
-      "_meta": {
-        "title": "VAE Decode"
-      }
+    "class_type": "MaskComposite",
+    "_meta": { "title": "Clip Foreground To Proxy Volume" }
+  },
+
+  "53": {
+    "inputs": { "mask": ["72", 0] },
+    "class_type": "MaskToImage",
+    "_meta": { "title": "Mask To Image" }
+  },
+  "27": {
+    "inputs": { "filename_prefix": "spatialgen_rmbg_mask", "images": ["53", 0] },
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save Foreground Mask" }
+  },
+
+  "67": {
+    "inputs": { "model": "__TRIPOSR_MODEL__", "chunk_size": 8192 },
+    "class_type": "TripoSRModelLoader",
+    "_meta": { "title": "TripoSR Model Loader" }
+  },
+  "66": {
+    "inputs": {
+      "geometry_resolution": "__GEOMETRY_RESOLUTION__",
+      "threshold": "__TRIPOSR_THRESHOLD__",
+      "model": ["67", 0],
+      "reference_image": ["50", 0],
+      "reference_mask": ["72", 0]
     },
-    "43": {
-      "inputs": {
-        "filename_prefix": "spatialgen_mesh_source",
-        "images": [
-          "8",
-          0
-        ]
-      },
-      "class_type": "SaveImage",
-      "_meta": {
-        "title": "Save Mesh Source Image"
-      }
-    },
-    "50": {
-      "inputs": {
-        "upscale_method": "nearest-exact",
-        "width": 512,
-        "height": 512,
-        "crop": "center",
-        "image": [
-          "8",
-          0
-        ]
-      },
-      "class_type": "ImageScale",
-      "_meta": {
-        "title": "Upscale Image"
-      }
-    },
-    "65": {
-      "inputs": {
-        "model": "u2net: general purpose",
-        "providers": "CPU"
-      },
-      "class_type": "RemBGSession+",
-      "_meta": {
-        "title": "RemBG Session"
-      }
-    },
-    "64": {
-      "inputs": {
-        "rembg_session": [
-          "65",
-          0
-        ],
-        "image": [
-          "50",
-          0
-        ]
-      },
-      "class_type": "ImageRemoveBackground+",
-      "_meta": {
-        "title": "Image Remove Background"
-      }
-    },
-    "53": {
-      "inputs": {
-        "mask": [
-          "64",
-          1
-        ]
-      },
-      "class_type": "MaskToImage",
-      "_meta": {
-        "title": "Mask To Image"
-      }
-    },
-    "27": {
-      "inputs": {
-        "filename_prefix": "spatialgen_rmbg_mask",
-        "images": [
-          "53",
-          0
-        ]
-      },
-      "class_type": "SaveImage",
-      "_meta": {
-        "title": "Save RMBG Mask Image"
-      }
-    },
-    "67": {
-      "inputs": {
-        "model": "__TRIPOSR_MODEL__",
-        "chunk_size": 8192
-      },
-      "class_type": "TripoSRModelLoader",
-      "_meta": {
-        "title": "TripoSR Model Loader"
-      }
-    },
-    "66": {
-      "inputs": {
-        "geometry_resolution": "__GEOMETRY_RESOLUTION__",
-        "threshold": "__TRIPOSR_THRESHOLD__",
-        "model": [
-          "67",
-          0
-        ],
-        "reference_image": [
-          "50",
-          0
-        ],
-        "reference_mask": [
-          "64",
-          1
-        ]
-      },
-      "class_type": "TripoSRSampler",
-      "_meta": {
-        "title": "TripoSR Sampler"
-      }
-    },
-    "68": {
-      "inputs": {
-        "format": "glb",
-        "mesh": [
-          "66",
-          0
-        ]
-      },
-      "class_type": "TripoSRViewer",
-      "_meta": {
-        "title": "TripoSR Viewer"
-      }
-    }
+    "class_type": "TripoSRSampler",
+    "_meta": { "title": "TripoSR Sampler" }
+  },
+  "68": {
+    "inputs": { "format": "glb", "mesh": ["66", 0] },
+    "class_type": "TripoSRViewer",
+    "_meta": { "title": "Export GLB" }
   }
+}

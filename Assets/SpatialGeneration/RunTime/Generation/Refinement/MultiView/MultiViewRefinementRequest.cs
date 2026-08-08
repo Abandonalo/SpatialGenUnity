@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
 
-// Per-view RGB / depth / mask triplet. viewType is serialized as a string
-// (enum name) so the Python backend can key per-view logic without being
-// coupled to the C# enum ordering.
+/// <summary>
+/// One canonical view's capture. <see cref="viewType"/> travels as the enum name so the
+/// Python router is not coupled to C# enum ordering.
+/// </summary>
 [Serializable]
 public class ViewData
 {
@@ -12,48 +13,74 @@ public class ViewData
     public int height;
     public string rgbBase64 = string.Empty;
     public string depthBase64 = string.Empty;
-    /// <summary>Per-view edge map (e.g. Sobel on linear depth), same resolution as RGB; optional for backend.</summary>
+
+    /// <summary>Sobel edges of the depth pass; used as Canny conditioning.</summary>
     public string edgesBase64 = string.Empty;
+
+    /// <summary>Binary inpaint mask: the selection box intersected with visible surfaces.</summary>
     public string maskBase64 = string.Empty;
 }
 
 [Serializable]
 public class MultiViewData
 {
-    public List<ViewData> views = new List<ViewData>();
+    public List<ViewData> views = new();
 }
 
-// Multi-view refinement payload. Every view MUST share:
-//   - the same seed (deterministic, cross-view consistent latents)
-//   - the same width/height
-//   - the same prompt pair
-// so the server-side inpainter yields mutually consistent refined images.
+/// <summary>
+/// Refinement payload. Every view shares one seed, one prompt and one resolution: that is
+/// what keeps the four inpaints describing the same object rather than four variations of it.
+/// Mirrors <c>MultiViewRefinementRequestModel</c> in the router.
+/// </summary>
 [Serializable]
 public class MultiViewRefinementRequest
 {
     public string requestId = string.Empty;
     public string sessionId = string.Empty;
-
     public string mode = "refine";
 
     public string positivePrompt = string.Empty;
     public string negativePrompt = string.Empty;
 
-    // Fixed seed shared across every view. Must be non-negative; the
-    // controller is responsible for populating this deterministically so
-    // repeated runs with the same scene + prompt produce identical output.
     public int seed;
+    public int steps = RefinementDefaults.Steps;
+    public float cfg = RefinementDefaults.Cfg;
+    public float denoise = RefinementDefaults.Denoise;
 
-    public int steps = 20;
-    public float cfg = 8f;
-    public float denoise = RefinementDefaults.KSDenoise;
-
-    // Preferred view used for the final TripoSR reconstruction.
+    /// <summary>View whose refined image is lifted back to 3D.</summary>
     public string reconstructionView = "Front";
 
-    public List<ViewData> views = new List<ViewData>();
+    /// <summary>
+    /// The selection's footprint in the reconstruction view, in viewport UV. The router crops
+    /// the refined image to this rect before lifting, so the resulting mesh spans the region
+    /// the user selected and not the surrounding context the cameras included for blending.
+    /// Sent as four floats rather than a Vector4 to keep the JSON flat for pydantic.
+    /// </summary>
+    public float cropMinX;
+    public float cropMinY;
+    public float cropMaxX = 1f;
+    public float cropMaxY = 1f;
 
-    public RegionSelection selection;
+    public List<ViewData> views = new();
+
+    /// <summary>Copy without image payloads, for writing a readable debug artifact.</summary>
+    public MultiViewRefinementRequest WithoutViewPayloads() => new()
+    {
+        requestId = requestId,
+        sessionId = sessionId,
+        mode = mode,
+        positivePrompt = positivePrompt,
+        negativePrompt = negativePrompt,
+        seed = seed,
+        steps = steps,
+        cfg = cfg,
+        denoise = denoise,
+        reconstructionView = reconstructionView,
+        cropMinX = cropMinX,
+        cropMinY = cropMinY,
+        cropMaxX = cropMaxX,
+        cropMaxY = cropMaxY
+    };
 }
 
 [Serializable]
@@ -67,11 +94,25 @@ public class RefinedViewResult
 public class MultiViewRefinementResponse
 {
     public string requestId = string.Empty;
-    public List<RefinedViewResult> refinedViews = new List<RefinedViewResult>();
+    public List<RefinedViewResult> refinedViews = new();
 
-    // Mesh produced from the reconstructionView (or Front by default).
+    /// <summary>The lifted region mesh, base64 .glb.</summary>
     public string meshBase64 = string.Empty;
 
     public bool success;
+    public string status = string.Empty;
     public string errorMessage = string.Empty;
+
+    /// <summary>True while the router still has the job queued or running.</summary>
+    public bool IsPending
+    {
+        get
+        {
+            if (!success)
+                return false;
+
+            string normalized = (status ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized is "queued" or "running" or "pending";
+        }
+    }
 }

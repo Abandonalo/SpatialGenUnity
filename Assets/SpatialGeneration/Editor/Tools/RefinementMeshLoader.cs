@@ -1,240 +1,230 @@
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
+using SpatialGeneration.Generation;
+using SpatialGeneration.Generation.Refinement;
 
 /// <summary>
-/// Editor-only bridge between <see cref="RefinementController"/> (Runtime asmdef)
-/// and <see cref="GenerationControllerEditor.TryInstantiateMeshOutput"/>. The
-/// controller cannot call into Editor assemblies directly (circular reference),
-/// so it raises a static event that this loader subscribes to.
+/// Editor-side bridge for <see cref="RefinementController.RefinedMeshReady"/>: splices a
+/// refined region mesh into the scene.
+///
+/// The splice is what makes a local edit local. Rather than swapping the whole asset for a
+/// fresh reconstruction, the original mesh is cut against the user's selection box: triangles
+/// outside the box are carried over vertex-for-vertex, and only the box's contents are
+/// replaced. Anything the user did not select is therefore byte-identical afterwards, which
+/// is what makes "did this edit stay local?" a measurable question rather than a judgement call.
 /// </summary>
 [InitializeOnLoad]
 public static class RefinementMeshLoader
 {
-    private const string GeneratedRootName = "GeneratedContent";
+    private const string PreservedPrefix = "Preserved_";
+    private const string RegionChildName = "RefinedRegion";
 
     static RefinementMeshLoader()
     {
-        RefinementController.RefinedMeshReady -= Handle;
-        RefinementController.RefinedMeshReady += Handle;
+        RefinementController.RefinedMeshReady -= Apply;
+        RefinementController.RefinedMeshReady += Apply;
     }
 
-    private static bool Handle(RefinedMeshContext ctx)
+    private static bool Apply(RefinedMeshContext context)
     {
-        if (ctx == null || string.IsNullOrWhiteSpace(ctx.meshAbsolutePath))
+        if (context == null || context.Region == null || string.IsNullOrWhiteSpace(context.meshAbsolutePath))
             return false;
 
         try
         {
-            GameObject root = GameObject.Find(GeneratedRootName);
-            if (root == null)
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Apply Region Refinement");
+
+            GameObject root = GenerationRunner.EnsureGeneratedRoot();
+            List<Transform> sources = CollectActiveGeneratedSubtrees(root.transform);
+            if (sources.Count == 0)
             {
-                root = new GameObject(GeneratedRootName);
-                Undo.RegisterCreatedObjectUndo(root, "Create GeneratedContent Root");
-            }
-
-            ClearPreviousRefinementArtifacts(root);
-
-            if (!GenerationControllerEditor.TryInstantiateMeshOutput(
-                    ctx.meshAbsolutePath,
-                    root,
-                    out GameObject meshObject,
-                    forceVertexColorMaterials: true))
+                Debug.LogWarning("Spatial Generation: nothing under GeneratedContent to refine.");
                 return false;
-
-            meshObject.name = $"Refined_Mesh_{(string.IsNullOrWhiteSpace(ctx.requestId) ? "0" : ctx.requestId)}";
-
-            // Multi-view refinement lifts the WHOLE generated scene into a new
-            // mesh (only the selection region's pixels were changed inside the
-            // inpaint step). Align the refined mesh to the full scene bounds
-            // of the original Generated_Mesh* so the result visually replaces
-            // the original instead of being squeezed into the selection.
-            Bounds sceneBounds = ComputeOriginalSceneBounds(root);
-            Vector3 targetSize;
-            Vector3 targetCenter;
-            Quaternion targetRotation;
-            bool usedSceneBounds;
-            if (sceneBounds.size.sqrMagnitude > 1e-6f)
-            {
-                targetSize = sceneBounds.size;
-                targetCenter = sceneBounds.center;
-                targetRotation = ResolveOriginalGeneratedMeshRotation(root);
-                usedSceneBounds = true;
-            }
-            else
-            {
-                targetSize = ctx.selectionSize;
-                targetCenter = ctx.selectionCenter;
-                targetRotation = ctx.selectionRotation;
-                usedSceneBounds = false;
             }
 
-            bool hasTarget = targetSize.sqrMagnitude > 1e-6f;
-            if (hasTarget)
+            var refined = new GameObject($"Refined_Mesh_{Sanitize(context.requestId)}");
+            refined.transform.SetParent(root.transform, worldPositionStays: false);
+            Undo.RegisterCreatedObjectUndo(refined, "Create Refined Mesh");
+
+            if (!MeshImporter.TryInstantiate(
+                    context.meshAbsolutePath, refined.transform, preferVertexColors: true,
+                    out GameObject region, out string regionAssetPath))
             {
-                meshObject.transform.rotation = targetRotation;
-                FitObjectToTargetSizeNonUniform(meshObject, targetSize);
-                GenerationControllerEditor.AlignObjectBoundsCenterToTarget(meshObject, targetCenter);
+                Undo.DestroyObjectImmediate(refined);
+                return false;
             }
 
-            // Since the refined mesh now replaces the whole scene, hide the
-            // original Generated_Mesh* instead of showing both stacked. The
-            // originals are kept in the hierarchy (deactivated) so the user
-            // can restore them by re-enabling if needed.
-            if (usedSceneBounds)
-                DeactivateOriginalGeneratedMeshes(root);
+            region.name = RegionChildName;
+            PlaceInRegion(region, context.Region);
 
-            Undo.RegisterCreatedObjectUndo(meshObject, "Create Refined Mesh");
+            int preservedTriangles = 0;
+            int replacedTriangles = 0;
+            foreach (Transform source in sources)
+            {
+                GameObject preserved = BuildPreservedCopy(source, context.Region, regionAssetPath, out int kept, out int removed);
+                preservedTriangles += kept;
+                replacedTriangles += removed;
 
-            Debug.Log($"Spatial Generation: Loaded refined mesh for request '{ctx.requestId}' (aligned={hasTarget}).");
+                if (preserved == null)
+                    continue;
+
+                preserved.transform.SetParent(refined.transform, worldPositionStays: true);
+            }
+
+            foreach (Transform source in sources)
+            {
+                Undo.RecordObject(source.gameObject, "Hide Refined Source");
+                source.gameObject.SetActive(false);
+            }
+
+            Undo.CollapseUndoOperations(group);
+
+            Debug.Log(
+                $"Spatial Generation: refinement '{context.requestId}' replaced {replacedTriangles} triangles " +
+                $"inside the region and preserved {preservedTriangles} outside it.");
             return true;
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Spatial Generation: RefinementMeshLoader failed: {ex.Message}");
+            Debug.LogError($"Spatial Generation: could not apply the refined mesh. {ex.Message}\n{ex.StackTrace}");
             return false;
         }
     }
 
     /// <summary>
-    /// Scales <paramref name="target"/> per-axis so its combined renderer
-    /// bounds match <paramref name="targetSize"/> exactly on every axis.
-    /// TripoSR returns a near-unit-cube mesh regardless of the source
-    /// image's true proportions, so any uniform scale either fits-inside
-    /// (much smaller than the original scene) or covers (overshoots two
-    /// axes). Per-axis scaling is the only way to match the original
-    /// scene's bounding box on all three axes simultaneously, at the cost
-    /// of slight non-uniform deformation - which is acceptable here
-    /// because the refined mesh is meant to *replace* the original
-    /// generated scene, not preserve TripoSR's internal proportions.
+    /// Clones <paramref name="source"/> and rebuilds each of its meshes without the triangles
+    /// that fall inside <paramref name="region"/>. Transforms and materials are untouched, so
+    /// the surviving geometry renders exactly as before.
     /// </summary>
-    private static void FitObjectToTargetSizeNonUniform(GameObject target, Vector3 targetSize)
+    private static GameObject BuildPreservedCopy(
+        Transform source,
+        RegionSelection region,
+        string meshAssetFolderSibling,
+        out int keptTriangles,
+        out int removedTriangles)
     {
-        if (target == null)
-            return;
-        Renderer[] renderers = target.GetComponentsInChildren<Renderer>(true);
-        if (renderers == null || renderers.Length == 0)
-            return;
-        Bounds combined = renderers[0].bounds;
-        for (int i = 1; i < renderers.Length; i++)
-            combined.Encapsulate(renderers[i].bounds);
+        keptTriangles = 0;
+        removedTriangles = 0;
 
-        const float min = 1e-4f;
-        Vector3 cur = combined.size;
-        Vector3 safeCur = new(Mathf.Max(min, cur.x), Mathf.Max(min, cur.y), Mathf.Max(min, cur.z));
-        Vector3 safeTgt = new(Mathf.Max(min, targetSize.x), Mathf.Max(min, targetSize.y), Mathf.Max(min, targetSize.z));
-        Vector3 axisScale = new(safeTgt.x / safeCur.x, safeTgt.y / safeCur.y, safeTgt.z / safeCur.z);
-        target.transform.localScale = Vector3.Scale(target.transform.localScale, axisScale);
-    }
+        GameObject clone = UnityEngine.Object.Instantiate(source.gameObject);
+        clone.name = $"{PreservedPrefix}{source.name}";
+        clone.transform.SetPositionAndRotation(source.position, source.rotation);
+        clone.transform.localScale = source.lossyScale;
+        clone.SetActive(true);
 
-    // Combined renderer bounds of the original Generated_Mesh* under
-    // <paramref name="root"/>. Walks each renderer up to the direct child
-    // of <paramref name="root"/> and only includes descendants of nodes
-    // named "Generated_Mesh*". Filtering on the renderer's immediate
-    // GameObject name (the previous approach) didn't work because
-    // imported GLBs have renderers on grandchildren with internal glTF
-    // node names like "Mesh_001", so "Refined_*" never matched and prior
-    // refined-mesh renderers leaked into the bounds.
-    private static Bounds ComputeOriginalSceneBounds(GameObject root)
-    {
-        if (root == null) return new Bounds(Vector3.zero, Vector3.zero);
-        Renderer[] rs = root.GetComponentsInChildren<Renderer>(true);
-        Bounds b = new Bounds();
-        bool has = false;
-        for (int i = 0; i < rs.Length; i++)
+        // Metadata describes the source asset, not this derived copy.
+        foreach (GeneratedMeshMetadata metadata in clone.GetComponentsInChildren<GeneratedMeshMetadata>(true))
+            UnityEngine.Object.DestroyImmediate(metadata);
+
+        var emptied = new List<GameObject>();
+        foreach (MeshFilter filter in clone.GetComponentsInChildren<MeshFilter>(true))
         {
-            Renderer r = rs[i];
-            if (r == null) continue;
-            if (!r.gameObject.activeInHierarchy) continue;
-            Transform rootChild = FindRootChild(root.transform, r.transform);
-            if (rootChild == null) continue;
-            string n = rootChild.gameObject.name ?? string.Empty;
-            if (!n.StartsWith("Generated_Mesh", StringComparison.Ordinal)) continue;
-            if (!has) { b = r.bounds; has = true; }
-            else b.Encapsulate(r.bounds);
-        }
-        return has ? b : new Bounds(Vector3.zero, Vector3.zero);
-    }
-
-    private static Quaternion ResolveOriginalGeneratedMeshRotation(GameObject root)
-    {
-        if (root == null)
-            return Quaternion.identity;
-
-        GeneratedMeshMetadata[] metas = root.GetComponentsInChildren<GeneratedMeshMetadata>(true);
-        for (int i = 0; i < metas.Length; i++)
-        {
-            GeneratedMeshMetadata meta = metas[i];
-            if (meta == null)
+            Mesh original = filter.sharedMesh;
+            if (original == null)
                 continue;
 
-            Transform rootChild = FindRootChild(root.transform, meta.transform);
-            if (rootChild == null)
-                continue;
+            Mesh outside = MeshRegionSplitter.BuildOutsideMesh(
+                original, filter.transform.localToWorldMatrix, region, out int removed);
 
-            string n = rootChild.gameObject.name ?? string.Empty;
-            if (!n.StartsWith("Generated_Mesh", StringComparison.Ordinal))
-                continue;
+            removedTriangles += removed;
 
-            return GenerationControllerEditor.GetGeneratedMeshRotationForProxy(meta.proxyRotation);
-        }
-
-        return Quaternion.identity;
-    }
-
-    // Walks up from <paramref name="descendant"/> until it hits a direct
-    // child of <paramref name="root"/>. Returns null if the descendant is
-    // not under root.
-    private static Transform FindRootChild(Transform root, Transform descendant)
-    {
-        Transform t = descendant;
-        while (t != null && t.parent != root)
-        {
-            t = t.parent;
-        }
-        return t;
-    }
-
-    // Disable the original Generated_Mesh*/Generated_Image so the refined
-    // whole-scene mesh is visible on its own. Deactivation is reversible -
-    // the user can re-enable the originals in the hierarchy if they want.
-    private static void DeactivateOriginalGeneratedMeshes(GameObject root)
-    {
-        if (root == null) return;
-        for (int i = 0; i < root.transform.childCount; i++)
-        {
-            Transform child = root.transform.GetChild(i);
-            if (child == null) continue;
-            string n = child.name ?? string.Empty;
-            if (n.StartsWith("Refined_", StringComparison.Ordinal)) continue;
-            if (n.StartsWith("Generated_", StringComparison.Ordinal))
+            if (removed == 0)
             {
-                Undo.RecordObject(child.gameObject, "Deactivate Original Generated Mesh");
-                child.gameObject.SetActive(false);
-            }
-        }
-    }
-
-    private static void ClearPreviousRefinementArtifacts(GameObject root)
-    {
-        if (root == null)
-            return;
-
-        // Remove only artifacts produced by previous refinement runs. The
-        // originally generated scene ("Generated_Mesh*", "Generated_Image")
-        // is left intact so the refined mesh augments the scene instead of
-        // replacing everything the user has produced so far.
-        for (int i = root.transform.childCount - 1; i >= 0; i--)
-        {
-            Transform child = root.transform.GetChild(i);
-            if (child == null)
+                // Untouched by the region: keep the imported mesh as-is.
+                keptTriangles += CountTriangles(original);
                 continue;
-            string n = child.name ?? string.Empty;
-            if (n.StartsWith("Refined_Mesh", StringComparison.Ordinal)
-                || n == "RefinementPreview")
-            {
-                Undo.DestroyObjectImmediate(child.gameObject);
             }
+
+            if (outside == null)
+            {
+                // Entirely inside the region; the refined mesh takes over here.
+                emptied.Add(filter.gameObject);
+                continue;
+            }
+
+            filter.sharedMesh = MeshImporter.PersistMesh(outside, meshAssetFolderSibling, $"{original.name}_Preserved");
+            keptTriangles += CountTriangles(filter.sharedMesh);
         }
+
+        foreach (GameObject go in emptied)
+        {
+            if (go == clone)
+            {
+                UnityEngine.Object.DestroyImmediate(clone);
+                return null;
+            }
+
+            UnityEngine.Object.DestroyImmediate(go);
+        }
+
+        return clone.GetComponentInChildren<Renderer>(true) != null
+            ? clone
+            : DestroyAndReturnNull(clone);
     }
+
+    /// <summary>
+    /// Seats the lifted mesh in the selection box: aligned to the box's rotation, scaled
+    /// uniformly to fit inside it, and centred on it.
+    ///
+    /// The two axes across the reconstruction view are correct by construction because the
+    /// backend cropped the refined image to the region's footprint. Depth along the view axis
+    /// is the reconstruction's estimate, so it is fitted rather than trusted.
+    /// </summary>
+    private static void PlaceInRegion(GameObject region, RegionSelection selection)
+    {
+        region.transform.rotation = selection.rotation;
+
+        // Always fill the region, regardless of the generation-side preference: the refined
+        // mesh has to occupy exactly the volume that was cut out of the original, or the
+        // splice leaves a visible gap where the old geometry used to be.
+        MeshFitting.FitToVolume(
+            region,
+            RegionSelection.ClampSize(selection.size),
+            selection.center,
+            preserveProportions: false);
+    }
+
+    /// <summary>Direct children of GeneratedContent that currently show the asset.</summary>
+    private static List<Transform> CollectActiveGeneratedSubtrees(Transform root)
+    {
+        var sources = new List<Transform>();
+        for (int i = 0; i < root.childCount; i++)
+        {
+            Transform child = root.GetChild(i);
+            if (child == null || !child.gameObject.activeSelf)
+                continue;
+
+            string name = child.name;
+            bool isGenerated = name.StartsWith("Generated_Mesh", StringComparison.Ordinal);
+            bool isRefined = name.StartsWith("Refined_Mesh", StringComparison.Ordinal);
+            if (isGenerated || isRefined)
+                sources.Add(child);
+        }
+
+        return sources;
+    }
+
+    private static int CountTriangles(Mesh mesh)
+    {
+        if (mesh == null)
+            return 0;
+
+        int count = 0;
+        for (int i = 0; i < mesh.subMeshCount; i++)
+            count += (int)(mesh.GetIndexCount(i) / 3);
+        return count;
+    }
+
+    private static GameObject DestroyAndReturnNull(GameObject go)
+    {
+        UnityEngine.Object.DestroyImmediate(go);
+        return null;
+    }
+
+    private static string Sanitize(string value) =>
+        string.IsNullOrWhiteSpace(value) ? "0" : value.Trim().Replace(' ', '_');
 }

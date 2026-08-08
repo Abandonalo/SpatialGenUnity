@@ -1,3 +1,4 @@
+# Unity
 [Ll]ibrary/
 [Tt]emp/
 [Oo]bj/
@@ -7,6 +8,15 @@
 [Mm]emoryCaptures/
 [Uu]ser[Ss]ettings/
 
+# IDE project files (Unity regenerates these)
+*.csproj
+*.sln
+*.slnx
+*.user
+*.pidb
+*.booproj
+*.svd
+
 # Local environments and editor state
 .venv/
 .vscode/
@@ -15,16 +25,9 @@
 __pycache__/
 *.py[cod]
 
-
-# Runtime handoff and generated Spatial Generation assets
-SpatialGenHandoff/
+# Backend outputs. Everything under these folders is reproducible by re-running
+# a generation, so it is never committed.
 Assets/SpatialGeneration/Generated/
 Assets/SpatialGeneration/GeneratedAssets/
-
-*.csproj
-*.sln
-*.user
-*.pidb
-*.booproj
-*.svd
-Assets/Scenes/SampleScene.unity
+.comfy_inputs/
+Assets/Scenes/

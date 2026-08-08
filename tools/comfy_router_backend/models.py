@@ -1,19 +1,76 @@
-from typing import Any, Dict, Literal, Optional
+"""Request/response models shared with the Unity client.
+
+Field names here are the wire contract. Their C# counterparts live in
+``Assets/SpatialGeneration/RunTime/Generation/Backends/RouterProtocol.cs`` and
+``.../Refinement/MultiView/MultiViewRefinementRequest.cs``; change both together.
+"""
+
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# Canonical KSampler denoise for refinement; matches Unity RefinementDefaults.KSDenoise (0.3).
-REFINEMENT_KS_DENOISE: float = 0.3
+# Denoise applied inside the refinement mask. High because masked pixels are being
+# replaced rather than nudged; at low denoise the inpaint returns a blurred copy of the
+# original. Mirrors RefinementDefaults.Denoise in Unity.
+REFINEMENT_DENOISE: float = 0.95
 
-# Artifact / geometry negatives only. Avoid dull/desaturated/washed-out — those steer inpainted
-# pixels toward neutral gray and conflict with prompts like “white roof” (verified vs mask-aligned gray fraction in logs).
-REFINEMENT_DEFAULT_NEGATIVE: str = (
-    "blur, low quality, noise, jpeg artifacts, distorted, deformed"
+# Artifact and geometry negatives only. Deliberately excludes "dull", "desaturated" and
+# "washed out": those steer inpainted pixels toward neutral gray and fight prompts that
+# ask for a specific bright colour.
+REFINEMENT_DEFAULT_NEGATIVE: str = "blur, low quality, noise, jpeg artifacts, distorted, deformed"
+
+# Appended to every generation prompt. Deliberately short.
+#
+# A single-view lifter can only reconstruct what the image shows, so the source image wants
+# to be one complete object seen straight on. The temptation is to spell that out at
+# length, and it backfires: the user's subject is often a single token, so a long cue block
+# outvotes it and the model renders the cues instead of the subject. Measured on SD 1.5
+# with the prompt "house":
+#
+#   "symmetrical front elevation, orthographic product render"  -> architectural blueprints
+#                                                                  on graph paper
+#   "studio photograph, seamless backdrop, sharp focus, ..."    -> abstract framed boxes
+#   the three clauses below                                    -> recognisable houses
+#
+# Everything else that used to live here now lives in the negative prompt, where it steers
+# the result without competing for the subject's share of the attention budget.
+GENERATION_ISOLATION_CUES: str = (
+    "front view, whole object centered in frame, isolated on a plain white background"
 )
+
+GENERATION_DEFAULT_NEGATIVE: str = (
+    # Drawing styles. Architectural subjects collapse into these without being warned off.
+    "blueprint, technical drawing, architectural drawing, elevation drawing, floor plan, "
+    "line art, sketch, diagram, graph paper, grid, monochrome, isometric, "
+    # Degenerate "isolated object" readings: an empty frame instead of the subject.
+    "abstract sculpture, empty frame, shelf, display case, "
+    # Wrong viewpoint: the largest cause of a malformed reconstruction.
+    "side view, profile view, three-quarter view, angled view, rear view, back view, "
+    "tilted, rotated object, perspective distortion, foreshortening, "
+    # Anything that survives background removal becomes geometry.
+    "ground, floor, pedestal, base, platform, stand, table, "
+    "cast shadow, contact shadow, shadow on ground, reflection, "
+    "background scene, environment, sky, clouds, landscape, grass, road, room, wall, "
+    # Foreground planting is the worst of these: it sits in front of the subject, so it
+    # survives background removal and gets welded onto the mesh.
+    "flowers, blossoms, bushes, shrubs, hedge, foliage, plants, trees, garden, vegetation, "
+    # Extra subjects get fused into one mesh.
+    "multiple objects, duplicate, clutter, occlusion, cropped, cut off, partial object, "
+    # Optical effects the lifter reads as shape.
+    "close-up, zoomed in, depth of field, bokeh, vignette, motion blur, "
+    "blurry, noisy, jpeg artifacts, messy geometry, "
+    "text, watermark, signature"
+)
+
+GenerationModel = Literal["hunyuan_2_1", "tripo_sr"]
+
+RunMode = Literal["generate", "generate_hunyuan", "refine_inpaint_only", "tripo_from_rgb"]
 
 
 class RunRequest(BaseModel):
-    mode: Literal["generate", "refine", "refine_inpaint_only", "tripo_from_rgb"]
+    """A single ComfyUI graph execution, after mode and defaults have been resolved."""
+
+    mode: RunMode
 
     positive_prompt: str = Field(min_length=1)
     negative_prompt: str = ""
@@ -21,140 +78,137 @@ class RunRequest(BaseModel):
     rgb_image: Optional[str] = None
     depth_image: Optional[str] = None
     mask_image: Optional[str] = None
-    # Optional hint for ControlNet Canny when the graph uses LoadImage CANNY,
-    # canny_image=None stages rgb_image in graph_injector for __CANNY_IMAGE__.
+
+    # Edge conditioning for ControlNet Canny. When absent, the injector falls back to
+    # rgb_image so the graph's LoadImage still resolves.
     canny_image: Optional[str] = None
 
     seed: int
     steps: int = Field(gt=0)
     cfg: float = Field(gt=0)
-    denoise: float = REFINEMENT_KS_DENOISE
+    denoise: float = REFINEMENT_DENOISE
+    sampler: str = "euler"
+
+    # Latent size for graphs that expose an EmptyLatentImage.
+    width: int = 512
+    height: int = 512
+
+    # ControlNet weights. Depth carries the spatial constraint, so it leads; Canny only
+    # sharpens the silhouette and is easy to overdrive into hard outlines.
+    #
+    # Tuned down from 0.8/0.4. A proxy's depth map is a featureless primitive, so at high
+    # strength the model reproduces the primitive rather than the subject inside it. At
+    # these values the silhouette still lands on the proxy's footprint within a few pixels
+    # while the subject stays recognisable.
+    controlnet_depth_strength: float = 0.45
+    controlnet_canny_strength: float = 0.2
 
     tripo_model: str = Field(min_length=1)
     geometry_resolution: int = Field(gt=0)
     tripo_threshold: float
 
-    # Where to crop the refined 2D image before RemBG/TripoSR. In single-view
-    # mode this defaults to the full (square) input size, so the crop node
-    # in the graph is a no-op. In multi-view refinement, the router composes
-    # four per-view images into a 2x2 grid, runs the inpaint once, and then
-    # asks the graph to crop the reconstruction quadrant (top-left) so the
-    # TripoSR stage sees a clean single-view image instead of the grid.
+    # Region of the staged RGB to crop before reconstruction, in pixels. Refinement sets
+    # this to the selection's footprint so the lifted mesh covers the edited region and
+    # not the surrounding context the cameras captured for blending.
     crop_width: Optional[int] = None
     crop_height: Optional[int] = None
     crop_x: Optional[int] = None
     crop_y: Optional[int] = None
 
-    # When set on tripo_from_rgb, stages this PNG as TripoSR reference_mask instead of solid white:
-    # constrains reconstruction toward the inpaint selection so background pixels do not lift into mesh.
-    tripo_reference_mask_image: Optional[str] = None
-
     @model_validator(mode="after")
-    def validate_refine_inputs(self) -> "RunRequest":
-        if self.mode == "tripo_from_rgb":
-            if not self.rgb_image:
-                raise ValueError("tripo_from_rgb mode requires: rgb_image")
-            return self
+    def _check_required_images(self) -> "RunRequest":
+        required: dict[str, tuple[str, ...]] = {
+            "generate": ("depth_image",),
+            "generate_hunyuan": (),
+            "refine_inpaint_only": ("rgb_image", "depth_image", "mask_image"),
+            "tripo_from_rgb": ("rgb_image",),
+        }
 
-        if self.mode not in ("refine", "refine_inpaint_only"):
-            return self
-
-        missing = [
-            name
-            for name, value in (
-                ("rgb_image", self.rgb_image),
-                ("depth_image", self.depth_image),
-                ("mask_image", self.mask_image),
-            )
-            if not value
-        ]
+        missing = [name for name in required[self.mode] if not getattr(self, name)]
         if missing:
-            joined = ", ".join(missing)
-            raise ValueError(f"{self.mode} mode requires: {joined}")
+            raise ValueError(f"{self.mode} mode requires: {', '.join(missing)}")
         return self
 
 
-class RunResponse(BaseModel):
-    success: bool
-    image_base64: Optional[str] = None
-    mesh_base64: Optional[str] = None
-    error: Optional[str] = None
-
-
-class ProxyGenerationParams(BaseModel):
+class GenerationParams(BaseModel):
     seed: int = -1
     steps: int = 30
     cfg: float = 7.0
     sampler: str = "euler"
-    width: int = 1024
-    height: int = 1024
+    width: int = 512
+    height: int = 512
 
 
-class ProxyAssetImage(BaseModel):
-    file_name: Optional[str] = None
-    image_base64: Optional[str] = None
+class ProxyVolume(BaseModel):
+    """The authored primitive a generation run is producing an asset for."""
+
+    id: str = ""
+    role: str = "occupy"
+    shape: str = "box"
+    label: Optional[str] = None
+    position: dict = Field(default_factory=dict)
+    rotation: dict = Field(default_factory=dict)
+    size: dict = Field(default_factory=dict)
 
 
-class ProxyGenerateRequest(BaseModel):
+class GenerateRequest(BaseModel):
+    """``POST /generate``: one asset for one occupy proxy."""
+
     model_config = ConfigDict(extra="allow")
 
     request_id: str = ""
-    mode: Optional[Literal["generate", "refine"]] = None
+    mode: Literal["generate"] = "generate"
 
     prompt: str = ""
-    positive_prompt: Optional[str] = None
     negative_prompt: str = ""
 
-    input_mode: Optional[str] = None
-    workflow: Optional[Dict[str, Any]] = None
-    constraint_set_json: Optional[str] = None
-    proxy: Optional[Dict[str, Any]] = None
-    asset_image: Optional[ProxyAssetImage] = None
-    generation: ProxyGenerationParams = Field(default_factory=ProxyGenerationParams)
-
+    # Conditioning captured in Unity. depth_image and edges_image drive ControlNet;
+    # rgb_image switches the pipeline to image-to-3D when the proxy has a reference photo.
     rgb_image: Optional[str] = None
     depth_image: Optional[str] = None
+    edges_image: Optional[str] = None
     mask_image: Optional[str] = None
 
-    tripo_model: Optional[str] = None
+    generation_model: Optional[str] = None
     geometry_resolution: Optional[int] = None
     tripo_threshold: Optional[float] = None
 
+    proxy: Optional[ProxyVolume] = None
+    generation: GenerationParams = Field(default_factory=GenerationParams)
 
-class ProxyResultResponse(BaseModel):
+
+class HealthStatus(BaseModel):
+    """``GET /health``: the router's own state plus the ComfyUI it depends on."""
+
+    ok: bool
+    comfy_url: str
+    comfy_reachable: bool
+    detail: str = ""
+
+
+class SubmitResponse(BaseModel):
     prompt_id: str
-    status: str
+
+
+class OutputFile(BaseModel):
+    filename: str
+    subfolder: str = ""
+    type: str = "output"
+
+
+class RunResult(BaseModel):
+    """``GET /result/{prompt_id}``."""
+
+    prompt_id: str
+    status: Literal["running", "success", "error"]
     completed: bool
-    files: list[Dict[str, str]] = Field(default_factory=list)
-    images: list[Dict[str, str]] = Field(default_factory=list)
-    meshes: list[Dict[str, str]] = Field(default_factory=list)
-    message: Optional[str] = None
-    exception_message: Optional[str] = None
-
-
-class RefinementRequestModel(BaseModel):
-    requestId: str = ""
-    globalPrompt: str = ""
-    localPrompt: str = ""
-    rgbImageBase64: str = ""
-    depthImageBase64: str = ""
-    maskImageBase64: str = ""
-    denoiseStrength: float = REFINEMENT_KS_DENOISE
-    steps: int = 20
-    cfgScale: float = 8.0
-    sessionId: str = ""
-
-
-class RefinementResponseModel(BaseModel):
-    requestId: str = ""
-    refinedImageBase64: str = ""
-    meshBase64: str = ""
-    success: bool
-    errorMessage: str = ""
+    files: list[OutputFile] = Field(default_factory=list)
+    message: str = ""
 
 
 class ViewPayload(BaseModel):
-    # viewType mirrors the Unity ViewType enum: Front / Left / Right / Top.
+    """One canonical view. ``viewType`` mirrors the Unity enum: Front/Left/Right/Top."""
+
     viewType: str = ""
     width: int = 0
     height: int = 0
@@ -164,7 +218,9 @@ class ViewPayload(BaseModel):
     maskBase64: str = ""
 
 
-class MultiViewRefinementRequestModel(BaseModel):
+class MultiViewRefinementRequest(BaseModel):
+    """``POST /refine``: a region-scoped edit captured from four canonical cameras."""
+
     requestId: str = ""
     sessionId: str = ""
     mode: Literal["refine"] = "refine"
@@ -172,27 +228,37 @@ class MultiViewRefinementRequestModel(BaseModel):
     positivePrompt: str = ""
     negativePrompt: str = ""
 
-    # Deterministic seed shared by every view. Negative values are
-    # resolved to a random seed in the router once so all views still
-    # share the same value for the duration of a request.
+    # One seed for every view. Different seeds per view would produce four mutually
+    # inconsistent inpaints of the same surface.
     seed: int = -1
 
-    steps: int = Field(default=20, gt=0)
+    steps: int = Field(default=30, gt=0)
     cfg: float = Field(default=8.0, gt=0)
-    denoise: float = REFINEMENT_KS_DENOISE
+    denoise: float = REFINEMENT_DENOISE
 
     reconstructionView: str = "Front"
+
+    # Selection footprint in the reconstruction view, in viewport UV with origin
+    # bottom-left (Unity's convention).
+    cropMinX: float = 0.0
+    cropMinY: float = 0.0
+    cropMaxX: float = 1.0
+    cropMaxY: float = 1.0
+
     views: list[ViewPayload] = Field(default_factory=list)
 
 
-class RefinedViewResultModel(BaseModel):
+class RefinedViewResult(BaseModel):
     viewType: str = ""
     refinedImageBase64: str = ""
 
 
-class MultiViewRefinementResponseModel(BaseModel):
+class MultiViewRefinementResponse(BaseModel):
     requestId: str = ""
-    refinedViews: list[RefinedViewResultModel] = Field(default_factory=list)
+    refinedViews: list[RefinedViewResult] = Field(default_factory=list)
     meshBase64: str = ""
+
     success: bool
+    # "queued" / "running" while the job is in flight, "success" or "error" once settled.
+    status: str = ""
     errorMessage: str = ""

@@ -1,136 +1,98 @@
 using UnityEditor;
 using UnityEngine;
 
+/// <summary>
+/// Scene-view handles for the refinement region, plus a tinted overlay showing which surfaces
+/// fall inside it so the user can judge the edit's reach before running it.
+/// </summary>
 [CustomEditor(typeof(RegionSelectionManager))]
 public class RegionSelectionManagerEditor : Editor
 {
     private const string OverlayShaderName = "Hidden/SpatialGen/RegionSelectionOverlay";
+    private static readonly Color HandleColor = new(0.2f, 1f, 0.7f, 1f);
+
     private static Material _overlayMaterial;
-
-    private void OnEnable()
-    {
-        Tools.hidden = true;
-    }
-
-    private void OnDisable()
-    {
-        Tools.hidden = false;
-    }
-
-    public override void OnInspectorGUI()
-    {
-        DrawDefaultInspector();
-    }
 
     private void OnSceneGUI()
     {
-        RegionSelectionManager manager = (RegionSelectionManager)target;
+        var manager = (RegionSelectionManager)target;
         RegionSelection selection = manager.CurrentSelection;
         if (selection == null)
             return;
 
-        Tools.hidden = Selection.activeGameObject == manager.gameObject;
+        DrawOverlay(manager, selection);
 
-        Color color = manager.IsSelecting
-            ? new Color(1f, 0.8f, 0.2f, 1f)
-            : new Color(0.2f, 1f, 0.7f, 1f);
-
-        DrawSelectionOverlay(manager, selection);
-
-        Matrix4x4 handleMatrix = Matrix4x4.TRS(selection.center, selection.rotation, Vector3.one);
-        using (new Handles.DrawingScope(color, handleMatrix))
-        {
+        using (new Handles.DrawingScope(HandleColor, Matrix4x4.TRS(selection.center, selection.rotation, Vector3.one)))
             Handles.DrawWireCube(Vector3.zero, selection.size);
-        }
 
         EditorGUI.BeginChangeCheck();
-        Handles.color = color;
-        Vector3 updatedSize = Handles.ScaleHandle(
-            selection.size,
-            selection.center,
-            selection.rotation,
-            HandleUtility.GetHandleSize(selection.center));
-        updatedSize = ClampSize(updatedSize);
+        Handles.color = HandleColor;
+        Vector3 size = Handles.ScaleHandle(
+            selection.size, selection.center, selection.rotation, HandleUtility.GetHandleSize(selection.center));
+        Vector3 center = Handles.PositionHandle(selection.center, selection.rotation);
 
-        if (EditorGUI.EndChangeCheck())
-        {
-            Undo.RecordObject(manager, "Resize Region Selection");
-            manager.SetSelection(new RegionSelection
-            {
-                selectionId = selection.selectionId,
-                center = selection.center,
-                size = updatedSize,
-                rotation = selection.rotation
-            });
-            EditorUtility.SetDirty(manager);
-            SceneView.RepaintAll();
-        }
-
-        EditorGUI.BeginChangeCheck();
-        Vector3 updatedCenter = Handles.PositionHandle(selection.center, selection.rotation);
         if (!EditorGUI.EndChangeCheck())
             return;
 
-        Undo.RecordObject(manager, "Move Region Selection");
+        Undo.RecordObject(manager, "Edit Region Selection");
         manager.SetSelection(new RegionSelection
         {
             selectionId = selection.selectionId,
-            center = updatedCenter,
-            size = selection.size,
+            center = center,
+            size = RegionSelection.ClampSize(size),
             rotation = selection.rotation
         });
         EditorUtility.SetDirty(manager);
         SceneView.RepaintAll();
     }
 
-    private static Vector3 ClampSize(Vector3 size)
-    {
-        return new Vector3(
-            Mathf.Max(0.01f, Mathf.Abs(size.x)),
-            Mathf.Max(0.01f, Mathf.Abs(size.y)),
-            Mathf.Max(0.01f, Mathf.Abs(size.z)));
-    }
-
-    private static void DrawSelectionOverlay(RegionSelectionManager manager, RegionSelection selection)
+    private static void DrawOverlay(RegionSelectionManager manager, RegionSelection selection)
     {
         if (Event.current.type != EventType.Repaint)
             return;
 
-        Material overlayMaterial = GetOverlayMaterial();
-        if (overlayMaterial == null)
+        Material overlay = GetOverlayMaterial();
+        if (overlay == null)
             return;
 
-        Bounds selectionBounds = RegionSelectionManager.BuildWorldBounds(selection);
-        Matrix4x4 worldToSelection = Matrix4x4.TRS(selection.center, selection.rotation, Vector3.one).inverse;
+        overlay.SetMatrix("_SelectionWorldToLocal", selection.WorldToLocal());
+        overlay.SetVector("_SelectionHalfExtents", RegionSelection.ClampSize(selection.size) * 0.5f);
+        overlay.SetColor("_OverlayColor", new Color(0.5f, 0.5f, 0.5f, 0.85f));
 
-        overlayMaterial.SetMatrix("_SelectionWorldToLocal", worldToSelection);
-        overlayMaterial.SetVector("_SelectionHalfExtents", selection.size * 0.5f);
-        overlayMaterial.SetColor("_OverlayColor", new Color(0.5f, 0.5f, 0.5f, 0.85f));
+        Bounds selectionBounds = selection.GetWorldBounds();
 
-        Renderer[] renderers = Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None);
-        for (int i = 0; i < renderers.Length; i++)
+        foreach (Renderer renderer in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
         {
-            Renderer renderer = renderers[i];
-            if (!IsCandidateGeometry(manager, renderer))
-                continue;
-            if (!renderer.bounds.Intersects(selectionBounds))
+            if (!IsCandidate(manager, renderer) || !renderer.bounds.Intersects(selectionBounds))
                 continue;
 
-            MeshFilter meshFilter = renderer.GetComponent<MeshFilter>();
-            if (meshFilter == null || meshFilter.sharedMesh == null)
+            var filter = renderer.GetComponent<MeshFilter>();
+            if (filter == null || filter.sharedMesh == null)
                 continue;
 
-            Mesh mesh = meshFilter.sharedMesh;
-            Matrix4x4 matrix = renderer.localToWorldMatrix;
-            int subMeshCount = Mathf.Max(1, mesh.subMeshCount);
-            for (int subMeshIndex = 0; subMeshIndex < subMeshCount; subMeshIndex++)
+            Mesh mesh = filter.sharedMesh;
+            for (int subMesh = 0; subMesh < Mathf.Max(1, mesh.subMeshCount); subMesh++)
             {
-                if (!overlayMaterial.SetPass(0))
-                    continue;
-
-                Graphics.DrawMeshNow(mesh, matrix, subMeshIndex);
+                if (overlay.SetPass(0))
+                    Graphics.DrawMeshNow(mesh, renderer.localToWorldMatrix, subMesh);
             }
         }
+    }
+
+    private static bool IsCandidate(RegionSelectionManager manager, Renderer renderer)
+    {
+        if (renderer == null || !renderer.enabled)
+            return false;
+
+        GameObject go = renderer.gameObject;
+        if (manager != null && (go == manager.gameObject || go.transform.IsChildOf(manager.transform)))
+            return false;
+        if ((go.hideFlags & HideFlags.HideInHierarchy) != 0)
+            return false;
+        if (go.GetComponentInParent<SpatialProxy>() != null)
+            return false;
+
+        return renderer.bounds.size.sqrMagnitude > 1e-6f;
     }
 
     private static Material GetOverlayMaterial()
@@ -142,31 +104,7 @@ public class RegionSelectionManagerEditor : Editor
         if (shader == null)
             return null;
 
-        _overlayMaterial = new Material(shader)
-        {
-            hideFlags = HideFlags.HideAndDontSave
-        };
+        _overlayMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
         return _overlayMaterial;
-    }
-
-    private static bool IsCandidateGeometry(RegionSelectionManager manager, Renderer renderer)
-    {
-        if (renderer == null || !renderer.enabled)
-            return false;
-
-        GameObject go = renderer.gameObject;
-        if (go == null)
-            return false;
-        if (manager != null && (go == manager.gameObject || go.transform.IsChildOf(manager.transform)))
-            return false;
-        if ((go.hideFlags & HideFlags.HideInHierarchy) != 0)
-            return false;
-        if (go.GetComponentInParent<RegionSelectionManager>() != null)
-            return false;
-        if (go.GetComponentInParent<SpatialProxy>() != null)
-            return false;
-
-        Bounds candidateBounds = renderer.bounds;
-        return candidateBounds.size.sqrMagnitude > 1e-6f;
     }
 }

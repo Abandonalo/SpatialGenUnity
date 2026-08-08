@@ -1,7 +1,10 @@
 using UnityEngine;
 
+/// <summary>Resolves the settings asset and the backend it selects.</summary>
 public static class BackendRegistry
 {
+    private const string SettingsResourceName = "SpatialGenerationBackendSettings";
+
     private static BackendSettings _settings;
     private static IGenerationBackend _current;
 
@@ -9,40 +12,35 @@ public static class BackendRegistry
     {
         get
         {
+            if (_settings != null)
+                return _settings;
+
+            _settings = Resources.Load<BackendSettings>(SettingsResourceName);
             if (_settings == null)
             {
-                _settings = Resources.Load<BackendSettings>("SpatialGenerationBackendSettings");
-                if (_settings == null)
-                {
-                    Debug.LogError(
-                        "Spatial Generation: Missing Resources/SpatialGenerationBackendSettings.asset. " +
-                        "Using a temporary Mock backend until the asset is restored.");
-                    _settings = ScriptableObject.CreateInstance<BackendSettings>();
-                    _settings.backendKind = BackendKind.Mock;
-                }
+                Debug.LogError(
+                    $"Spatial Generation: missing Resources/{SettingsResourceName}.asset. " +
+                    "Falling back to the Mock backend until it is restored.");
+                _settings = ScriptableObject.CreateInstance<BackendSettings>();
+                _settings.backendKind = BackendKind.Mock;
             }
+
             return _settings;
         }
     }
 
-    public static IGenerationBackend Current
+    public static IGenerationBackend Current => _current ??= CreateBackend(Settings);
+
+    /// <summary>Call after editing the settings asset so the next run picks up the change.</summary>
+    public static void Reload()
     {
-        get
-        {
-            if (_current == null) _current = CreateBackend(Settings);
-            return _current;
-        }
+        _settings = null;
+        _current = CreateBackend(Settings);
     }
 
-    public static void Reload() => _current = CreateBackend(Settings);
-
-    private static IGenerationBackend CreateBackend(BackendSettings s)
+    private static IGenerationBackend CreateBackend(BackendSettings settings) => settings.backendKind switch
     {
-        return s.backendKind switch
-        {
-            BackendKind.LocalFile => new LocalFileGenerationBackend(s),
-            BackendKind.RemoteHttp => new RemoteGenerationBackend(s), // later
-            _ => new MockGenerationBackend()
-        };
-    }
+        BackendKind.Mock => new MockGenerationBackend(),
+        _ => new RouterGenerationBackend(settings)
+    };
 }
