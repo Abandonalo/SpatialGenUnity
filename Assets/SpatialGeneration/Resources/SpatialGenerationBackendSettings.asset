@@ -13,14 +13,15 @@ MonoBehaviour:
   m_Name: SpatialGenerationBackendSettings
   m_EditorClassIdentifier: 
   backendKind: 0
-  backendPreset: 1
+  backendPreset: 0
   localRouterUrl: http://127.0.0.1:8001
   colabRouterUrl: https://comfyuitunnel.share.zrok.io
+  autoStartRouter: 1
   autoStartComfy: 1
   comfyLaunchCommand: 
   comfyWorkingDirectory: 
   comfyBootTimeoutSeconds: 180
-  generationModel: 0
+  generationModel: 1
   colabNotebookPath: notebooks/Colab_ComfyUI.ipynb
   colabNotebookUrl: https://colab.research.google.com/github/Abandonalo/SpatialGenUnity/blob/main/notebooks/Colab_ComfyUI.ipynb
   requestTimeoutSeconds: 60

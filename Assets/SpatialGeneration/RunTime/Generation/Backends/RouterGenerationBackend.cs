@@ -27,13 +27,19 @@ public sealed class RouterGenerationBackend : IGenerationBackend
     public async Task EnsureReadyAsync()
     {
         RouterClient.BackendHealth health = await RouterClient.CheckHealthAsync(_settings);
+
+        // Router first: it is the only thing that knows where ComfyUI is meant to be, and
+        // tools/start_backend.sh probes for a running ComfyUI when it boots.
+        if (!health.RouterReachable && CanAutoStart())
+        {
+            await StartRouterAndWaitAsync();
+            health = await RouterClient.CheckHealthAsync(_settings);
+        }
+
         if (health.IsReady)
             return;
 
-        // On the Local preset ComfyUI is ours to manage, so start it rather than making the
-        // user go and do it. The router itself is out of scope: it may be a shared or
-        // remote process, and guessing how to launch it would be worse than saying so.
-        if (health.RouterReachable && !health.ComfyReachable && CanAutoStartComfy())
+        if (health.RouterReachable && !health.ComfyReachable && CanAutoStart() && _settings.autoStartComfy)
         {
             await StartComfyAndWaitAsync(health.ComfyUrl);
             return;
@@ -42,8 +48,42 @@ public sealed class RouterGenerationBackend : IGenerationBackend
         throw new InvalidOperationException(RouterClient.DescribeProblem(_settings, health));
     }
 
-    private bool CanAutoStartComfy() =>
-        _settings.backendPreset == BackendPreset.Local && _settings.autoStartComfy;
+    /// <summary>Only the Local preset runs processes we own; Colab's live in the notebook.</summary>
+    private bool CanAutoStart() => _settings.backendPreset == BackendPreset.Local;
+
+    private async Task StartRouterAndWaitAsync()
+    {
+        if (!_settings.autoStartRouter)
+            return;
+
+        Debug.Log($"Spatial Generation: router not running at {_settings.RouterBaseUrl}; starting it.");
+        RouterProcessLauncher.Start();
+
+        // A uvicorn boot is seconds, not minutes; the venv import dominates.
+        DateTime deadline = DateTime.UtcNow.AddSeconds(60);
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(1000);
+
+            int? exitCode = RouterProcessLauncher.ExitCodeIfDead;
+            if (exitCode.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"The router exited with code {exitCode.Value} while starting. " +
+                    "Run ./tools/start_backend.sh in a terminal to see why.");
+            }
+
+            if ((await RouterClient.CheckHealthAsync(_settings)).RouterReachable)
+            {
+                Debug.Log("Spatial Generation: router is up.");
+                return;
+            }
+        }
+
+        throw new TimeoutException(
+            $"The router did not answer at {_settings.RouterBaseUrl} within 60s. " +
+            "Run ./tools/start_backend.sh in a terminal to see its output.");
+    }
 
     private async Task StartComfyAndWaitAsync(string comfyUrl)
     {

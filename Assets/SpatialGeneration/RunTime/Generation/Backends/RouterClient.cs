@@ -110,9 +110,13 @@ namespace SpatialGeneration.Generation.Backends
             {
                 string where = $"The router is not reachable at {settings.RouterBaseUrl}.";
                 string detail = string.IsNullOrWhiteSpace(health.Detail) ? string.Empty : $"\n{health.Detail}";
-                return isColab
-                    ? $"{where} Run {settings.colabNotebookPath} in Colab until the zrok share is serving, " +
-                      $"then check again.{detail}"
+                if (isColab)
+                    return $"{where} Run {settings.colabNotebookPath} in Colab until the zrok share is " +
+                           $"serving, then check again.{detail}";
+
+                // Generate starts it automatically; this only reports a genuine failure.
+                return settings.autoStartRouter
+                    ? $"{where} Generate will start it automatically; this check does not.{detail}"
                     : $"{where} Start it with:\n    ./tools/start_backend.sh{detail}";
             }
 

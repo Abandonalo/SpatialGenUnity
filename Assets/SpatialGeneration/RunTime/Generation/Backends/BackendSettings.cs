@@ -46,7 +46,11 @@ public class BackendSettings : ScriptableObject
     [Tooltip("Router origin used by the Colab preset, e.g. https://<share>.share.zrok.io")]
     public string colabRouterUrl = "https://comfyuitunnel.share.zrok.io";
 
-    [Header("Local ComfyUI")]
+    [Header("Local processes")]
+    [Tooltip("Start the FastAPI router (tools/start_backend.sh) when Generate finds it down. " +
+             "Local preset only.")]
+    public bool autoStartRouter = true;
+
     [Tooltip("Start ComfyUI automatically when Generate finds it down. Local preset only.")]
     public bool autoStartComfy = true;
 
