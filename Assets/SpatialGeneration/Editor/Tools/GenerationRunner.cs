@@ -131,11 +131,11 @@ public static class GenerationRunner
 
     private static void PlaceAtProxy(GameObject generated, SpatialProxy proxy)
     {
-        // Level first: the reconstruction arrives in the source image's camera frame, and
-        // FitToVolume measures along the object's own axes, so fitting a tilted mesh would
-        // both stretch it wrongly and leave it tilted.
-        Quaternion levelling = MeshAlignment.Level(generated);
-        generated.transform.rotation = GetMeshRotationForProxy(proxy.transform.rotation) * levelling;
+        // Level before fitting, and note that Level works inside the object rather than on
+        // its rotation: the fill scale below applies underneath this rotation, so it has to
+        // find the asset already upright or it tips it back over.
+        MeshAlignment.Level(generated);
+        generated.transform.rotation = GetMeshRotationForProxy(proxy.transform.rotation);
         MeshFitting.FitToVolume(
             generated,
             Vector3.Scale(proxy.size, proxy.transform.lossyScale),

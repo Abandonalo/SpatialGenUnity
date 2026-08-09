@@ -176,8 +176,9 @@ public static class RefinementMeshLoader
     /// </summary>
     private static void PlaceInRegion(GameObject region, RegionSelection selection)
     {
-        Quaternion levelling = MeshAlignment.Level(region);
-        region.transform.rotation = selection.rotation * levelling;
+        // Levels inside the object, so the fill scale below acts on upright geometry.
+        MeshAlignment.Level(region);
+        region.transform.rotation = selection.rotation;
 
         // Always fill the region, regardless of the generation-side preference: the refined
         // mesh has to occupy exactly the volume that was cut out of the original, or the

@@ -68,11 +68,7 @@ namespace SpatialGeneration.Generation
         /// Rotates <paramref name="target"/> so its walls stand vertical and its footprint
         /// squares to the object's own axes.
         /// </summary>
-        /// <returns>
-        /// The correction, in <paramref name="target"/>'s local frame. Callers that go on to
-        /// orient the object must compose with this (<c>rotation = orientation * correction</c>)
-        /// rather than overwrite <c>transform.rotation</c>, or the levelling is discarded.
-        /// </returns>
+        /// <returns>The correction applied, for logging. Callers need not compose with it.</returns>
         public static Quaternion Level(GameObject target)
         {
             if (target == null)
@@ -86,8 +82,42 @@ namespace SpatialGeneration.Generation
             Quaternion correction = ComputeLevelling(normals, areas);
             correction = Quaternion.Euler(0f, FindSquaringYaw(vertices, correction), 0f) * correction;
 
-            target.transform.rotation *= correction;
-            return correction;
+            if (Quaternion.Angle(correction, Quaternion.identity) < 0.01f)
+                return Quaternion.identity;
+
+            return ApplyBeneathRoot(target.transform, correction) ? correction : Quaternion.identity;
+        }
+
+        /// <summary>
+        /// Rotates the target's children rather than the target itself.
+        ///
+        /// This has to sit below the root, because <see cref="MeshFitting.FitToVolume"/> then
+        /// writes a non-uniform <c>localScale</c> on the root to fill the proxy, and a
+        /// transform applies its scale in local space -- underneath its own rotation. Levelling
+        /// via the root's rotation therefore leaves the scale acting on geometry that is still
+        /// tilted, and stretching a tilted object anisotropically moves its up direction
+        /// somewhere the rotation above can no longer correct. Measured on a lifted house that
+        /// arrived 6.9 degrees off, the asset came out between 0.4 and 6.4 degrees from
+        /// vertical depending only on the proxy's aspect ratio. With the correction below the
+        /// scale, a vertical direction maps to (0, sy, 0) and stays exactly vertical.
+        /// </summary>
+        /// <returns>False when there is nowhere below the root to put the correction.</returns>
+        private static bool ApplyBeneathRoot(Transform root, Quaternion correction)
+        {
+            // Geometry hanging directly off the root has no node of its own to carry this.
+            // Only the fallback primitives are built that way, and a primitive is already
+            // square, so declining costs nothing and is safer than levelling into a shear.
+            if (root.childCount == 0)
+                return false;
+
+            for (int i = 0; i < root.childCount; i++)
+            {
+                Transform child = root.GetChild(i);
+                child.localPosition = correction * child.localPosition;
+                child.localRotation = correction * child.localRotation;
+            }
+
+            return true;
         }
 
         /// <summary>
