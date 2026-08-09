@@ -68,7 +68,11 @@ def inject_params(graph: Dict[str, Any], req: RunRequest) -> Dict[str, Any]:
     replacements = _build_replacements(req)
     injected = _replace_placeholders(copy.deepcopy(graph), replacements)
 
-    if "__POSITIVE_PROMPT__" not in _collect_placeholders(graph):
+    # Bind by node class only for a graph with no placeholders at all. Keying this off a
+    # missing __POSITIVE_PROMPT__ was wrong: refinement_tripo_from_rgb.json is a templated
+    # graph that simply has no prompt, and the class pass then pointed every LoadImage —
+    # including TripoSR's reference_mask — at the RGB image.
+    if not _collect_placeholders(graph):
         _bind_by_node_class(injected, req, replacements.get("__RGB_IMAGE__"))
 
     unresolved = sorted(_collect_placeholders(injected))
