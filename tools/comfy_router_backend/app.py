@@ -21,6 +21,7 @@ from .comfy_client import (
 from .jobs import RefinementJobs
 from .models import (
     GENERATION_DEFAULT_NEGATIVE,
+    GENERATION_DEFAULT_STYLE,
     GENERATION_ISOLATION_CUES,
     GenerateRequest,
     HealthStatus,
@@ -120,7 +121,10 @@ def _to_run_request(req: GenerateRequest) -> RunRequest:
     # Hunyuan reconstructs from a reference image directly; the TripoSR path first
     # diffuses one under ControlNet, so it needs the isolation cues that keep the
     # generated image a single object on a plain background.
-    positive = prompt if uses_hunyuan else f"{prompt}, {GENERATION_ISOLATION_CUES}"
+    # Style leads so it modifies the subject; the isolation cues trail behind it.
+    style = GENERATION_DEFAULT_STYLE if req.style is None else req.style.strip()
+    subject = f"{style} {prompt}".strip() if style else prompt
+    positive = subject if uses_hunyuan else f"{subject}, {GENERATION_ISOLATION_CUES}"
     negative = ", ".join(part for part in (req.negative_prompt.strip(), GENERATION_DEFAULT_NEGATIVE) if part)
 
     return RunRequest(

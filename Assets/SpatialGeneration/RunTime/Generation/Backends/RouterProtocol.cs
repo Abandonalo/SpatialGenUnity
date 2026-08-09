@@ -33,6 +33,9 @@ namespace SpatialGeneration.Generation.Backends
         /// <summary>"hunyuan_2_1" or "tripo_sr".</summary>
         public string generation_model = string.Empty;
 
+        /// <summary>Style modifier prepended to the prompt. Empty means the router's default.</summary>
+        public string style = string.Empty;
+
         public int geometry_resolution = 512;
         public float tripo_threshold = 25f;
 

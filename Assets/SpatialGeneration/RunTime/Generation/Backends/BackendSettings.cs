@@ -86,6 +86,11 @@ public class BackendSettings : ScriptableObject
     public int captureWidth = 512;
     public int captureHeight = 512;
 
+    [Tooltip("Prepended to every prompt, e.g. \"low poly 3d model of\" + \"a house\". " +
+             "A 3D-asset style yields an isolated object; photographic wording brings a whole " +
+             "scene with it. Clear this to send the prompt unmodified.")]
+    public string assetStyle = "low poly 3d model of";
+
     [Header("3D lifting")]
     public int geometryResolution = 512;
     public float tripoSrThreshold = 25f;

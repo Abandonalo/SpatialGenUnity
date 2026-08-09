@@ -32,6 +32,7 @@ MonoBehaviour:
   sampler: euler
   captureWidth: 512
   captureHeight: 512
+  assetStyle: low poly 3d model of
   geometryResolution: 512
   tripoSrThreshold: 25
   preserveAssetProportions: 0

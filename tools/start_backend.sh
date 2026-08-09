@@ -26,7 +26,9 @@ if [ -z "${COMFY_BASE_URL:-}" ]; then
   COMFY_BASE_URL="${COMFY_BASE_URL:-http://127.0.0.1:8000}"
 fi
 export COMFY_BASE_URL
-export COMFY_CHECKPOINT="${COMFY_CHECKPOINT:-v1-5-pruned-emaonly.safetensors}"
+# DreamShaper renders isolated 3D-asset subjects far more reliably than SD 1.5 base,
+# which tends toward photography and brings a scene with it.
+export COMFY_CHECKPOINT="${COMFY_CHECKPOINT:-dreamshaper_8.safetensors}"
 export COMFY_INPUT_CHECKPOINT="${COMFY_INPAINT_CHECKPOINT:-sd-v1-5-inpainting.ckpt}"
 
 # Only used if ComfyUI's /upload/image endpoint is unavailable; see graph_injector._upload.

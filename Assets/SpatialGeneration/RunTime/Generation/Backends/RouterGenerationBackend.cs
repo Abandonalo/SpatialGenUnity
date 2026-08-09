@@ -174,6 +174,7 @@ public sealed class RouterGenerationBackend : IGenerationBackend
             edges_image = request.EdgesBase64,
             mask_image = request.MaskBase64,
             generation_model = _settings.generationModel == GenerationModel.TripoSR ? "tripo_sr" : "hunyuan_2_1",
+            style = _settings.assetStyle ?? string.Empty,
             geometry_resolution = _settings.geometryResolution,
             tripo_threshold = _settings.tripoSrThreshold,
             proxy = new ProxyBody

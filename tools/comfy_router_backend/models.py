@@ -34,11 +34,23 @@ REFINEMENT_DEFAULT_NEGATIVE: str = "blur, low quality, noise, jpeg artifacts, di
 #
 # Everything else that used to live here now lives in the negative prompt, where it steers
 # the result without competing for the subject's share of the attention budget.
+
+# Prepended to the subject, not appended as another cue.
+#
+# Style has to modify the head noun to survive: measured on SD 1.5, "house, 3d render,
+# isolated game asset, ..." produced a dark facade and, on dreamshaper, a sofa — the
+# trailing style words won and the subject lost. "low poly 3d model of a house" keeps
+# the subject and gets the isolated-object look, because a 3D asset render has no scene
+# around it by convention, which photographs of houses always do.
+GENERATION_DEFAULT_STYLE: str = "low poly 3d model of"
+
 GENERATION_ISOLATION_CUES: str = (
     "front view, whole object centered in frame, isolated on a plain white background"
 )
 
 GENERATION_DEFAULT_NEGATIVE: str = (
+    # Photography brings the scene with it: lawns, trees, sky, neighbours.
+    "photograph, photorealistic, real estate photo, "
     # Drawing styles. Architectural subjects collapse into these without being warned off.
     "blueprint, technical drawing, architectural drawing, elevation drawing, floor plan, "
     "line art, sketch, diagram, graph paper, grid, monochrome, isometric, "
@@ -170,6 +182,9 @@ class GenerateRequest(BaseModel):
     mask_image: Optional[str] = None
 
     generation_model: Optional[str] = None
+
+    # Overrides GENERATION_DEFAULT_STYLE. Empty string means no style modifier at all.
+    style: Optional[str] = None
     geometry_resolution: Optional[int] = None
     tripo_threshold: Optional[float] = None
 
