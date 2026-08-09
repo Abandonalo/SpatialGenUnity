@@ -17,8 +17,12 @@ public static class GenerationRunner
     /// <summary>
     /// TripoSR and Hunyuan return front-view meshes whose visible face points down local -X,
     /// while a spatial proxy defines its front as local +X. This corrects for that.
+    ///
+    /// Spelled out as a yaw rather than <c>FromToRotation(left, right)</c>: the axis of a
+    /// half turn between exactly opposed vectors is not determined by its arguments, so that
+    /// form is free to return a 180-degree roll and stand the asset on its head.
     /// </summary>
-    private static readonly Quaternion MeshFrontToProxyFront = Quaternion.FromToRotation(Vector3.left, Vector3.right);
+    private static readonly Quaternion MeshFrontToProxyFront = Quaternion.Euler(0f, 180f, 0f);
 
     private static bool _isRunning;
 
