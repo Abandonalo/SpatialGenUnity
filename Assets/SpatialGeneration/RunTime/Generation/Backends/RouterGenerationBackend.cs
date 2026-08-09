@@ -4,9 +4,6 @@ using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
 using SpatialGeneration.Generation.Backends;
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
 
 /// <summary>
 /// Talks to the FastAPI router in <c>tools/comfy_router_backend</c>, which owns the ComfyUI
@@ -130,8 +127,6 @@ public sealed class RouterGenerationBackend : IGenerationBackend
         string promptId = await SubmitAsync(request);
         await WaitForCompletionAsync(promptId);
         List<string> downloaded = await DownloadOutputsAsync(promptId, request);
-
-        RefreshAssetDatabase();
 
         var result = new AssetGenerationResult
         {
@@ -338,10 +333,4 @@ public sealed class RouterGenerationBackend : IGenerationBackend
         return string.IsNullOrWhiteSpace(sanitized) ? "run" : sanitized;
     }
 
-    private static void RefreshAssetDatabase()
-    {
-#if UNITY_EDITOR
-        AssetDatabase.Refresh();
-#endif
-    }
 }

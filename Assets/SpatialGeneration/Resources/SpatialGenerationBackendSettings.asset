@@ -35,5 +35,5 @@ MonoBehaviour:
   geometryResolution: 512
   tripoSrThreshold: 25
   preserveAssetProportions: 0
-  outputFolder: Assets/SpatialGeneration/GeneratedAssets
+  outputFolder: Logs/SpatialGeneration/Downloads
   blockOnValidationErrors: 1

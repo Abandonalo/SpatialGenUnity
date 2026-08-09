@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -64,16 +66,16 @@ public static class MeshImporter
         TryInstantiate(absolutePath, parent, preferVertexColors, out instance, out _);
 
     /// <summary>
-    /// Copies the source file and everything beside it (textures, .bin buffers) into a fresh
-    /// run folder under <see cref="GeneratedRoot"/>.
+    /// Copies the asset into a fresh run folder under <see cref="GeneratedRoot"/>.
+    ///
+    /// Only the files this asset needs, not the whole source directory. Copying the
+    /// directory meant every previously downloaded mesh was duplicated into every new run
+    /// folder and re-imported, so import cost grew with the number of runs rather than
+    /// with the size of the new asset.
     /// </summary>
     private static string StageIntoProject(string absolutePath)
     {
         if (string.IsNullOrWhiteSpace(absolutePath) || !File.Exists(absolutePath))
-            return null;
-
-        string sourceDir = Path.GetDirectoryName(absolutePath);
-        if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir))
             return null;
 
         EnsureFolder(GeneratedRoot);
@@ -81,17 +83,35 @@ public static class MeshImporter
         AssetDatabase.CreateFolder(GeneratedRoot, folderName);
         string destinationFolder = $"{GeneratedRoot}/{folderName}";
 
-        foreach (string sourceFile in Directory.GetFiles(sourceDir))
+        foreach (string sourceFile in FilesRequiredBy(absolutePath))
         {
-            // .meta files carry GUIDs; copying them in would collide with the fresh import.
-            if (sourceFile.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
-                continue;
-
             string destination = $"{destinationFolder}/{Path.GetFileName(sourceFile)}";
             File.Copy(sourceFile, destination, overwrite: true);
         }
 
         return $"{destinationFolder}/{Path.GetFileName(absolutePath)}";
+    }
+
+    /// <summary>
+    /// The asset plus its companion files.
+    ///
+    /// .glb and .fbx embed everything. .obj may sit beside an .mtl and textures, which
+    /// conventionally share its name. .gltf references buffers and images by arbitrary
+    /// filename, so there the whole directory is the only safe answer.
+    /// </summary>
+    private static IEnumerable<string> FilesRequiredBy(string absolutePath)
+    {
+        string directory = Path.GetDirectoryName(absolutePath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            return Array.Empty<string>();
+
+        string extension = Path.GetExtension(absolutePath).ToLowerInvariant();
+        IEnumerable<string> candidates = extension == ".gltf"
+            ? Directory.GetFiles(directory)
+            : Directory.GetFiles(directory, $"{Path.GetFileNameWithoutExtension(absolutePath)}.*");
+
+        // .meta files carry GUIDs; copying them in would collide with the fresh import.
+        return candidates.Where(file => !file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Saves a runtime-built mesh next to an imported asset so it survives a reload.</summary>

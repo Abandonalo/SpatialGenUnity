@@ -97,8 +97,9 @@ public class BackendSettings : ScriptableObject
     public bool preserveAssetProportions;
 
     [Header("Output")]
-    [Tooltip("Project-relative folder that downloaded backend outputs are written to.")]
-    public string outputFolder = "Assets/SpatialGeneration/GeneratedAssets";
+    [Tooltip("Project-relative folder for raw backend downloads. Kept outside Assets/ so " +
+             "Unity does not import every payload; the importer copies what it needs in.")]
+    public string outputFolder = "Logs/SpatialGeneration/Downloads";
 
     [Tooltip("Abort generation when constraint validation reports errors.")]
     public bool blockOnValidationErrors = true;
