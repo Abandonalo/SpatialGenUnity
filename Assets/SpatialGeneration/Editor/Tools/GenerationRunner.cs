@@ -139,8 +139,11 @@ public static class GenerationRunner
 
     private static void AttachMetadata(GameObject target, AssetGenerationResult asset, SpatialProxy proxy)
     {
-        GeneratedMeshMetadata metadata = target.GetComponent<GeneratedMeshMetadata>()
-                                         ?? Undo.AddComponent<GeneratedMeshMetadata>(target);
+        // Explicit null test, not ??: Unity reports a destroyed component as null through
+        // its == overload, which the coalescing operators do not consult.
+        GeneratedMeshMetadata metadata = target.GetComponent<GeneratedMeshMetadata>();
+        if (metadata == null)
+            metadata = Undo.AddComponent<GeneratedMeshMetadata>(target);
 
         metadata.meshPath = MeshImporter.ToProjectRelativePath(asset.MeshPath);
         metadata.proxyId = asset.ProxyId ?? string.Empty;

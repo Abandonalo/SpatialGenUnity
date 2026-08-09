@@ -305,7 +305,8 @@ public class MultiViewRenderer : MonoBehaviour
 
     private void EnsureReferences()
     {
-        cameraManager ??= GetComponent<MultiViewCameraManager>();
+        if (cameraManager == null)
+            cameraManager = GetComponent<MultiViewCameraManager>();
         if (cameraManager == null)
             throw new InvalidOperationException("MultiViewRenderer needs a MultiViewCameraManager on the same object.");
     }

@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using SpatialGeneration.Utils;
 
 public enum ViewType
 {
@@ -106,6 +107,14 @@ public class MultiViewCameraManager : MonoBehaviour
         camera.enabled = false;
     }
 
+    /// <summary>
+    /// The camera for <paramref name="childName"/>, creating the object or the component if
+    /// either is missing.
+    ///
+    /// A rig object that outlived its Camera is a real state — a hierarchy carried over from
+    /// an earlier session, or a component removed by hand — so the object and the component
+    /// are checked separately rather than assumed to exist together.
+    /// </summary>
     private Camera EnsureCamera(Camera existing, string childName)
     {
         if (existing != null)
@@ -115,7 +124,7 @@ public class MultiViewCameraManager : MonoBehaviour
         GameObject go = child != null ? child.gameObject : new GameObject(childName);
         go.transform.SetParent(transform, worldPositionStays: false);
 
-        Camera camera = go.GetComponent<Camera>() ?? go.AddComponent<Camera>();
+        Camera camera = ComponentUtils.GetOrAdd<Camera>(go);
         camera.enabled = false;
         return camera;
     }

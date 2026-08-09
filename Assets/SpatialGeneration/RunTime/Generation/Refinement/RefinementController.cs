@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
 using SpatialGeneration.Generation.Backends;
+using SpatialGeneration.Utils;
 
 /// <summary>
 /// Runs a region-scoped refinement.
@@ -216,8 +217,7 @@ public class RefinementController : MonoBehaviour
         MultiViewCameraManager cameras = multiViewRenderer.cameraManager;
         if (cameras == null)
         {
-            cameras = multiViewRenderer.GetComponent<MultiViewCameraManager>()
-                      ?? multiViewRenderer.gameObject.AddComponent<MultiViewCameraManager>();
+            cameras = ComponentUtils.GetOrAdd<MultiViewCameraManager>(multiViewRenderer.gameObject);
             multiViewRenderer.cameraManager = cameras;
         }
 
@@ -245,10 +245,8 @@ public class RefinementController : MonoBehaviour
         if (existing == null)
             rig.transform.SetParent(transform, worldPositionStays: false);
 
-        MultiViewCameraManager cameras = rig.GetComponent<MultiViewCameraManager>()
-                                         ?? rig.AddComponent<MultiViewCameraManager>();
-        MultiViewRenderer renderer = rig.GetComponent<MultiViewRenderer>()
-                                     ?? rig.AddComponent<MultiViewRenderer>();
+        MultiViewCameraManager cameras = ComponentUtils.GetOrAdd<MultiViewCameraManager>(rig);
+        MultiViewRenderer renderer = ComponentUtils.GetOrAdd<MultiViewRenderer>(rig);
         renderer.cameraManager = cameras;
         return renderer;
     }
