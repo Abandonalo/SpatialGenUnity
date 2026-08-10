@@ -12,6 +12,18 @@ public class RegionSelectionManagerEditor : Editor
     private static readonly Color HandleColor = new(0.2f, 1f, 0.7f, 1f);
 
     private static Material _overlayMaterial;
+    private bool _toolsWereHidden;
+
+    private void OnEnable()
+    {
+        _toolsWereHidden = Tools.hidden;
+        Tools.hidden = true;
+    }
+
+    private void OnDisable()
+    {
+        Tools.hidden = _toolsWereHidden;
+    }
 
     private void OnSceneGUI()
     {
@@ -21,9 +33,6 @@ public class RegionSelectionManagerEditor : Editor
             return;
 
         DrawOverlay(manager, selection);
-
-        using (new Handles.DrawingScope(HandleColor, Matrix4x4.TRS(selection.center, selection.rotation, Vector3.one)))
-            Handles.DrawWireCube(Vector3.zero, selection.size);
 
         EditorGUI.BeginChangeCheck();
         Handles.color = HandleColor;
