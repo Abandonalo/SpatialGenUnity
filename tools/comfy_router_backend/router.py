@@ -13,6 +13,7 @@ _MODE_TO_GRAPH: dict[str, str] = {
     "generate_hunyuan": "generation_hunyuan.json",
     "refine_inpaint_only": "refinement_inpaint_only.json",
     "tripo_from_rgb": "refinement_tripo_from_rgb.json",
+    "refine_hunyuan_mv": "refinement_hunyuan_mv.json",
 }
 
 

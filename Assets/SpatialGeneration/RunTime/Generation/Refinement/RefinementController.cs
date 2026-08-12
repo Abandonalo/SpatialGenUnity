@@ -105,6 +105,8 @@ public class RefinementController : MonoBehaviour
             steps = Mathf.Max(1, steps),
             cfg = Mathf.Max(0f, cfgScale),
             denoise = RefinementDefaults.Denoise,
+            lifter = LifterId(settings.refinementLifter),
+            allowFallback = settings.refinementLifter == RefinementLifter.Auto,
             reconstructionView = reconstructionView.ToString(),
             views = views.views
         };
@@ -123,8 +125,17 @@ public class RefinementController : MonoBehaviour
 
         // Keep the refined 2D view next to the mesh: it is the record of what the model
         // actually painted, and the first thing to look at when a result surprises you.
+        var refinedPaths = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (RefinedViewResult refined in response.refinedViews)
-            WriteBase64Png(refined.refinedImageBase64, Path.Combine(artifactDir, $"{refined.viewType}_refined.png"));
+        {
+            string path = Path.Combine(artifactDir, $"{refined.viewType}_refined.png");
+            WriteBase64Png(refined.refinedImageBase64, path);
+            if (File.Exists(path))
+                refinedPaths[refined.viewType] = path;
+        }
+
+        foreach (string warning in response.warnings ?? new System.Collections.Generic.List<string>())
+            Debug.LogWarning($"Spatial Generation refinement: {warning}");
 
         if (string.IsNullOrWhiteSpace(response.meshBase64))
             throw new InvalidOperationException("Refinement returned no mesh; the region cannot be replaced.");
@@ -134,7 +145,9 @@ public class RefinementController : MonoBehaviour
         {
             requestId = response.requestId,
             meshAbsolutePath = meshPath,
-            Region = selection
+            Region = selection,
+            Views = BuildViewProjections(views, refinedPaths),
+            LifterUsed = response.lifterUsed
         }) ?? false;
 
         if (!applied)
@@ -147,6 +160,48 @@ public class RefinementController : MonoBehaviour
 
         Debug.Log($"Spatial Generation: refinement '{response.requestId}' applied to region '{selection.selectionId}'.");
     }
+
+    private System.Collections.Generic.List<RefinedViewProjection> BuildViewProjections(
+        MultiViewData captured,
+        System.Collections.Generic.IReadOnlyDictionary<string, string> refinedPaths)
+    {
+        var result = new System.Collections.Generic.List<RefinedViewProjection>();
+        foreach (ViewData view in captured.views)
+        {
+            if (!refinedPaths.TryGetValue(view.viewType, out string path) ||
+                !Enum.TryParse(view.viewType, true, out ViewType type))
+                continue;
+
+            Camera camera = multiViewRenderer.cameraManager.GetCamera(type);
+            if (camera == null)
+                continue;
+
+            result.Add(new RefinedViewProjection
+            {
+                viewType = view.viewType,
+                imageAbsolutePath = path,
+                camera = camera,
+                worldToCameraMatrix = view.cameraWorldToCamera,
+                projectionMatrix = view.cameraProjection,
+                cameraPosition = view.cameraPosition,
+                cameraForward = view.cameraForward,
+                hasStoredProjection = true,
+                cropMinX = view.cropMinX,
+                cropMinY = view.cropMinY,
+                cropMaxX = view.cropMaxX,
+                cropMaxY = view.cropMaxY,
+                flipVertical = multiViewRenderer.flipVerticalOnReadback
+            });
+        }
+        return result;
+    }
+
+    private static string LifterId(RefinementLifter lifter) => lifter switch
+    {
+        RefinementLifter.Hunyuan3D2MV => "hunyuan3d_2mv",
+        RefinementLifter.TripoSR => "tripo_sr",
+        _ => "auto"
+    };
 
     /// <summary>
     /// Tells the router which part of the refined image to lift.

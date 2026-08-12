@@ -38,7 +38,7 @@
     "class_type": "TripoSRViewer"
   },
   "122": {
-    "inputs": { "image": "__TRIPO_SOLID_MASK__" },
+    "inputs": { "image": "__MASK_IMAGE__" },
     "class_type": "LoadImage"
   },
   "123": {

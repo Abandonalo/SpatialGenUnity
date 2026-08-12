@@ -136,7 +136,7 @@ public class MeshAlignmentTests
         Quaternion baked = Quaternion.Euler(7f, 0f, 0f);
         GameObject root = BuildBox(new Vector3(1.5f, 0.8f, 0.6f), baked);
 
-        MeshAlignment.Level(root);
+        Quaternion correction = MeshAlignment.Level(root);
         root.transform.rotation = Quaternion.Euler(0f, 180f, 0f);   // GetMeshRotationForProxy
         root.transform.localScale = new Vector3(2f, 1f, 1.6f);      // FitToVolume, fill mode
 
@@ -150,11 +150,12 @@ public class MeshAlignmentTests
         Quaternion baked = Quaternion.Euler(0f, 34f, 0f);
         GameObject root = BuildBox(new Vector3(1.5f, 0.8f, 0.6f), baked);
 
-        MeshAlignment.Level(root);
+        Quaternion correction = MeshAlignment.Level(root);
 
         // The box is 3.0 x 1.6 x 1.2; squared up, its world AABB matches those dimensions.
-        Bounds bounds = _geometry.GetComponent<MeshRenderer>().bounds;
-        Assert.AreEqual(3.0f, bounds.size.x, 0.15f, "footprint is not square-on in x");
+        Bounds bounds = GeometryBounds();
+        Assert.AreEqual(3.0f, bounds.size.x, 0.15f,
+            $"footprint is not square-on in x; correction={correction.eulerAngles}");
         Assert.AreEqual(1.2f, bounds.size.z, 0.15f, "footprint is not square-on in z");
     }
 
@@ -177,24 +178,25 @@ public class MeshAlignmentTests
     public void HandlesTiltAndYawTogether()
     {
         Quaternion baked = Quaternion.Euler(7f, 31f, 5f);
-        MeshAlignment.Level(BuildBox(new Vector3(1.5f, 0.8f, 0.6f), baked));
+        Quaternion correction = MeshAlignment.Level(BuildBox(new Vector3(1.5f, 0.8f, 0.6f), baked));
 
         Assert.Less(ResidualTilt(baked), 1f);
-        Bounds bounds = _geometry.GetComponent<MeshRenderer>().bounds;
-        Assert.AreEqual(1.6f, bounds.size.y, 0.15f, "height should be recovered once level");
+        Bounds bounds = GeometryBounds();
+        Assert.AreEqual(1.6f, bounds.size.y, 0.15f,
+            $"height should be recovered once level; correction={correction.eulerAngles}");
     }
 
     [Test]
     public void LeavesAnAlreadyLevelMeshAlone()
     {
         GameObject root = BuildBox(new Vector3(1.5f, 0.8f, 0.6f), Quaternion.identity);
-        Vector3 before = _geometry.GetComponent<MeshRenderer>().bounds.size;
+        Vector3 before = GeometryBounds().size;
 
         Quaternion correction = MeshAlignment.Level(root);
 
         Assert.Less(Quaternion.Angle(correction, Quaternion.identity), 1f,
             "a level mesh should not be rotated");
-        Vector3 after = _geometry.GetComponent<MeshRenderer>().bounds.size;
+        Vector3 after = GeometryBounds().size;
         Assert.AreEqual(before.x, after.x, 0.05f);
         Assert.AreEqual(before.z, after.z, 0.05f);
     }
@@ -254,5 +256,15 @@ public class MeshAlignmentTests
         Assert.DoesNotThrow(() => MeshAlignment.Level(empty));
         Assert.DoesNotThrow(() => MeshAlignment.Level(null));
         Object.DestroyImmediate(empty);
+    }
+
+    private Bounds GeometryBounds()
+    {
+        Mesh mesh = _geometry.GetComponent<MeshFilter>().sharedMesh;
+        Vector3[] vertices = mesh.vertices;
+        var bounds = new Bounds(_geometry.TransformPoint(vertices[0]), Vector3.zero);
+        for (int i = 1; i < vertices.Length; i++)
+            bounds.Encapsulate(_geometry.TransformPoint(vertices[i]));
+        return bounds;
     }
 }

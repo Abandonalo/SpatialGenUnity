@@ -35,6 +35,7 @@ MonoBehaviour:
   assetStyle: low poly 3d model of
   geometryResolution: 512
   tripoSrThreshold: 25
+  refinementLifter: 2
   preserveAssetProportions: 0
   outputFolder: Logs/SpatialGeneration/Downloads
   blockOnValidationErrors: 1

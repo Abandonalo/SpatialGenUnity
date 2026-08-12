@@ -2,7 +2,8 @@
   "name": "SpatialGeneration.Tests.EditMode",
   "rootNamespace": "",
   "references": [
-    "SpatialGeneration.Runtime"
+    "SpatialGeneration.Runtime",
+    "SpatialGeneration.Editor"
   ],
   "includePlatforms": [
     "Editor"

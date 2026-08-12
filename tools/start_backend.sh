@@ -39,6 +39,9 @@ export SPATIALGEN_BACKEND_PORT="${SPATIALGEN_BACKEND_PORT:-8001}"
 export SPATIALGEN_TRIPO_MODEL="${SPATIALGEN_TRIPO_MODEL:-TripoSRmodel.ckpt}"
 export SPATIALGEN_GEOMETRY_RESOLUTION="${SPATIALGEN_GEOMETRY_RESOLUTION:-512}"
 export SPATIALGEN_TRIPO_THRESHOLD="${SPATIALGEN_TRIPO_THRESHOLD:-25}"
+export SPATIALGEN_HY3D_MV_MODEL="${SPATIALGEN_HY3D_MV_MODEL:-hunyuan3d_2mv/hunyuan3d-dit-v2-mv-fast/model.fp16.safetensors}"
+export SPATIALGEN_HY3D_OCTREE_RESOLUTION="${SPATIALGEN_HY3D_OCTREE_RESOLUTION:-256}"
+export SPATIALGEN_HY3D_MAX_FACES="${SPATIALGEN_HY3D_MAX_FACES:-40000}"
 
 # Some venvs ship a uvloop build that fails on import (AttributeError: module 'uvloop' has
 # no attribute 'new_event_loop'); the stdlib loop avoids it.

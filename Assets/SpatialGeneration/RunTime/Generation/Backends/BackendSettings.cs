@@ -28,6 +28,16 @@ public enum GenerationModel
     TripoSR = 1
 }
 
+/// <summary>Image-to-3D implementation used for local region refinement.</summary>
+public enum RefinementLifter
+{
+    /// <summary>Prefer Hunyuan3D-2mv and fall back to TripoSR when it is unavailable.</summary>
+    Auto = 0,
+
+    Hunyuan3D2MV = 1,
+    TripoSR = 2
+}
+
 /// <summary>
 /// Project-wide backend configuration. Lives at
 /// <c>Assets/SpatialGeneration/Resources/SpatialGenerationBackendSettings.asset</c>
@@ -94,6 +104,10 @@ public class BackendSettings : ScriptableObject
     [Header("3D lifting")]
     public int geometryResolution = 512;
     public float tripoSrThreshold = 25f;
+
+    [Tooltip("Auto uses Hunyuan3D-2mv when its ComfyUI node and model are installed, then " +
+             "falls back to TripoSR without losing the refinement run.")]
+    public RefinementLifter refinementLifter = RefinementLifter.Auto;
 
     [Header("Placement")]
     [Tooltip("Keep the generated mesh's own proportions and fit it inside the proxy. " +

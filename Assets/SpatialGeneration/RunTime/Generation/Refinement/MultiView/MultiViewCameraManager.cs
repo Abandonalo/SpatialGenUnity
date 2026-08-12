@@ -7,7 +7,9 @@ public enum ViewType
     Front = 0,
     Left = 1,
     Right = 2,
-    Top = 3
+    /// <summary>Retained only so old serialized enum values are not reinterpreted.</summary>
+    Top = 3,
+    Back = 4
 }
 
 /// <summary>
@@ -20,12 +22,15 @@ public enum ViewType
 [ExecuteAlways]
 public class MultiViewCameraManager : MonoBehaviour
 {
-    public static readonly ViewType[] AllViews = { ViewType.Front, ViewType.Left, ViewType.Right, ViewType.Top };
+    public static readonly ViewType[] AllViews =
+        { ViewType.Front, ViewType.Back, ViewType.Left, ViewType.Right };
 
     [Header("Cameras (created by Apply Layout)")]
     public Camera frontCamera;
+    public Camera backCamera;
     public Camera leftCamera;
     public Camera rightCamera;
+    [HideInInspector]
     public Camera topCamera;
 
     [Header("Rig")]
@@ -49,7 +54,8 @@ public class MultiViewCameraManager : MonoBehaviour
     {
         ViewType.Left => leftCamera,
         ViewType.Right => rightCamera,
-        ViewType.Top => topCamera,
+        ViewType.Back => backCamera,
+        ViewType.Top => backCamera != null ? backCamera : topCamera,
         _ => frontCamera
     };
 
@@ -61,15 +67,28 @@ public class MultiViewCameraManager : MonoBehaviour
     [ContextMenu("Apply Layout")]
     public void ApplyLayout()
     {
+        MigrateTopCameraToBack();
+
         frontCamera = EnsureCamera(frontCamera, "MultiView_Front");
+        backCamera = EnsureCamera(backCamera, "MultiView_Back");
         leftCamera = EnsureCamera(leftCamera, "MultiView_Left");
         rightCamera = EnsureCamera(rightCamera, "MultiView_Right");
-        topCamera = EnsureCamera(topCamera, "MultiView_Top");
 
         Place(frontCamera, new Vector3(rigDistance, 0f, 0f), Quaternion.LookRotation(Vector3.left, Vector3.up));
+        Place(backCamera, new Vector3(-rigDistance, 0f, 0f), Quaternion.LookRotation(Vector3.right, Vector3.up));
         Place(leftCamera, new Vector3(0f, 0f, -rigDistance), Quaternion.LookRotation(Vector3.forward, Vector3.up));
         Place(rightCamera, new Vector3(0f, 0f, rigDistance), Quaternion.LookRotation(Vector3.back, Vector3.up));
-        Place(topCamera, new Vector3(0f, rigDistance, 0f), Quaternion.LookRotation(Vector3.down, Vector3.forward));
+    }
+
+    /// <summary>Reuses the old fourth camera so existing scene rigs migrate without duplication.</summary>
+    private void MigrateTopCameraToBack()
+    {
+        if (backCamera != null || topCamera == null)
+            return;
+
+        backCamera = topCamera;
+        topCamera = null;
+        backCamera.gameObject.name = "MultiView_Back";
     }
 
     /// <summary>Fails loudly if a caller has desynchronised the rig behind our back.</summary>

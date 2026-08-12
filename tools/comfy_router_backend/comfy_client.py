@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .models import OutputFile, RunResult
 
@@ -26,8 +26,31 @@ class ComfyRunResult:
     mesh_base64: Optional[str]
 
 
+@dataclass
+class DownloadedOutput:
+    filename: str
+    data_base64: str
+
+
+@dataclass
+class ComfyOutputs:
+    prompt_id: str
+    images: List[DownloadedOutput]
+    meshes: List[DownloadedOutput]
+
+
 def send_to_comfy(graph: Dict[str, Any]) -> ComfyRunResult:
     """Submits a graph, waits for it, and returns its first image and mesh output."""
+    downloaded = send_to_comfy_all(graph)
+    image = downloaded.images[0].data_base64 if downloaded.images else None
+    mesh = downloaded.meshes[0].data_base64 if downloaded.meshes else None
+    if image is None and mesh is None:
+        raise RuntimeError(f"ComfyUI prompt {downloaded.prompt_id} produced only unsupported output types")
+    return ComfyRunResult(prompt_id=downloaded.prompt_id, image_base64=image, mesh_base64=mesh)
+
+
+def send_to_comfy_all(graph: Dict[str, Any]) -> ComfyOutputs:
+    """Submits a graph and downloads every image and mesh output in history order."""
     prompt_id = submit_prompt(graph)
     history_entry = wait_for_completion(prompt_id)
 
@@ -35,15 +58,12 @@ def send_to_comfy(graph: Dict[str, Any]) -> ComfyRunResult:
     if not outputs:
         raise RuntimeError(f"ComfyUI finished prompt {prompt_id} without downloadable outputs")
 
-    image = _first_with_extension(outputs, _IMAGE_EXTENSIONS)
-    mesh = _first_with_extension(outputs, _MESH_EXTENSIONS)
-    if image is None and mesh is None:
-        raise RuntimeError(f"ComfyUI prompt {prompt_id} produced only unsupported output types")
-
-    return ComfyRunResult(
+    images = [ref for ref in outputs if os.path.splitext(ref.filename)[1].lower() in _IMAGE_EXTENSIONS]
+    meshes = [ref for ref in outputs if os.path.splitext(ref.filename)[1].lower() in _MESH_EXTENSIONS]
+    return ComfyOutputs(
         prompt_id=prompt_id,
-        image_base64=_download_base64(image) if image else None,
-        mesh_base64=_download_base64(mesh) if mesh else None,
+        images=[DownloadedOutput(ref.filename, _download_base64(ref)) for ref in images],
+        meshes=[DownloadedOutput(ref.filename, _download_base64(ref)) for ref in meshes],
     )
 
 
@@ -68,7 +88,10 @@ def wait_for_completion(prompt_id: str) -> Dict[str, Any]:
             status = entry.get("status") or {}
             if str(status.get("status_str") or "").lower() == "error":
                 raise RuntimeError(f"ComfyUI prompt {prompt_id} failed: {_message(entry)}")
-            if status.get("completed") or _extract_outputs(entry):
+            # A four-branch graph can expose its first SaveImage while the other views are
+            # still executing. Do not treat a partial output list as completion when ComfyUI
+            # provides an explicit status object.
+            if status.get("completed") or (not status and _extract_outputs(entry)):
                 return entry
 
         time.sleep(poll_interval)
@@ -118,6 +141,11 @@ def probe_comfy() -> tuple[bool, str]:
 
 def get_history(prompt_id: str) -> Dict[str, Any]:
     return _request_json("GET", _url(f"/history/{urllib.parse.quote(prompt_id)}"))
+
+
+def get_object_info() -> Dict[str, Any]:
+    """ComfyUI node registry used for capability checks before a long job is queued."""
+    return _request_json("GET", _url("/object_info"))
 
 
 def get_view_bytes(filename: str, subfolder: str = "", output_type: str = "output") -> bytes:
@@ -202,13 +230,6 @@ def _extract_outputs(payload: Dict[str, Any]) -> List[OutputFile]:
 
     visit(payload)
     return found
-
-
-def _first_with_extension(refs: Iterable[OutputFile], extensions: set[str]) -> Optional[OutputFile]:
-    for ref in refs:
-        if os.path.splitext(ref.filename)[1].lower() in extensions:
-            return ref
-    return None
 
 
 def _download_base64(ref: OutputFile) -> str:

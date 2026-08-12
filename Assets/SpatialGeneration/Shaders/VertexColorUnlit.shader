@@ -7,6 +7,7 @@ Shader "SpatialGeneration/VertexColorUnlit"
         {
             Name "ForwardUnlit"
             Tags { "LightMode" = "UniversalForward" }
+            Cull Off
 
             HLSLPROGRAM
             #pragma vertex vert

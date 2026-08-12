@@ -32,13 +32,23 @@ namespace SpatialGeneration.Generation.Backends
             public readonly string ComfyUrl;
 
             public readonly string Detail;
+            public readonly bool HunyuanRefinementAvailable;
+            public readonly string HunyuanRefinementDetail;
 
-            public BackendHealth(bool routerReachable, bool comfyReachable, string comfyUrl, string detail)
+            public BackendHealth(
+                bool routerReachable,
+                bool comfyReachable,
+                string comfyUrl,
+                string detail,
+                bool hunyuanRefinementAvailable = false,
+                string hunyuanRefinementDetail = "")
             {
                 RouterReachable = routerReachable;
                 ComfyReachable = comfyReachable;
                 ComfyUrl = string.IsNullOrWhiteSpace(comfyUrl) ? "http://127.0.0.1:8188" : comfyUrl;
                 Detail = detail ?? string.Empty;
+                HunyuanRefinementAvailable = hunyuanRefinementAvailable;
+                HunyuanRefinementDetail = hunyuanRefinementDetail ?? string.Empty;
             }
 
             public static BackendHealth RouterDown(string detail) => new(false, false, null, detail);
@@ -59,6 +69,9 @@ namespace SpatialGeneration.Generation.Backends
                     return BackendHealth.RouterDown($"Router returned {(int)response.StatusCode} {response.ReasonPhrase}.");
 
                 HealthBody health = JsonUtility.FromJson<HealthBody>(await response.Content.ReadAsStringAsync());
+                RefinementCapabilityBody hy3d = health?.refinement_lifters?.Find(
+                    capability => string.Equals(
+                        capability.id, "hunyuan3d_2mv", StringComparison.OrdinalIgnoreCase));
 
                 // Tolerate a router that predates the ComfyUI probe rather than reporting a
                 // false outage.
@@ -66,7 +79,9 @@ namespace SpatialGeneration.Generation.Backends
                     routerReachable: true,
                     comfyReachable: health == null || health.comfy_reachable,
                     comfyUrl: health?.comfy_url,
-                    detail: health == null ? string.Empty : health.detail);
+                    detail: health == null ? string.Empty : health.detail,
+                    hunyuanRefinementAvailable: hy3d != null && hy3d.available,
+                    hunyuanRefinementDetail: hy3d?.detail);
             }
             catch (Exception ex)
             {

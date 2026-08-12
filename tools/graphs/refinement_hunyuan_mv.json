@@ -1,0 +1,40 @@
+{
+  "_comment": "Four cardinal, isolated region views lifted by the project-owned SpatialGenHunyuan2MV node.",
+  "1": {
+    "inputs": { "image": "__FRONT_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Front" }
+  },
+  "2": {
+    "inputs": { "image": "__BACK_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Back" }
+  },
+  "3": {
+    "inputs": { "image": "__LEFT_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Left" }
+  },
+  "4": {
+    "inputs": { "image": "__RIGHT_IMAGE__" },
+    "class_type": "LoadImage",
+    "_meta": { "title": "Right" }
+  },
+  "10": {
+    "inputs": {
+      "model": "__HY3D_MV_MODEL__",
+      "front": ["1", 0],
+      "back": ["2", 0],
+      "left": ["3", 0],
+      "right": ["4", 0],
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "guidance_scale": "__CFG__",
+      "octree_resolution": "__HY3D_OCTREE_RESOLUTION__",
+      "max_faces": "__HY3D_MAX_FACES__",
+      "filename_prefix": "spatialgen_refined_mv"
+    },
+    "class_type": "SpatialGenHunyuan2MV",
+    "_meta": { "title": "Hunyuan3D-2mv Region Lift" }
+  }
+}

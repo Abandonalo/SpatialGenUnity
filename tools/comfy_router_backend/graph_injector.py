@@ -47,6 +47,13 @@ _IMAGES_BY_MODE: Dict[str, Dict[str, Tuple[str, bool]]] = {
     },
     "tripo_from_rgb": {
         "__RGB_IMAGE__": ("rgb_image", True),
+        "__MASK_IMAGE__": ("mask_image", True),
+    },
+    "refine_hunyuan_mv": {
+        "__FRONT_IMAGE__": ("rgb_image", True),
+        "__BACK_IMAGE__": ("back_image", True),
+        "__LEFT_IMAGE__": ("left_image", True),
+        "__RIGHT_IMAGE__": ("right_image", True),
     },
 }
 
@@ -130,6 +137,12 @@ def _build_replacements(req: RunRequest) -> Dict[str, Any]:
         "__TRIPOSR_MODEL__": req.tripo_model,
         "__GEOMETRY_RESOLUTION__": req.geometry_resolution,
         "__TRIPOSR_THRESHOLD__": req.tripo_threshold,
+        "__HY3D_MV_MODEL__": os.getenv(
+            "SPATIALGEN_HY3D_MV_MODEL",
+            "hunyuan3d_2mv/hunyuan3d-dit-v2-mv-fast/model.fp16.safetensors",
+        ),
+        "__HY3D_OCTREE_RESOLUTION__": int(os.getenv("SPATIALGEN_HY3D_OCTREE_RESOLUTION", "256")),
+        "__HY3D_MAX_FACES__": int(os.getenv("SPATIALGEN_HY3D_MAX_FACES", "40000")),
         "__CHECKPOINT__": os.getenv("COMFY_CHECKPOINT", "v1-5-pruned-emaonly.safetensors"),
         # Must match an entry in ControlNetLoader's dropdown, i.e. the path relative to
         # models/controlnet/ including any subfolder.
@@ -192,15 +205,6 @@ def _stage_images(req: RunRequest) -> Dict[str, str]:
         extension = _guess_extension(encoded)
         staged[placeholder] = _upload(f"{run_token}_{attribute}{extension}", data, extension)
 
-    # TripoSR's reference_mask input wants a solid-white image over the crop region: the
-    # background was already removed upstream, so any tighter mask only carves holes in
-    # the reconstruction.
-    if "__TRIPO_SOLID_MASK__" not in staged:
-        width, height = _tripo_mask_size(req)
-        staged["__TRIPO_SOLID_MASK__"] = _upload(
-            f"{run_token}_tripo_solid_mask.png", _solid_white_png(width, height), ".png"
-        )
-
     return staged
 
 
@@ -229,18 +233,6 @@ def _upload(filename: str, data: bytes, extension: str) -> str:
     if not target.is_file() or target.stat().st_size == 0:
         raise RuntimeError(f"Failed to write image: {target}")
     return target.name
-
-
-def _tripo_mask_size(req: RunRequest) -> Tuple[int, int]:
-    if req.crop_width and req.crop_height:
-        return int(req.crop_width), int(req.crop_height)
-    return _image_size(req.rgb_image) or (512, 512)
-
-
-def _solid_white_png(width: int, height: int) -> bytes:
-    buffer = io.BytesIO()
-    Image.new("RGB", (max(1, width), max(1, height)), (255, 255, 255)).save(buffer, format="PNG")
-    return buffer.getvalue()
 
 
 def _replace_placeholders(value: Any, replacements: Dict[str, Any]) -> Any:

@@ -141,4 +141,195 @@ public class MeshRegionSplitterTests
         Object.DestroyImmediate(source);
         Object.DestroyImmediate(outside);
     }
+
+    [Test]
+    public void SplitsCrossingTrianglesAndInterpolatesAttributes()
+    {
+        var source = new Mesh { name = "Crossing" };
+        source.vertices = new[]
+        {
+            new Vector3(-2f, -2f, 0f), new Vector3(2f, -2f, 0f), new Vector3(0f, 2f, 0f)
+        };
+        source.uv = new[] { Vector2.zero, Vector2.right, Vector2.up };
+        source.colors = new[] { Color.red, Color.green, Color.blue };
+        source.triangles = new[] { 0, 1, 2 };
+        source.RecalculateNormals();
+
+        MeshCutResult cut = MeshRegionSplitter.Cut(
+            source, Matrix4x4.identity, BoxAt(Vector3.zero, new Vector3(2f, 2f, 2f)));
+
+        Assert.AreEqual(1, cut.removedTriangles);
+        Assert.IsNotNull(cut.outsideMesh);
+        Assert.IsNotNull(cut.insideMesh);
+        Assert.AreEqual(cut.insideMesh.vertexCount, cut.insideMesh.uv.Length);
+        Assert.AreEqual(cut.insideMesh.vertexCount, cut.insideMesh.colors.Length);
+        foreach (Vector3 vertex in cut.insideMesh.vertices)
+        {
+            Assert.LessOrEqual(Mathf.Abs(vertex.x), 1.0001f);
+            Assert.LessOrEqual(Mathf.Abs(vertex.y), 1.0001f);
+        }
+
+        Object.DestroyImmediate(source);
+        Object.DestroyImmediate(cut.outsideMesh);
+        Object.DestroyImmediate(cut.insideMesh);
+    }
+
+    [Test]
+    public void PreservesSmallTripoTrianglesAfterWorldScale()
+    {
+        var source = new Mesh { name = "DenseTripoPatch" };
+        source.vertices = new[]
+        {
+            new Vector3(-0.001f, -0.001f, 0f),
+            new Vector3(0.001f, -0.001f, 0f),
+            new Vector3(0f, 0.001f, 0f)
+        };
+        source.triangles = new[] { 0, 1, 2 };
+        source.RecalculateNormals();
+
+        MeshCutResult cut = MeshRegionSplitter.Cut(
+            source,
+            Matrix4x4.Scale(Vector3.one * 100f),
+            BoxAt(Vector3.zero, new Vector3(0.1f, 0.1f, 0.1f)));
+
+        Assert.IsNotNull(cut.outsideMesh,
+            "small local-space triangles are valid after the imported mesh is scaled in Unity");
+        Assert.Greater(cut.outsideMesh.triangles.Length, 0);
+
+        Object.DestroyImmediate(source);
+        Object.DestroyImmediate(cut.outsideMesh);
+        Object.DestroyImmediate(cut.insideMesh);
+    }
+
+    [Test]
+    public void ReturnsAClosedBoundaryLoopForAClippedSurface()
+    {
+        var source = new Mesh { name = "LargeQuad" };
+        source.vertices = new[]
+        {
+            new Vector3(-2f, -2f, 0f), new Vector3(2f, -2f, 0f),
+            new Vector3(2f, 2f, 0f), new Vector3(-2f, 2f, 0f)
+        };
+        source.triangles = new[] { 0, 1, 2, 0, 2, 3 };
+        source.RecalculateNormals();
+
+        MeshCutResult cut = MeshRegionSplitter.Cut(
+            source, Matrix4x4.identity, BoxAt(Vector3.zero, new Vector3(2f, 2f, 2f)));
+
+        Assert.IsFalse(cut.hasOpenBoundary);
+        Assert.AreEqual(1, cut.boundaryLoops.Count);
+        Assert.IsTrue(cut.boundaryLoops[0].isClosed);
+        Assert.GreaterOrEqual(cut.boundaryLoops[0].worldPoints.Count, 4);
+
+        Object.DestroyImmediate(source);
+        Object.DestroyImmediate(cut.outsideMesh);
+        Object.DestroyImmediate(cut.insideMesh);
+    }
+
+    [Test]
+    public void CancelsInteriorEdgesOnAnObbFace()
+    {
+        var source = new Mesh { name = "CoplanarLargeQuad" };
+        source.vertices = new[]
+        {
+            new Vector3(-2f, -2f, 0f), new Vector3(2f, -2f, 0f),
+            new Vector3(2f, 2f, 0f), new Vector3(-2f, 2f, 0f)
+        };
+        source.triangles = new[] { 0, 1, 2, 0, 2, 3 };
+        source.RecalculateNormals();
+
+        // The quad lies exactly on the box's +Z face. Its triangulation diagonal is
+        // reported by both clipped polygons and must not become a branch in the cut loop.
+        MeshCutResult cut = MeshRegionSplitter.Cut(
+            source, Matrix4x4.identity,
+            BoxAt(new Vector3(0f, 0f, -1f), new Vector3(2f, 2f, 2f)));
+
+        Assert.IsFalse(cut.hasOpenBoundary);
+        Assert.AreEqual(1, cut.boundaryLoops.Count);
+        Assert.IsTrue(cut.boundaryLoops[0].isClosed);
+
+        Object.DestroyImmediate(source);
+        Object.DestroyImmediate(cut.outsideMesh);
+        Object.DestroyImmediate(cut.insideMesh);
+    }
+
+    [Test]
+    public void WeldsNumericallySplitCutVertices()
+    {
+        const float epsilon = 0.00125f;
+        var source = new Mesh { name = "NumericallySplitQuad" };
+        source.vertices = new[]
+        {
+            new Vector3(-3f, -2f, 0f), new Vector3(3f, -2f, 0f),
+            new Vector3(3f, 2f, 0f),
+            new Vector3(-3f, -2f + epsilon, 0f),
+            new Vector3(3f, 2f + epsilon, 0f), new Vector3(-3f, 2f, 0f)
+        };
+        source.triangles = new[] { 0, 1, 2, 3, 4, 5 };
+        source.RecalculateNormals();
+
+        MeshCutResult cut = MeshRegionSplitter.Cut(
+            source, Matrix4x4.identity, BoxAt(Vector3.zero, new Vector3(2f, 2f, 2f)));
+
+        Assert.IsFalse(cut.hasOpenBoundary,
+            "independently clipped neighbours should be welded within numerical tolerance");
+        Assert.AreEqual(1, cut.boundaryLoops.Count);
+        Assert.IsTrue(cut.boundaryLoops[0].isClosed);
+
+        Object.DestroyImmediate(source);
+        Object.DestroyImmediate(cut.outsideMesh);
+        Object.DestroyImmediate(cut.insideMesh);
+    }
+
+    [Test]
+    public void KeepsMultipleDisconnectedBoundaryLoopsSeparate()
+    {
+        var source = new Mesh { name = "ParallelQuads" };
+        source.vertices = new[]
+        {
+            new Vector3(-2f,-2f,-0.25f), new Vector3(2f,-2f,-0.25f),
+            new Vector3(2f,2f,-0.25f), new Vector3(-2f,2f,-0.25f),
+            new Vector3(-2f,-2f,0.25f), new Vector3(2f,-2f,0.25f),
+            new Vector3(2f,2f,0.25f), new Vector3(-2f,2f,0.25f),
+        };
+        source.triangles = new[] { 0,1,2, 0,2,3, 4,5,6, 4,6,7 };
+        source.RecalculateNormals();
+
+        MeshCutResult cut = MeshRegionSplitter.Cut(
+            source, Matrix4x4.identity, BoxAt(Vector3.zero, new Vector3(2f, 2f, 2f)));
+
+        Assert.IsFalse(cut.hasOpenBoundary);
+        Assert.AreEqual(2, cut.boundaryLoops.Count);
+        Assert.IsTrue(cut.boundaryLoops.TrueForAll(loop => loop.isClosed));
+
+        Object.DestroyImmediate(source);
+        Object.DestroyImmediate(cut.outsideMesh);
+        Object.DestroyImmediate(cut.insideMesh);
+    }
+
+    [Test]
+    public void ReplacementCanClipOnlyFacesThatCarrySourceSeams()
+    {
+        GameObject primitive = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        Mesh source = Object.Instantiate(primitive.GetComponent<MeshFilter>().sharedMesh);
+        Object.DestroyImmediate(primitive);
+        RegionSelection region = BoxAt(Vector3.zero, Vector3.one * 0.8f);
+
+        MeshCutResult cut = MeshRegionSplitter.Cut(
+            source,
+            Matrix4x4.identity,
+            region,
+            new[] { RegionBoundaryFace.PositiveX });
+
+        Assert.IsNotNull(cut.insideMesh);
+        Assert.AreEqual(1, cut.boundaryLoops.Count);
+        Assert.IsTrue(cut.boundaryLoops[0].faces.SetEquals(new[] { RegionBoundaryFace.PositiveX }));
+        Assert.AreEqual(-0.5f, cut.insideMesh.bounds.min.x, 1e-4f,
+            "the unrelated -X side must not be clipped");
+        Assert.LessOrEqual(cut.insideMesh.bounds.max.x, 0.4001f);
+
+        Object.DestroyImmediate(source);
+        Object.DestroyImmediate(cut.outsideMesh);
+        Object.DestroyImmediate(cut.insideMesh);
+    }
 }

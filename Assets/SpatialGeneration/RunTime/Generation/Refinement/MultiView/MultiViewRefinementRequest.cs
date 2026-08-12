@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 /// <summary>
 /// One canonical view's capture. <see cref="viewType"/> travels as the enum name so the
@@ -19,6 +20,18 @@ public class ViewData
 
     /// <summary>Binary inpaint mask: the selection box intersected with visible surfaces.</summary>
     public string maskBase64 = string.Empty;
+
+    /// <summary>Projected selection bounds for this view, in bottom-left viewport UV.</summary>
+    public float cropMinX;
+    public float cropMinY;
+    public float cropMaxX = 1f;
+    public float cropMaxY = 1f;
+
+    /// <summary>Capture-time projection state; do not re-read a camera after inference.</summary>
+    public Matrix4x4 cameraWorldToCamera;
+    public Matrix4x4 cameraProjection;
+    public Vector3 cameraPosition;
+    public Vector3 cameraForward;
 }
 
 [Serializable]
@@ -47,6 +60,10 @@ public class MultiViewRefinementRequest
     public float cfg = RefinementDefaults.Cfg;
     public float denoise = RefinementDefaults.Denoise;
 
+    /// <summary>"auto", "hunyuan3d_2mv" or "tripo_sr".</summary>
+    public string lifter = "auto";
+    public bool allowFallback = true;
+
     /// <summary>View whose refined image is lifted back to 3D.</summary>
     public string reconstructionView = "Front";
 
@@ -64,23 +81,46 @@ public class MultiViewRefinementRequest
     public List<ViewData> views = new();
 
     /// <summary>Copy without image payloads, for writing a readable debug artifact.</summary>
-    public MultiViewRefinementRequest WithoutViewPayloads() => new()
+    public MultiViewRefinementRequest WithoutViewPayloads()
     {
-        requestId = requestId,
-        sessionId = sessionId,
-        mode = mode,
-        positivePrompt = positivePrompt,
-        negativePrompt = negativePrompt,
-        seed = seed,
-        steps = steps,
-        cfg = cfg,
-        denoise = denoise,
-        reconstructionView = reconstructionView,
-        cropMinX = cropMinX,
-        cropMinY = cropMinY,
-        cropMaxX = cropMaxX,
-        cropMaxY = cropMaxY
-    };
+        var copy = new MultiViewRefinementRequest
+        {
+            requestId = requestId,
+            sessionId = sessionId,
+            mode = mode,
+            positivePrompt = positivePrompt,
+            negativePrompt = negativePrompt,
+            seed = seed,
+            steps = steps,
+            cfg = cfg,
+            denoise = denoise,
+            lifter = lifter,
+            allowFallback = allowFallback,
+            reconstructionView = reconstructionView,
+            cropMinX = cropMinX,
+            cropMinY = cropMinY,
+            cropMaxX = cropMaxX,
+            cropMaxY = cropMaxY
+        };
+        foreach (ViewData view in views)
+        {
+            copy.views.Add(new ViewData
+            {
+                viewType = view.viewType,
+                width = view.width,
+                height = view.height,
+                cropMinX = view.cropMinX,
+                cropMinY = view.cropMinY,
+                cropMaxX = view.cropMaxX,
+                cropMaxY = view.cropMaxY,
+                cameraWorldToCamera = view.cameraWorldToCamera,
+                cameraProjection = view.cameraProjection,
+                cameraPosition = view.cameraPosition,
+                cameraForward = view.cameraForward
+            });
+        }
+        return copy;
+    }
 }
 
 [Serializable]
@@ -102,6 +142,9 @@ public class MultiViewRefinementResponse
     public bool success;
     public string status = string.Empty;
     public string errorMessage = string.Empty;
+    public string lifterUsed = string.Empty;
+    public bool fallbackUsed;
+    public List<string> warnings = new();
 
     /// <summary>True while the router still has the job queued or running.</summary>
     public bool IsPending

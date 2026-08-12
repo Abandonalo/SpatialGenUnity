@@ -15,6 +15,14 @@ public class SpatialGenerationWindow : EditorWindow
     private const string NegativePromptKey = "SpatialGeneration.NegativePrompt";
     private const string RefinementPromptKey = "SpatialGeneration.RefinementPrompt";
 
+    private static readonly GUIContent GenerationModelLabel = new(
+        "Asset Generation Model",
+        "Creates a complete 3D asset for a spatial proxy.");
+    private static readonly GUIContent RefinementLifterLabel = new(
+        "Region Refinement Lifter",
+        "Reconstructs only the selected refinement region. Hunyuan uses four views; " +
+        "TripoSR lifts the refined Front view.");
+
     private string _stylePrompt = string.Empty;
     private string _negativePrompt = string.Empty;
     private string _refinementPrompt = string.Empty;
@@ -63,12 +71,16 @@ public class SpatialGenerationWindow : EditorWindow
         string routerUrl = preset == BackendPreset.Colab
             ? EditorGUILayout.TextField("Colab Router URL", settings.colabRouterUrl)
             : EditorGUILayout.TextField("Local Router URL", settings.localRouterUrl);
-        GenerationModel model = (GenerationModel)EditorGUILayout.EnumPopup("3D Model", settings.generationModel);
+        GenerationModel model =
+            (GenerationModel)EditorGUILayout.EnumPopup(GenerationModelLabel, settings.generationModel);
+        RefinementLifter refinementLifter =
+            (RefinementLifter)EditorGUILayout.EnumPopup(RefinementLifterLabel, settings.refinementLifter);
 
         if (EditorGUI.EndChangeCheck())
         {
             settings.backendPreset = preset;
             settings.generationModel = model;
+            settings.refinementLifter = refinementLifter;
             if (preset == BackendPreset.Colab)
                 settings.colabRouterUrl = BackendSettings.NormalizeOrigin(routerUrl);
             else
@@ -267,6 +279,15 @@ public class SpatialGenerationWindow : EditorWindow
         if (health.IsReady)
         {
             Debug.Log($"Spatial Generation: backend ready at {settings.RouterBaseUrl} (router + ComfyUI).");
+            if (settings.refinementLifter != RefinementLifter.TripoSR &&
+                !health.HunyuanRefinementAvailable)
+            {
+                Debug.LogWarning(
+                    "Spatial Generation: Hunyuan3D-2mv refinement is unavailable. " +
+                    (string.IsNullOrWhiteSpace(health.HunyuanRefinementDetail)
+                        ? "Run ./tools/setup_hunyuan2mv.sh and restart ComfyUI."
+                        : health.HunyuanRefinementDetail));
+            }
             if (showDialog)
                 EditorUtility.DisplayDialog(
                     "Backend Ready", "The router and ComfyUI are both up. You can generate and refine.", "OK");

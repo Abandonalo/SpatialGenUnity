@@ -17,10 +17,7 @@ public class MultiViewRenderer : MonoBehaviour
     private const string DepthShaderName = "Hidden/SpatialGen/EncodeLinearDepth";
     private const string MaskShaderName = "Hidden/SpatialGen/RegionSelectionMask";
 
-    /// <summary>
-    /// The mask shader's world-up gate is smooth, and the pipeline then binarises at 0.5,
-    /// which hollows out interiors on the Top view. Exported masks always send 0.
-    /// </summary>
+    /// <summary>Never bias a canonical view toward one surface-normal direction.</summary>
     private const float MaskFavorUpwardNormals = 0f;
 
     private static Material s_depthMaterial;
@@ -58,6 +55,7 @@ public class MultiViewRenderer : MonoBehaviour
                 depth = RenderDepth(camera, resolution);
                 edges = TextureUtils.BuildEdgeMap(depth);
                 mask = RenderMask(camera, selection, resolution, view);
+                Vector4 crop = Crop(selection, camera);
 
                 result.views.Add(new ViewData
                 {
@@ -67,7 +65,15 @@ public class MultiViewRenderer : MonoBehaviour
                     rgbBase64 = TextureUtils.EncodePngBase64(rgb),
                     depthBase64 = TextureUtils.EncodePngBase64(depth),
                     edgesBase64 = TextureUtils.EncodePngBase64(edges),
-                    maskBase64 = TextureUtils.EncodePngBase64(mask)
+                    maskBase64 = TextureUtils.EncodePngBase64(mask),
+                    cropMinX = crop.x,
+                    cropMinY = crop.y,
+                    cropMaxX = crop.z,
+                    cropMaxY = crop.w,
+                    cameraWorldToCamera = camera.worldToCameraMatrix,
+                    cameraProjection = camera.projectionMatrix,
+                    cameraPosition = camera.transform.position,
+                    cameraForward = camera.transform.forward
                 });
             }
             finally
@@ -78,6 +84,9 @@ public class MultiViewRenderer : MonoBehaviour
 
         return result;
     }
+
+    private static Vector4 Crop(RegionSelection selection, Camera camera) =>
+        selection.TryGetViewportUvBounds(camera, out Vector4 crop) ? crop : new Vector4(0f, 0f, 1f, 1f);
 
     /// <summary>The scene as the user sees it, so the inpaint has real context to blend into.</summary>
     private Texture2D RenderRgb(Camera camera, Vector2Int resolution)
@@ -157,15 +166,7 @@ public class MultiViewRenderer : MonoBehaviour
             Shader.SetGlobalVector("_SelectionHalfExtents", new Vector4(half.x, half.y, half.z, 0f));
             Shader.SetGlobalFloat("_MaskFavorUpwardNormals", MaskFavorUpwardNormals);
 
-            // The Top view looks along the box's thin axis, where the inflated half-extents
-            // roughly double the marked area. Clipping to the exact projected hull fixes it.
-            float useViewportClip = 0f;
-            if (view == ViewType.Top && selection.TryGetViewportUvBounds(camera, out Vector4 uvBounds))
-            {
-                Shader.SetGlobalVector("_MaskViewportUvMinMax", uvBounds);
-                useViewportClip = 1f;
-            }
-            Shader.SetGlobalFloat("_RegionMaskUseViewportClip", useViewportClip);
+            Shader.SetGlobalFloat("_RegionMaskUseViewportClip", 0f);
 
             Material maskMaterial = EnsureMaterial(ref s_maskMaterial, maskShader);
             RenderTexture target = AcquireTarget(resolution);

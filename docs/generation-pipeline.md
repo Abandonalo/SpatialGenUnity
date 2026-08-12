@@ -239,10 +239,10 @@ that the scale is applied in the corrected frame.
 
 Two constraints shaped how this work was verified, and both are worth recording.
 
-First, the Unity editor holds an exclusive project lock while open, so the EditMode test suite
-could not be executed from the command line during development. Compilation was verified
-instead by invoking Unity's bundled Roslyn compiler against the editor's own generated
-response files, which is permitted while the lock is held.
+First, the Unity editor holds an exclusive project lock while open. Compilation was checked
+against Unity's own Roslyn response files, then the complete EditMode suite was executed in
+an isolated copy of the project using the same Unity 6000.3.9f1 editor. This avoids disturbing
+the active authoring session while still testing the real Unity runtime and editor APIs.
 
 Second, and more consequentially, the geometric algorithms were validated against **the actual
 GLB files the pipeline had produced**, not against synthetic fixtures. This mattered: the

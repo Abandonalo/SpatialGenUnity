@@ -19,6 +19,7 @@ from .comfy_client import (
     submit_prompt,
 )
 from .jobs import RefinementJobs
+from .capabilities import refinement_capabilities
 from .models import (
     GENERATION_DEFAULT_NEGATIVE,
     GENERATION_DEFAULT_STYLE,
@@ -54,6 +55,7 @@ def health() -> HealthStatus:
         comfy_url=comfy_url,
         comfy_reachable=reachable,
         detail=detail,
+        refinement_lifters=refinement_capabilities() if reachable else [],
     )
 
 

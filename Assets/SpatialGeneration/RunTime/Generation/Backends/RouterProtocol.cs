@@ -100,6 +100,16 @@ namespace SpatialGeneration.Generation.Backends
 
         /// <summary>Why ComfyUI could not be reached, when it could not.</summary>
         public string detail = string.Empty;
+
+        public List<RefinementCapabilityBody> refinement_lifters = new();
+    }
+
+    [Serializable]
+    public class RefinementCapabilityBody
+    {
+        public string id = string.Empty;
+        public bool available;
+        public string detail = string.Empty;
     }
 
     /// <summary>Response of <c>POST /generate</c>.</summary>

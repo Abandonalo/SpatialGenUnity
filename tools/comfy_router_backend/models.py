@@ -17,7 +17,15 @@ REFINEMENT_DENOISE: float = 0.95
 # Artifact and geometry negatives only. Deliberately excludes "dull", "desaturated" and
 # "washed out": those steer inpainted pixels toward neutral gray and fight prompts that
 # ask for a specific bright colour.
-REFINEMENT_DEFAULT_NEGATIVE: str = "blur, low quality, noise, jpeg artifacts, distorted, deformed"
+REFINEMENT_DEFAULT_NEGATIVE: str = (
+    "blur, low quality, noise, jpeg artifacts, distorted, deformed, detached part, "
+    "floating geometry, duplicate object, extra object, scenery, background, text, watermark"
+)
+
+REFINEMENT_ATTACHMENT_CUES: str = (
+    "coherent replacement geometry for the selected part, preserve its attachment at the "
+    "selection boundary, match the surrounding object's style and material"
+)
 
 # Appended to every generation prompt. Deliberately short.
 #
@@ -76,7 +84,10 @@ GENERATION_DEFAULT_NEGATIVE: str = (
 
 GenerationModel = Literal["hunyuan_2_1", "tripo_sr"]
 
-RunMode = Literal["generate", "generate_hunyuan", "refine_inpaint_only", "tripo_from_rgb"]
+RunMode = Literal[
+    "generate", "generate_hunyuan", "refine_inpaint_only", "tripo_from_rgb",
+    "refine_hunyuan_mv"
+]
 
 
 class RunRequest(BaseModel):
@@ -88,6 +99,9 @@ class RunRequest(BaseModel):
     negative_prompt: str = ""
 
     rgb_image: Optional[str] = None
+    back_image: Optional[str] = None
+    left_image: Optional[str] = None
+    right_image: Optional[str] = None
     depth_image: Optional[str] = None
     mask_image: Optional[str] = None
 
@@ -133,7 +147,8 @@ class RunRequest(BaseModel):
             "generate": ("depth_image",),
             "generate_hunyuan": (),
             "refine_inpaint_only": ("rgb_image", "depth_image", "mask_image"),
-            "tripo_from_rgb": ("rgb_image",),
+            "tripo_from_rgb": ("rgb_image", "mask_image"),
+            "refine_hunyuan_mv": ("rgb_image", "back_image", "left_image", "right_image"),
         }
 
         missing = [name for name in required[self.mode] if not getattr(self, name)]
@@ -192,6 +207,12 @@ class GenerateRequest(BaseModel):
     generation: GenerationParams = Field(default_factory=GenerationParams)
 
 
+class RefinementCapability(BaseModel):
+    id: str
+    available: bool
+    detail: str = ""
+
+
 class HealthStatus(BaseModel):
     """``GET /health``: the router's own state plus the ComfyUI it depends on."""
 
@@ -199,6 +220,7 @@ class HealthStatus(BaseModel):
     comfy_url: str
     comfy_reachable: bool
     detail: str = ""
+    refinement_lifters: list[RefinementCapability] = Field(default_factory=list)
 
 
 class SubmitResponse(BaseModel):
@@ -222,7 +244,7 @@ class RunResult(BaseModel):
 
 
 class ViewPayload(BaseModel):
-    """One canonical view. ``viewType`` mirrors the Unity enum: Front/Left/Right/Top."""
+    """One canonical view. ``viewType`` is Front/Back/Left/Right."""
 
     viewType: str = ""
     width: int = 0
@@ -231,6 +253,16 @@ class ViewPayload(BaseModel):
     depthBase64: str = ""
     edgesBase64: str = ""
     maskBase64: str = ""
+    cropMinX: float = 0.0
+    cropMinY: float = 0.0
+    cropMaxX: float = 1.0
+    cropMaxY: float = 1.0
+    # Unity Matrix4x4/Vector3 JSON objects. The router carries these through only as
+    # capture metadata; vertex projection happens after the mesh returns to Unity.
+    cameraWorldToCamera: dict[str, float] = Field(default_factory=dict)
+    cameraProjection: dict[str, float] = Field(default_factory=dict)
+    cameraPosition: dict[str, float] = Field(default_factory=dict)
+    cameraForward: dict[str, float] = Field(default_factory=dict)
 
 
 class MultiViewRefinementRequest(BaseModel):
@@ -250,6 +282,8 @@ class MultiViewRefinementRequest(BaseModel):
     steps: int = Field(default=30, gt=0)
     cfg: float = Field(default=8.0, gt=0)
     denoise: float = REFINEMENT_DENOISE
+    lifter: Literal["auto", "hunyuan3d_2mv", "tripo_sr"] = "auto"
+    allowFallback: bool = True
 
     reconstructionView: str = "Front"
 
@@ -277,3 +311,6 @@ class MultiViewRefinementResponse(BaseModel):
     # "queued" / "running" while the job is in flight, "success" or "error" once settled.
     status: str = ""
     errorMessage: str = ""
+    lifterUsed: str = ""
+    fallbackUsed: bool = False
+    warnings: list[str] = Field(default_factory=list)
