@@ -64,6 +64,12 @@ public class RefinementController : MonoBehaviour
             return;
         }
 
+        if (selection.partScoped)
+        {
+            Debug.LogWarning("Spatial Generation: reset the selection box for the imported mesh before running image refinement.");
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(localPrompt))
         {
             Debug.LogWarning("Spatial Generation: describe the change you want before refining.");

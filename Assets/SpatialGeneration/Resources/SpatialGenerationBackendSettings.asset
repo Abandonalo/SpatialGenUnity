@@ -12,10 +12,22 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cc28637a099294207af4ee0eabde0647, type: 3}
   m_Name: SpatialGenerationBackendSettings
   m_EditorClassIdentifier: 
-  backendKind: 0
+  backendKind: 2
   backendPreset: 0
   localRouterUrl: http://127.0.0.1:8001
   colabRouterUrl: https://comfyuitunnel.share.zrok.io
+  agentCli: 0
+  claudeExecutable: 
+  codexExecutable: 
+  mcpServerUrl: http://127.0.0.1:8080/mcp
+  agentModel: claude-opus-5-5
+  agentEffort: medium
+  agentMaxTurns: 80
+  agentTimeoutSeconds: 600
+  maxPartsPerAsset: 60
+  claudeExtraArguments: 
+  codexExtraArguments: 
+  maxGenerationRuns: 3
   autoStartRouter: 1
   autoStartComfy: 1
   comfyLaunchCommand: 

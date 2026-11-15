@@ -1,0 +1,28 @@
+{
+    "name": "SpatialGeneration.Editor.Mcp",
+    "rootNamespace": "SpatialGeneration.Agent.Mcp",
+    "references": [
+        "SpatialGeneration.Runtime",
+        "SpatialGeneration.Editor",
+        "MCPForUnity.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "SPATIALGEN_MCP"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.coplaydev.unity-mcp",
+            "expression": "0.0.0",
+            "define": "SPATIALGEN_MCP"
+        }
+    ],
+    "noEngineReferences": false
+}

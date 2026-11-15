@@ -1,5 +1,6 @@
 using UnityEditor;
 using UnityEngine;
+using SpatialGeneration.Agent;
 
 /// <summary>
 /// Scene-view handles for the refinement region, plus a tinted overlay showing which surfaces
@@ -25,9 +26,16 @@ public class RegionSelectionManagerEditor : Editor
         Tools.hidden = _toolsWereHidden;
     }
 
+    public override void OnInspectorGUI()
+    {
+        if (BackendRegistry.Settings.backendKind != BackendKind.Agent) { DrawDefaultInspector(); return; }
+        EditorGUILayout.HelpBox("Select parts in the Scene view and enter your refinement prompt in Tools > Spatial Generation.", MessageType.None);
+    }
+
     private void OnSceneGUI()
     {
         var manager = (RegionSelectionManager)target;
+        if (BackendRegistry.Settings.backendKind == BackendKind.Agent) return;
         RegionSelection selection = manager.CurrentSelection;
         if (selection == null)
             return;
@@ -55,7 +63,7 @@ public class RegionSelectionManagerEditor : Editor
         SceneView.RepaintAll();
     }
 
-    private static void DrawOverlay(RegionSelectionManager manager, RegionSelection selection)
+    internal static void DrawOverlay(RegionSelectionManager manager, RegionSelection selection)
     {
         if (Event.current.type != EventType.Repaint)
             return;
@@ -66,14 +74,26 @@ public class RegionSelectionManagerEditor : Editor
 
         overlay.SetMatrix("_SelectionWorldToLocal", selection.WorldToLocal());
         overlay.SetVector("_SelectionHalfExtents", RegionSelection.ClampSize(selection.size) * 0.5f);
-        overlay.SetColor("_OverlayColor", new Color(0.5f, 0.5f, 0.5f, 0.85f));
+        overlay.SetColor("_OverlayColor", new Color(0.18f, 0.85f, 0.62f, 0.6f));
 
         Bounds selectionBounds = selection.GetWorldBounds();
+        RegionSelection crop = selection.Crop();
 
         foreach (Renderer renderer in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
         {
             if (!IsCandidate(manager, renderer) || !renderer.bounds.Intersects(selectionBounds))
                 continue;
+
+            if (selection.partScoped)
+            {
+                var part = renderer.GetComponent<AgentPart>();
+                if (part == null || part.GetComponentInParent<AgentAsset>()?.assetId != selection.assetId) continue;
+                bool whole = selection.wholeParts.Contains(part.partId);
+                if (!whole && !selection.partialParts.Contains(part.partId)) continue;
+                RegionSelection clippingBox = whole ? selection : crop;
+                overlay.SetMatrix("_SelectionWorldToLocal", clippingBox.WorldToLocal());
+                overlay.SetVector("_SelectionHalfExtents", clippingBox.size * 0.5f);
+            }
 
             var filter = renderer.GetComponent<MeshFilter>();
             if (filter == null || filter.sharedMesh == null)

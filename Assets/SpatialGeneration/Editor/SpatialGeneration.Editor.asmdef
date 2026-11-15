@@ -12,6 +12,12 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.coplaydev.unity-mcp",
+            "expression": "0.0.0",
+            "define": "SPATIALGEN_MCP"
+        }
+    ],
     "noEngineReferences": false
 }

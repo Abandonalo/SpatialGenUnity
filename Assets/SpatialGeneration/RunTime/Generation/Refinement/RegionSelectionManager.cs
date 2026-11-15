@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>An oriented box the user drew in the scene to scope a local edit.</summary>
@@ -9,13 +10,33 @@ public class RegionSelection
     public Vector3 center;
     public Vector3 size;
     public Quaternion rotation = Quaternion.identity;
+    // Legacy imported meshes use the box alone. Agent-built objects also retain part identity.
+    [HideInInspector] public bool partScoped;
+    [HideInInspector] public bool pickedWholeParts;
+    [HideInInspector] public string assetId;
+    [HideInInspector] public List<string> wholeParts = new();
+    [HideInInspector] public List<string> partialParts = new();
+    [HideInInspector] public List<string> outsideParts = new();
+    [HideInInspector] public bool hasCrop;
+    [HideInInspector] public Vector3 cropCenter, cropSize;
+
+    public RegionSelection Crop() => new()
+    {
+        center = hasCrop ? cropCenter : center,
+        size = hasCrop ? cropSize : size,
+        rotation = rotation
+    };
 
     public RegionSelection Clone() => new()
     {
         selectionId = selectionId,
         center = center,
         size = size,
-        rotation = rotation
+        rotation = rotation,
+        partScoped = partScoped, assetId = assetId, pickedWholeParts = pickedWholeParts,
+        wholeParts = new List<string>(wholeParts), partialParts = new List<string>(partialParts),
+        outsideParts = new List<string>(outsideParts),
+        hasCrop = hasCrop, cropCenter = cropCenter, cropSize = cropSize
     };
 
     /// <summary>World-space corners of the oriented box.</summary>
@@ -104,7 +125,7 @@ public class RegionSelectionManager : MonoBehaviour
 
     [SerializeField] private RegionSelection currentSelection;
 
-    public RegionSelection CurrentSelection => currentSelection;
+    public RegionSelection CurrentSelection => string.IsNullOrEmpty(currentSelection?.selectionId) ? null : currentSelection;
 
     public void SetSelection(RegionSelection selection)
     {
@@ -299,7 +320,8 @@ public class RegionSelectionManager : MonoBehaviour
 
     private void OnDrawGizmos()
     {
-        if (currentSelection == null)
+        // The spatial editing tool draws either the committed box or the live drag preview.
+        if (CurrentSelection == null || currentSelection.partScoped)
             return;
 
         Matrix4x4 previousMatrix = Gizmos.matrix;

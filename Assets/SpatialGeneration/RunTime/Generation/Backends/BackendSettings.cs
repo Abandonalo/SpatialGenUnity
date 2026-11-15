@@ -8,7 +8,20 @@ public enum BackendKind
     Router = 0,
 
     /// <summary>Offline stand-in that echoes proxies back as primitives.</summary>
-    Mock = 1
+    Mock = 1,
+
+    /// <summary>
+    /// Claude Code or Codex, launched headless, building low-poly assets in the open scene
+    /// through MCP for Unity. Driven from the editor by SpatialGeneration.Agent.AgentWorkflow.
+    /// </summary>
+    Agent = 2
+}
+
+/// <summary>Coding-agent CLI the MCP agent backend launches.</summary>
+public enum AgentCli
+{
+    ClaudeCode = 0,
+    Codex = 1
 }
 
 /// <summary>Where the router runs. Both presets speak the same HTTP API.</summary>
@@ -41,7 +54,7 @@ public enum RefinementLifter
 /// <summary>
 /// Project-wide backend configuration. Lives at
 /// <c>Assets/SpatialGeneration/Resources/SpatialGenerationBackendSettings.asset</c>
-/// and is edited through the Spatial Generation window.
+/// and is edited through Tools > Spatial Generation Researcher Tools.
 /// </summary>
 [CreateAssetMenu(menuName = "Spatial Generation/Backend Settings", fileName = "SpatialGenerationBackendSettings")]
 public class BackendSettings : ScriptableObject
@@ -55,6 +68,45 @@ public class BackendSettings : ScriptableObject
 
     [Tooltip("Router origin used by the Colab preset, e.g. https://<share>.share.zrok.io")]
     public string colabRouterUrl = "https://comfyuitunnel.share.zrok.io";
+
+    [Header("MCP agent")]
+    public AgentCli agentCli = AgentCli.ClaudeCode;
+
+    [Tooltip("Absolute path to the claude executable. Leave empty to search the usual install " +
+             "locations; Unity launched from the Dock does not inherit your shell PATH.")]
+    public string claudeExecutable = string.Empty;
+
+    [Tooltip("Absolute path to the codex executable. Leave empty to search the usual install locations.")]
+    public string codexExecutable = string.Empty;
+
+    [Tooltip("HTTP endpoint of the MCP for Unity server (Window > MCP for Unity).")]
+    public string mcpServerUrl = "http://127.0.0.1:8080/mcp";
+
+    [Tooltip("Model passed to the CLI (--model / -m). Empty uses the CLI's default. Freeze this for the study.")]
+    public string agentModel = string.Empty;
+
+    [Tooltip("Reasoning effort: empty = CLI default, or low, medium, high, xhigh, max. " +
+             "Claude Code gets --effort; Codex gets model_reasoning_effort (max is sent as xhigh).")]
+    public string agentEffort = string.Empty;
+
+    [Tooltip("Claude Code --max-turns for one generation run or edit.")]
+    public int agentMaxTurns = 80;
+
+    [Tooltip("A run that takes longer is stopped and reported as failed.")]
+    public int agentTimeoutSeconds = 600;
+
+    [Tooltip("Upper bound on primitives per asset; the tools reject parts beyond it.")]
+    public int maxPartsPerAsset = 60;
+
+    [Tooltip("Extra arguments appended to the claude command line.")]
+    public string claudeExtraArguments = string.Empty;
+
+    [Tooltip("Extra arguments appended to the codex exec command line.")]
+    public string codexExtraArguments = string.Empty;
+
+    [Header("Study")]
+    [Tooltip("Generation runs a participant may start before they must accept a version.")]
+    public int maxGenerationRuns = 3;
 
     [Header("Local processes")]
     [Tooltip("Start the FastAPI router (tools/start_backend.sh) when Generate finds it down. " +

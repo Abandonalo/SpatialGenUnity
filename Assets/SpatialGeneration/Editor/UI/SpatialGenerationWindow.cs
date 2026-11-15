@@ -1,38 +1,36 @@
 using System;
-using System.Threading.Tasks;
+using System.Collections.Generic;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
-using SpatialGeneration.Generation.Backends;
+using SpatialGeneration.Agent;
 
 /// <summary>
-/// The single authoring surface: configure the backend, place proxies, generate, then refine
-/// a region. Prompts persist in EditorPrefs so they survive domain reloads during a session.
+/// Guides participants through setup, generation, refinement and scene submission.
+/// Also hosts the creation and refinement workflow for the ComfyUI pipeline.
 /// </summary>
 public class SpatialGenerationWindow : EditorWindow
 {
     private const string StylePromptKey = "SpatialGeneration.StylePrompt";
     private const string NegativePromptKey = "SpatialGeneration.NegativePrompt";
     private const string RefinementPromptKey = "SpatialGeneration.RefinementPrompt";
-
-    private static readonly GUIContent GenerationModelLabel = new(
-        "Asset Generation Model",
-        "Creates a complete 3D asset for a spatial proxy.");
-    private static readonly GUIContent RefinementLifterLabel = new(
-        "Region Refinement Lifter",
-        "Reconstructs only the selected refinement region. Hunyuan uses four views; " +
-        "TripoSR lifts the refined Front view.");
-
     private string _stylePrompt = string.Empty;
     private string _negativePrompt = string.Empty;
     private string _refinementPrompt = string.Empty;
     private Vector2 _scroll;
+    private bool _showParts;
+    private readonly RefinementSceneInteraction _sceneSelection = new();
+    private readonly RefinementModelPreview _modelPreview = new();
+    private GUIStyle _titleStyle;
+    private GUIStyle _bigButton;
+
+    private static StudySession Session => StudySession.instance;
 
     [MenuItem("Tools/Spatial Generation")]
     public static void Open()
     {
         SpatialGenerationWindow window = GetWindow<SpatialGenerationWindow>();
         window.titleContent = new GUIContent("Spatial Generation");
+        window.minSize = new Vector2(360f, 420f);
         window.Show();
     }
 
@@ -41,99 +39,630 @@ public class SpatialGenerationWindow : EditorWindow
         _stylePrompt = EditorPrefs.GetString(StylePromptKey, string.Empty);
         _negativePrompt = EditorPrefs.GetString(NegativePromptKey, string.Empty);
         _refinementPrompt = EditorPrefs.GetString(RefinementPromptKey, string.Empty);
+        AgentWorkflow.Changed += Repaint;
+        SceneView.duringSceneGui += _sceneSelection.Draw;
+        Undo.undoRedoPerformed += Repaint;
+    }
+
+    private void OnDisable()
+    {
+        AgentWorkflow.Changed -= Repaint;
+        SceneView.duringSceneGui -= _sceneSelection.Draw;
+        Undo.undoRedoPerformed -= Repaint;
+        _sceneSelection.Cancel();
+        _modelPreview.Dispose();
+    }
+
+    private void OnInspectorUpdate()
+    {
+        if (AgentWorkflow.IsBusy || Session.phase == StudyPhase.Refinement)
+            Repaint();
     }
 
     private void OnGUI()
     {
+        if (!Session.HasReview || Session.phase != StudyPhase.Refinement) _modelPreview.Dispose();
+        EnsureStyles();
         _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
-        DrawBackendSection();
-        EditorGUILayout.Space(10);
-        DrawCreationSection();
-        EditorGUILayout.Space(10);
-        DrawRefinementSection();
-        EditorGUILayout.Space(10);
-        DrawUtilitiesSection();
+        BackendSettings settings = BackendRegistry.Settings;
+        if (settings != null && settings.backendKind == BackendKind.Agent)
+        {
+            DrawStudyHeader();
+            DrawStaleJobWarning();
+
+            switch (Session.phase)
+            {
+                case StudyPhase.Setup:
+                    DrawSetupPhase();
+                    break;
+                case StudyPhase.Generation:
+                    DrawGenerationPhase();
+                    break;
+                case StudyPhase.Refinement:
+                    DrawRefinementPhase();
+                    break;
+                case StudyPhase.Finished:
+                    DrawFinishedPhase();
+                    break;
+            }
+
+            DrawAgentActivity();
+            DrawStudyMessage();
+        }
+        else
+        {
+            DrawLegacyPipeline();
+        }
 
         EditorGUILayout.EndScrollView();
     }
 
-    private void DrawBackendSection()
+    // ================================================================== study flow
+
+    private void DrawStudyHeader()
     {
-        BackendSettings settings = BackendRegistry.Settings;
-        if (settings == null)
+        string condition = Session.condition == StudyCondition.TextOnly ? "A · text only" : "B · spatial controls";
+        string participant = string.IsNullOrWhiteSpace(Session.participantId) ? "no participant" : Session.participantId;
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            GUILayout.Label(PhaseTitle(), _titleStyle);
+            GUILayout.FlexibleSpace();
+            if (StudyController.DeveloperMode)
+            {
+                Color previous = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(1f, 0.6f, 0.2f);
+                GUILayout.Label("DEV MODE · no limits", EditorStyles.miniButton);
+                GUI.backgroundColor = previous;
+            }
+        }
+        EditorGUILayout.LabelField($"{participant}   ·   condition {condition}" +
+                                   (string.IsNullOrWhiteSpace(Session.targetScene) ? string.Empty : $"   ·   target {Session.targetScene}"),
+            EditorStyles.miniLabel);
+        DrawPhaseSteps();
+        EditorGUILayout.Space(6);
+    }
+
+    private static string PhaseTitle() => Session.phase switch
+    {
+        StudyPhase.Generation => "Generation",
+        StudyPhase.Refinement => "Refinement",
+        StudyPhase.Finished => "Finished",
+        _ => "Spatial Generation"
+    };
+
+    private static void DrawPhaseSteps()
+    {
+        string[] steps = { "1 Setup", "2 Generate", "3 Refine", "4 Done" };
+        int current = (int)Session.phase;
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            for (int i = 0; i < steps.Length; i++)
+            {
+                GUIStyle style = i == current ? EditorStyles.boldLabel : EditorStyles.miniLabel;
+                Color previous = GUI.contentColor;
+                if (i < current)
+                    GUI.contentColor = new Color(0.55f, 0.8f, 0.55f);
+                GUILayout.Label(steps[i], style);
+                GUI.contentColor = previous;
+            }
+
+            GUILayout.FlexibleSpace();
+        }
+    }
+
+    private void DrawSetupPhase()
+    {
+        EditorGUILayout.HelpBox(
+            "Researcher: enter the participant and condition, then start. Starting hides any generated content " +
+            "so the condition begins from an empty scene.", MessageType.None);
+
+        EditorGUI.BeginChangeCheck();
+        string participant = EditorGUILayout.TextField("Participant ID", Session.participantId);
+        string target = EditorGUILayout.TextField("Target scene", Session.targetScene);
+        int condition = EditorGUILayout.Popup("Condition", (int)Session.condition,
+            new[] { "A — text only", "B — text + spatial controls" });
+        if (EditorGUI.EndChangeCheck())
+        {
+            Session.participantId = participant.Trim();
+            Session.targetScene = target.Trim();
+            Session.condition = (StudyCondition)condition;
+            Session.Persist();
+        }
+
+        EditorGUILayout.Space(6);
+        if (StudyController.DeveloperMode)
+            EditorGUILayout.LabelField("Developer mode: no participant ID needed; logs use \"dev\".", EditorStyles.miniLabel);
+
+        bool needsId = !StudyController.DeveloperMode && string.IsNullOrWhiteSpace(Session.participantId);
+        using (new EditorGUI.DisabledScope(AgentWorkflow.IsBusy || needsId))
+        {
+            if (GUILayout.Button("Start condition", _bigButton))
+                StudyController.StartCondition();
+        }
+    }
+
+    private void DrawGenerationPhase()
+    {
+        int max = StudyController.MaxRuns;
+        bool busy = AgentWorkflow.IsBusy;
+
+        GUILayout.Label("Scene style", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("Set once for the whole scene, e.g. \"low poly, warm colours\". Every object uses it.",
+            EditorStyles.wordWrappedMiniLabel);
+        using (new EditorGUI.DisabledScope(busy))
+            PersistentSessionArea(ref Session.stylePrompt, 36f);
+        EditorGUILayout.Space(8);
+
+        if (Session.condition == StudyCondition.TextOnly)
+        {
+            GUILayout.Label("Describe the scene", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Objects, their sizes, where they stand and which way they face.", EditorStyles.wordWrappedMiniLabel);
+            using (new EditorGUI.DisabledScope(busy))
+                PersistentSessionArea(ref Session.scenePrompt, 96f);
+        }
+        else
+        {
+            DrawProxyOverview(editable: !busy);
+        }
+
+        EditorGUILayout.Space(8);
+        DrawRunCounter(max);
+
+        using (new EditorGUI.DisabledScope(!StudyController.CanGenerate))
+        {
+            string ofMax = StudyController.DeveloperMode ? string.Empty : $" of {max}";
+            string label = Session.generationRuns == 0
+                ? $"Generate (run 1{ofMax})"
+                : $"Generate again (run {Session.generationRuns + 1}{ofMax})";
+            if (Session.generationRuns < max && GUILayout.Button(busy ? "Generating…" : label, _bigButton))
+                StudyController.RunGeneration();
+        }
+
+        if (Session.generationRuns >= max)
+            EditorGUILayout.HelpBox("All generation runs are used. Choose the version to continue from and accept it.",
+                MessageType.Info);
+
+        if (Session.generationRuns == 0)
             return;
 
-        GUILayout.Label("Backend", EditorStyles.boldLabel);
+        EditorGUILayout.Space(8);
+        GUILayout.Label("Continue from", EditorStyles.boldLabel);
+        DrawVersionPicker(busy);
 
-        EditorGUI.BeginChangeCheck();
-        BackendPreset preset = (BackendPreset)EditorGUILayout.EnumPopup("Preset", settings.backendPreset);
-        string routerUrl = preset == BackendPreset.Colab
-            ? EditorGUILayout.TextField("Colab Router URL", settings.colabRouterUrl)
-            : EditorGUILayout.TextField("Local Router URL", settings.localRouterUrl);
-        GenerationModel model =
-            (GenerationModel)EditorGUILayout.EnumPopup(GenerationModelLabel, settings.generationModel);
-        RefinementLifter refinementLifter =
-            (RefinementLifter)EditorGUILayout.EnumPopup(RefinementLifterLabel, settings.refinementLifter);
-
-        if (EditorGUI.EndChangeCheck())
+        using (new EditorGUI.DisabledScope(!StudyController.CanAccept))
         {
-            settings.backendPreset = preset;
-            settings.generationModel = model;
-            settings.refinementLifter = refinementLifter;
-            if (preset == BackendPreset.Colab)
-                settings.colabRouterUrl = BackendSettings.NormalizeOrigin(routerUrl);
-            else
-                settings.localRouterUrl = BackendSettings.NormalizeOrigin(routerUrl);
-            Persist(settings);
+            if (GUILayout.Button($"Accept run {Session.activeRun} and start refinement", _bigButton) &&
+                EditorUtility.DisplayDialog("Accept this version?",
+                    $"Finish generation and start refining run {Session.activeRun}?", "Accept", "Not yet"))
+            {
+                StudyController.AcceptActiveVersion();
+                GUIUtility.ExitGUI();
+            }
         }
 
-        if (preset == BackendPreset.Colab)
-            DrawColabControls(settings);
+        EditorGUILayout.LabelField("Accepting means: worth refining rather than regenerating — not finished.",
+            EditorStyles.wordWrappedMiniLabel);
+    }
+
+    private static void DrawRunCounter(int max)
+    {
+        if (StudyController.DeveloperMode)
+        {
+            EditorGUILayout.LabelField("Generation runs", $"{Session.generationRuns} used (no limit in developer mode)");
+            return;
+        }
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            GUILayout.Label("Generation runs", GUILayout.Width(110f));
+            for (int i = 1; i <= max; i++)
+            {
+                bool used = i <= Session.generationRuns;
+                Color previous = GUI.backgroundColor;
+                GUI.backgroundColor = used ? new Color(0.45f, 0.7f, 1f) : Color.white;
+                GUILayout.Box(used ? $"{i} ✓" : i.ToString(), GUILayout.Width(36f), GUILayout.Height(18f));
+                GUI.backgroundColor = previous;
+            }
+
+            GUILayout.FlexibleSpace();
+            GUILayout.Label($"{Session.generationRuns} of {max} used", EditorStyles.miniLabel);
+        }
+    }
+
+    private static void DrawVersionPicker(bool busy)
+    {
+        using (new EditorGUI.DisabledScope(busy))
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            for (int run = 1; run <= Session.generationRuns; run++)
+            {
+                bool active = run == Session.activeRun;
+                bool available = active || Session.archivedRuns.Contains(run);
+                using (new EditorGUI.DisabledScope(!available))
+                {
+                    bool pressed = GUILayout.Toggle(active, $"Run {run}", EditorStyles.miniButtonMid, GUILayout.MinWidth(56f));
+                    if (pressed && !active)
+                        StudyController.ShowVersion(run);
+                }
+            }
+
+            GUILayout.FlexibleSpace();
+        }
+    }
+
+    private void DrawRefinementPhase()
+    {
+        bool busy = AgentWorkflow.IsBusy;
+
+        if (Session.awaitingDecision)
+        {
+            EditorGUILayout.Space(4);
+            EditorGUILayout.HelpBox("Look at the change in the Scene view. Keep it, or undo it to return to the scene before the edit.",
+                MessageType.Info);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Keep change", _bigButton))
+                    StudyController.KeepPending();
+                if (GUILayout.Button("Undo change", _bigButton))
+                    StudyController.UndoPending();
+            }
+
+            EditorGUILayout.Space(8);
+        }
+
+        if (Session.HasReview)
+            DrawPreviewReview(Session.review, busy);
         else
-            DrawLocalControls(settings);
+            DrawEditRequest(busy);
 
-        if (GUILayout.Button("Check Backend Health"))
-            _ = CheckHealthAsync(settings, showDialog: preset == BackendPreset.Colab);
-
-        EditorGUILayout.HelpBox($"Requests go to {settings.RouterBaseUrl}", MessageType.None);
+        EditorGUILayout.Space(8);
+        EditorGUILayout.LabelField($"Refinements applied: {Session.editsKept}", EditorStyles.miniLabel);
+        using (new EditorGUI.DisabledScope(busy))
+        {
+            if (GUILayout.Button("Submit scene"))
+            {
+                StudyController.SubmitScene();
+                GUIUtility.ExitGUI();
+            }
+        }
     }
 
-    private static void DrawLocalControls(BackendSettings settings)
+    private void DrawEditRequest(bool busy)
     {
-        EditorGUI.BeginChangeCheck();
-        bool autoStart = EditorGUILayout.Toggle("Auto Start ComfyUI", settings.autoStartComfy);
-        if (EditorGUI.EndChangeCheck())
+        bool hasTarget = true;
+        if (Session.condition == StudyCondition.SpatialControls)
         {
-            settings.autoStartComfy = autoStart;
-            Persist(settings);
+            hasTarget = DrawRegionControls(busy || Session.awaitingDecision);
+            EditorGUILayout.Space(4);
+            GUILayout.Label("What should change here?", EditorStyles.boldLabel);
+        }
+        else
+        {
+            GUILayout.Label("Describe the change", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Name the object you mean and what should be different about it.",
+                EditorStyles.wordWrappedMiniLabel);
         }
 
-        EditorGUILayout.HelpBox(
-            autoStart
-                ? "Generate starts ComfyUI itself if it is not already running. The router is " +
-                  "separate: start it with ./tools/start_backend.sh."
-                : "ComfyUI must already be running. Enable Auto Start to have Generate launch it.",
-            MessageType.None);
+        using (new EditorGUI.DisabledScope(busy || Session.awaitingDecision))
+            PersistentSessionArea(ref Session.editRequest, 56f);
+
+        using (new EditorGUI.DisabledScope(!hasTarget || !StudyController.CanEdit || string.IsNullOrWhiteSpace(Session.editRequest)))
+        {
+            if (GUILayout.Button("Refine", _bigButton))
+            {
+                StudyController.SubmitEdit();
+                GUIUtility.ExitGUI();
+            }
+        }
     }
 
-    private static void DrawColabControls(BackendSettings settings)
+    private void DrawPreviewReview(RefinementReview review, bool busy)
     {
-        EditorGUI.BeginChangeCheck();
-        string notebookUrl = EditorGUILayout.TextField("Notebook URL", settings.colabNotebookUrl);
-        if (EditorGUI.EndChangeCheck())
+        EditorGUILayout.LabelField("Refinement preview", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(review.request, EditorStyles.wordWrappedLabel);
+        bool hasIdeas = review.ideas.Count > 0;
+        if (!hasIdeas && busy)
         {
-            settings.colabNotebookUrl = notebookUrl;
-            Persist(settings);
+            EditorGUILayout.LabelField("Generating your preview…", EditorStyles.miniLabel);
+            return;
+        }
+        if (hasIdeas)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(review.selected == 0))
+                    if (GUILayout.Button("Previous", GUILayout.Width(72))) StudyController.ShowIdea(review.selected - 1);
+                GUILayout.FlexibleSpace();
+                GUILayout.Label($"Idea {review.selected + 1} of {review.ideas.Count}");
+                GUILayout.FlexibleSpace();
+                using (new EditorGUI.DisabledScope(review.selected == review.ideas.Count - 1))
+                    if (GUILayout.Button("Next", GUILayout.Width(58))) StudyController.ShowIdea(review.selected + 1);
+            }
+            _modelPreview.Draw(review);
+            EditorGUILayout.LabelField("Drag to orbit · Scroll to zoom", EditorStyles.miniLabel);
+        }
+        using (new EditorGUI.DisabledScope(busy || AgentJobState.instance.HasRunningJob))
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button(busy ? "Generating…" : hasIdeas ? "Regenerate" : "Retry"))
+                {
+                    StudyController.GenerateIdea();
+                    GUIUtility.ExitGUI();
+                }
+                using (new EditorGUI.DisabledScope(!hasIdeas))
+                    if (GUILayout.Button("Apply this idea", _bigButton))
+                    {
+                        StudyController.ApplyIdea();
+                        GUIUtility.ExitGUI();
+                    }
+            }
+            if (GUILayout.Button("Discard previews"))
+            {
+                StudyController.DiscardIdeas();
+                GUIUtility.ExitGUI();
+            }
+        }
+    }
+
+    private bool DrawRegionControls(bool disabled)
+    {
+        GUILayout.Label("Refinement selection", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("Click a part, Shift-click to add or remove, or drag a box. Drag its handles to adjust. W moves the box, E rotates it.",
+            EditorStyles.wordWrappedMiniLabel);
+        var manager = FindFirstObjectByType<RegionSelectionManager>();
+        if (manager == null)
+        {
+            using (new EditorGUI.DisabledScope(disabled))
+                if (GUILayout.Button("Set up refinement")) StudyController.EnsureRefinementRig(true);
+            return false;
         }
 
-        if (GUILayout.Button("Open Notebook in Colab"))
-            Application.OpenURL(settings.colabNotebookUrl);
+        RegionSelection region = manager.CurrentSelection;
+        List<AgentAsset> assets = AgentSceneOps.AllAssets();
+        AgentAsset owner = assets.Find(a => a.assetId == region?.assetId);
+        bool valid = region?.partScoped == true && (string.IsNullOrEmpty(region.assetId) || owner != null);
+        string summary = "No selection";
+        if (valid)
+        {
+            int whole = 0, partial = 0, outside = 0;
+            foreach (AgentPart part in AgentSceneOps.PartsOf(owner))
+            {
+                if (region.wholeParts.Contains(part.partId)) whole++;
+                if (region.partialParts.Contains(part.partId)) partial++;
+                if (region.outsideParts.Contains(part.partId)) outside++;
+            }
+            var counts = new List<string>();
+            if (whole > 0) counts.Add($"{whole} whole");
+            if (partial > 0) counts.Add($"{partial} partial");
+            if (outside > 0) counts.Add($"{outside} outside box");
+            summary = (owner != null ? owner.label + " · " : "") +
+                      (counts.Count > 0 ? string.Join(", ", counts) : "Empty region");
+            if (whole + partial == 0 && region.wholeParts.Count + region.partialParts.Count + region.outsideParts.Count > 0)
+                valid = false;
+        }
+        EditorGUILayout.LabelField(summary, EditorStyles.boldLabel);
+        _showParts = EditorGUILayout.Foldout(_showParts, "Parts", true);
+        if (_showParts)
+        {
+            using (new EditorGUI.DisabledScope(disabled))
+            foreach (AgentAsset asset in assets)
+            {
+                EditorGUILayout.LabelField(asset.label, EditorStyles.miniBoldLabel);
+                foreach (AgentPart part in AgentSceneOps.PartsOf(asset))
+                {
+                    bool selected = owner == asset && RefinementPartSelection.Has(region, part.partId);
+                    string name = part.name;
+                    string suffix = "_" + part.partId;
+                    if (name.EndsWith(suffix, StringComparison.Ordinal)) name = name.Substring(0, name.Length - suffix.Length);
+                    if (selected) name += region.wholeParts.Contains(part.partId) ? "  ·  Whole" :
+                        region.partialParts.Contains(part.partId) ? "  ·  Partial" : "  ·  Outside box";
+                    if (EditorGUILayout.ToggleLeft(name, selected) == selected) continue;
+                    var picked = RefinementPartSelection.Pick(region, asset, part, owner == asset);
+                    RefinementPartSelection.Commit(manager, picked, "Select refinement part");
+                    GUIUtility.ExitGUI();
+                }
+            }
+        }
+        return valid;
+    }
 
-        EditorGUILayout.HelpBox(
-            "Open the notebook, pick a GPU runtime, and run every cell until the zrok share is serving " +
-            "the router. Then check backend health here before generating.",
+    private void DrawFinishedPhase()
+    {
+        EditorGUILayout.HelpBox("This condition is finished.\n" +
+                                $"Generation runs: {Session.generationRuns} (accepted run {Session.acceptedRun}). " +
+                                $"Edits: {Session.editsSubmitted} submitted, {Session.editsKept} kept, {Session.editsUndone} undone.",
             MessageType.Info);
+
+        if (GUILayout.Button("Researcher: set up the next condition"))
+        {
+            StudyController.ResetSession();
+            GUIUtility.ExitGUI();
+        }
+    }
+
+    private void DrawAgentActivity()
+    {
+        if (!AgentWorkflow.IsBusy)
+            return;
+
+        EditorGUILayout.Space(6);
+        string status = string.IsNullOrEmpty(AgentWorkflow.Status) ? "The agent is working…" : AgentWorkflow.Status;
+        int dots = (int)(EditorApplication.timeSinceStartup * 2d) % 4;
+        EditorGUILayout.HelpBox($"{status}{new string('.', dots)}", MessageType.None);
+    }
+
+    private static void DrawStudyMessage()
+    {
+        if (string.IsNullOrEmpty(StudyController.LastMessage) || AgentWorkflow.IsBusy)
+            return;
+        EditorGUILayout.Space(4);
+        EditorGUILayout.HelpBox(StudyController.LastMessage, StudyController.LastMessageType);
+    }
+
+    private static void DrawStaleJobWarning()
+    {
+        if (!AgentJobState.instance.HasRunningJob || AgentWorkflow.IsBusy)
+            return;
+
+        EditorGUILayout.HelpBox(
+            "An agent run was interrupted (for example by a script reload). Its changes stay in the scene; " +
+            "clear the run to continue.", MessageType.Warning);
+        if (GUILayout.Button("Clear interrupted run"))
+            AgentWorkflow.ClearStaleJob();
+    }
+
+    private static GUIStyle _wrapArea;
+
+    /// <summary>Wrapped text area bound to a session field; saved as soon as it changes.</summary>
+    private static void PersistentSessionArea(ref string field, float height)
+    {
+        _wrapArea ??= new GUIStyle(EditorStyles.textArea) { wordWrap = true };
+        EditorGUI.BeginChangeCheck();
+        string updated = EditorGUILayout.TextArea(field ?? string.Empty, _wrapArea, GUILayout.MinHeight(height));
+        if (!EditorGUI.EndChangeCheck())
+            return;
+
+        field = updated;
+        Session.Persist();
+    }
+
+    // ================================================================== proxy overview
+
+    private static void DrawProxyOverview(bool editable)
+    {
+        List<SpatialProxy> proxies = AllProxies();
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            GUILayout.Label($"Spatial proxies ({proxies.Count})", EditorStyles.boldLabel);
+            GUILayout.FlexibleSpace();
+            using (new EditorGUI.DisabledScope(!editable))
+            {
+                if (GUILayout.Button("+ Add proxy", GUILayout.Width(96f)))
+                    SpatialProxyFactory.CreateProxy();
+            }
+        }
+
+        if (proxies.Count == 0)
+        {
+            EditorGUILayout.HelpBox("Add a proxy for each object, then move, rotate and resize it in the Scene view. " +
+                                    "The arrow on a selected proxy marks its front.", MessageType.Info);
+            return;
+        }
+
+        Dictionary<string, AgentAsset> assets = AssetsByProxy();
+        foreach (SpatialProxy proxy in proxies)
+            DrawProxyRow(proxy, assets, editable);
+    }
+
+    private static void DrawProxyRow(SpatialProxy proxy, Dictionary<string, AgentAsset> assets, bool editable)
+    {
+        bool selected = Selection.activeGameObject == proxy.gameObject;
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(!editable))
+                {
+                    EditorGUI.BeginChangeCheck();
+                    string label = EditorGUILayout.TextField(proxy.label, GUILayout.MinWidth(80f));
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Undo.RecordObject(proxy, "Edit Proxy Label");
+                        proxy.label = label;
+                        EditorUtility.SetDirty(proxy);
+                        LogProxy(proxy, "proxy_label_change");
+                    }
+                }
+
+                Vector3 size = Vector3.Scale(proxy.size, proxy.transform.lossyScale);
+                GUILayout.Label($"{size.x:0.##}×{size.y:0.##}×{size.z:0.##} m", EditorStyles.miniLabel, GUILayout.Width(96f));
+
+                if (GUILayout.Button(selected ? "Selected" : "Select", EditorStyles.miniButton, GUILayout.Width(62f)))
+                {
+                    Selection.activeGameObject = proxy.gameObject;
+                    SceneView.lastActiveSceneView?.FrameSelected();
+                }
+            }
+
+            using (new EditorGUI.DisabledScope(!editable))
+            {
+                EditorGUI.BeginChangeCheck();
+                string prompt = EditorGUILayout.TextField(proxy.assetPrompt);
+                if (string.IsNullOrEmpty(proxy.assetPrompt))
+                {
+                    Rect last = GUILayoutUtility.GetLastRect();
+                    GUI.Label(new Rect(last.x + 4f, last.y, last.width, last.height), "What should this become?",
+                        EditorStyles.centeredGreyMiniLabel);
+                }
+
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Undo.RecordObject(proxy, "Edit Proxy Prompt");
+                    proxy.assetPrompt = prompt;
+                    EditorUtility.SetDirty(proxy);
+                    LogProxy(proxy, "proxy_asset_prompt_change");
+                }
+            }
+
+            string status = proxy.role != SpatialProxyRole.Occupy
+                ? $"{proxy.role} proxy — not generated"
+                : assets.TryGetValue(proxy.ProxyId ?? string.Empty, out AgentAsset asset)
+                    ? $"Generated: {AgentSceneOps.PartsOf(asset).Count} parts"
+                    : "Not generated yet";
+            EditorGUILayout.LabelField(status, EditorStyles.miniLabel);
+        }
+    }
+
+    private static List<SpatialProxy> AllProxies()
+    {
+        var proxies = new List<SpatialProxy>(FindObjectsByType<SpatialProxy>(FindObjectsSortMode.None));
+        proxies.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+        return proxies;
+    }
+
+    private static Dictionary<string, AgentAsset> AssetsByProxy()
+    {
+        var map = new Dictionary<string, AgentAsset>(StringComparer.Ordinal);
+        foreach (AgentAsset asset in AgentSceneOps.AllAssets())
+        {
+            if (!string.IsNullOrEmpty(asset.proxyId))
+                map[asset.proxyId] = asset;
+        }
+
+        return map;
+    }
+
+    private static void LogProxy(SpatialProxy proxy, string type)
+    {
+        InteractionLogger.Log(new InteractionEvent
+        {
+            type = type,
+            proxy_id = proxy.ProxyId,
+            position = proxy.transform.position,
+            size = proxy.size,
+            role = proxy.role.ToString(),
+            shape = proxy.Shape.ToString(),
+            label = proxy.label,
+            strength = proxy.strength,
+            priority = proxy.priority,
+            extra = "via_overview"
+        });
+    }
+
+    // ================================================================== legacy ComfyUI pipeline
+
+    private void DrawLegacyPipeline()
+    {
+        GUILayout.Label("Spatial Generation (ComfyUI pipeline)", _titleStyle);
+        EditorGUILayout.HelpBox(
+            "To run a study condition, select the Agent backend in Tools > Spatial Generation Researcher Tools.",
+            MessageType.None);
+        EditorGUILayout.Space(6);
+        DrawCreationSection();
+        EditorGUILayout.Space(10);
+        DrawRefinementSection();
     }
 
     private void DrawCreationSection()
@@ -145,8 +674,7 @@ public class SpatialGenerationWindow : EditorWindow
 
         _negativePrompt = DrawPersistentTextArea("Negative prompt", _negativePrompt, NegativePromptKey);
 
-        if (GUILayout.Button("Add Spatial Proxy"))
-            SpatialProxyFactory.CreateProxy();
+        DrawProxyOverview(editable: true);
 
         if (!GUILayout.Button("Generate"))
             return;
@@ -169,7 +697,7 @@ public class SpatialGenerationWindow : EditorWindow
             EditorGUILayout.HelpBox(
                 "Create the refinement rig to select a region and run local edits.", MessageType.Info);
             if (GUILayout.Button("Setup Refinement Rig"))
-                Selection.activeGameObject = CreateRefinementRig().gameObject;
+                Selection.activeGameObject = StudyController.EnsureRefinementRig(resetSelection: true).gameObject;
             return;
         }
 
@@ -184,7 +712,9 @@ public class SpatialGenerationWindow : EditorWindow
         }
 
         controller.selectionManager = selectionManager;
-        DrawSelectionSummary(selectionManager);
+        if (selectionManager.CurrentSelection?.partScoped == true)
+            EditorGUILayout.HelpBox("Reset Selection to place a box on the imported mesh.", MessageType.Info);
+        else DrawSelectionSummary(selectionManager);
 
         if (GUILayout.Button("Reset Selection"))
         {
@@ -196,7 +726,7 @@ public class SpatialGenerationWindow : EditorWindow
 
         _refinementPrompt = DrawPersistentTextArea("What should change here?", _refinementPrompt, RefinementPromptKey);
 
-        bool canRefine = selectionManager.CurrentSelection != null
+        bool canRefine = selectionManager.CurrentSelection != null && !selectionManager.CurrentSelection.partScoped
                          && !controller.IsRunning
                          && !string.IsNullOrWhiteSpace(_refinementPrompt);
 
@@ -232,35 +762,25 @@ public class SpatialGenerationWindow : EditorWindow
         RegionSelection selection = selectionManager.CurrentSelection;
         if (selection == null)
         {
-            EditorGUILayout.HelpBox("No region selected. Use Reset Selection, then drag the handles in the Scene view.",
+            EditorGUILayout.HelpBox("No region selected. Use Reset, then drag the handles in the Scene view.",
                 MessageType.Info);
             return;
         }
 
-        string summary = $"Region: center {selection.center}, size {selection.size}";
+        string summary = $"Box {selection.size.x:0.##}×{selection.size.y:0.##}×{selection.size.z:0.##} m at " +
+                         $"({selection.center.x:0.##}, {selection.center.y:0.##}, {selection.center.z:0.##})";
 
         if (RegionSelectionManager.TryGetGeneratedContentBounds(out Bounds meshBounds) &&
             RegionSelectionManager.SelectionSpansMostOfMesh(selection, meshBounds))
         {
             EditorGUILayout.HelpBox(
-                $"{summary}\n\nThe box covers most of the asset on several axes, so the edit will not be local — " +
-                "nearly the whole mesh gets replaced. Shrink it, or use Reset Selection for a tighter default.",
+                $"{summary}\n\nThe box covers most of the scene on several axes, so the edit will not be local. " +
+                "Shrink it around the part you want to change.",
                 MessageType.Warning);
             return;
         }
 
         EditorGUILayout.HelpBox(summary, MessageType.None);
-    }
-
-    private void DrawUtilitiesSection()
-    {
-        GUILayout.Label("Utilities", EditorStyles.boldLabel);
-
-        if (GUILayout.Button("Cleanup GeneratedContent"))
-            GenerationRunner.CleanupGeneratedContent();
-
-        if (GUILayout.Button("Open Interaction Log Folder"))
-            InteractionLogger.RevealLogFolder();
     }
 
     private static string DrawPersistentTextArea(string label, string value, string prefsKey)
@@ -273,56 +793,11 @@ public class SpatialGenerationWindow : EditorWindow
         return updated;
     }
 
-    private static async Task CheckHealthAsync(BackendSettings settings, bool showDialog)
+    // ================================================================== shared
+
+    private void EnsureStyles()
     {
-        RouterClient.BackendHealth health = await RouterClient.CheckHealthAsync(settings);
-        if (health.IsReady)
-        {
-            Debug.Log($"Spatial Generation: backend ready at {settings.RouterBaseUrl} (router + ComfyUI).");
-            if (settings.refinementLifter != RefinementLifter.TripoSR &&
-                !health.HunyuanRefinementAvailable)
-            {
-                Debug.LogWarning(
-                    "Spatial Generation: Hunyuan3D-2mv refinement is unavailable. " +
-                    (string.IsNullOrWhiteSpace(health.HunyuanRefinementDetail)
-                        ? "Run ./tools/setup_hunyuan2mv.sh and restart ComfyUI."
-                        : health.HunyuanRefinementDetail));
-            }
-            if (showDialog)
-                EditorUtility.DisplayDialog(
-                    "Backend Ready", "The router and ComfyUI are both up. You can generate and refine.", "OK");
-            return;
-        }
-
-        string problem = RouterClient.DescribeProblem(settings, health);
-        Debug.LogError($"Spatial Generation: {problem}");
-        if (showDialog)
-            EditorUtility.DisplayDialog("Backend Not Ready", problem, "OK");
-    }
-
-    private static RefinementController CreateRefinementRig()
-    {
-        RefinementController existing = FindFirstObjectByType<RefinementController>();
-        if (existing != null)
-            return existing;
-
-        var root = new GameObject("SpatialGenerationRefinement");
-        Undo.RegisterCreatedObjectUndo(root, "Create Refinement Rig");
-
-        RegionSelectionManager selectionManager = root.AddComponent<RegionSelectionManager>();
-        RefinementController controller = root.AddComponent<RefinementController>();
-        controller.selectionManager = selectionManager;
-        selectionManager.ResetToDefault();
-
-        EditorUtility.SetDirty(root);
-        EditorSceneManager.MarkSceneDirty(root.scene);
-        return controller;
-    }
-
-    private static void Persist(BackendSettings settings)
-    {
-        EditorUtility.SetDirty(settings);
-        AssetDatabase.SaveAssets();
-        BackendRegistry.Reload();
+        _titleStyle ??= new GUIStyle(EditorStyles.boldLabel) { fontSize = 15 };
+        _bigButton ??= new GUIStyle(GUI.skin.button) { fixedHeight = 28f, fontStyle = FontStyle.Bold };
     }
 }

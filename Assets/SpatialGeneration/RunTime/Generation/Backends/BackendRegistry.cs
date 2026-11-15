@@ -41,6 +41,7 @@ public static class BackendRegistry
     private static IGenerationBackend CreateBackend(BackendSettings settings) => settings.backendKind switch
     {
         BackendKind.Mock => new MockGenerationBackend(),
+        BackendKind.Agent => new EditorDrivenBackend(),
         _ => new RouterGenerationBackend(settings)
     };
 }

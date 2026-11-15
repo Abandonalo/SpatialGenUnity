@@ -123,6 +123,29 @@ public class SpatialProxyEditor : Editor
         {
             Handles.DrawWireCube(Vector3.zero, proxy.size);
         }
+
+        DrawFrontArrow(proxy);
+    }
+
+    /// <summary>
+    /// Generated assets face the proxy's local +X, so show it: without a marked front a
+    /// participant cannot control which way an object will face.
+    /// </summary>
+    private static void DrawFrontArrow(SpatialProxy proxy)
+    {
+        if (Event.current.type != EventType.Repaint)
+            return;
+
+        Transform t = proxy.transform;
+        Vector3 front = t.TransformDirection(Vector3.right);
+        if (front.sqrMagnitude < 1e-8f)
+            return;
+
+        Vector3 start = t.TransformPoint(new Vector3(proxy.size.x * 0.5f, 0f, 0f));
+        float length = HandleUtility.GetHandleSize(start) * 0.9f;
+        Handles.color = new Color(1f, 0.78f, 0.2f, 1f);
+        Handles.ArrowHandleCap(0, start, Quaternion.LookRotation(front.normalized, t.up), length, EventType.Repaint);
+        Handles.Label(start + front.normalized * length * 1.1f, "front", EditorStyles.boldLabel);
     }
 
     private void DrawSphere(SpatialProxy proxy)
