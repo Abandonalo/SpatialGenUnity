@@ -1,0 +1,24 @@
+{
+  "name": "SpatialGeneration.Legacy.Router.Tests.EditMode",
+  "rootNamespace": "",
+  "references": [
+    "SpatialGeneration.Runtime",
+    "SpatialGeneration.Editor",
+    "SpatialGeneration.Legacy.Router",
+    "SpatialGeneration.Legacy.Router.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}

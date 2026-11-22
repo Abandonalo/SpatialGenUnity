@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using SpatialGeneration.Authoring;
 
 namespace SpatialGeneration.Agent
 {
@@ -43,8 +44,11 @@ namespace SpatialGeneration.Agent
     /// </list>
     /// Kept free of MCP types so the editor assembly compiles without the MCP package; the thin
     /// tool wrappers live in SpatialGeneration.Editor.Mcp.
+    /// Agent operations never enter the participant's Undo history: edits run on a private preview
+    /// copy (applied later as one Undo step), and a generation run is a version the window manages,
+    /// which Ctrl+Z must not take apart part by part.
     /// </summary>
-    public static class AgentSceneOps
+    public static partial class AgentSceneOps
     {
         private const float MinPartSize = 0.005f;
         private const float MaxPartSize = 200f;
@@ -155,7 +159,6 @@ namespace SpatialGeneration.Agent
             asset.prompt = prompt ?? string.Empty;
             asset.volumeSize = size;
             asset.createdByJob = job.jobId;
-            AgentObjectUndo.Created(go, "Agent: create asset");
 
             if (job.mode == AgentJobMode.Edit && job.condition == StudyCondition.TextOnly)
                 job.lockedAssetId = assetId;
@@ -184,11 +187,13 @@ namespace SpatialGeneration.Agent
             int removed = 0;
             foreach (AgentPart part in PartsOf(asset))
             {
-                AgentObjectUndo.Destroy(part.gameObject);
+                UnityEngine.Object.DestroyImmediate(part.gameObject);
                 removed++;
             }
 
             job.partsRemoved += removed;
+            if (!job.clearedAssetIds.Contains(asset.assetId))
+                job.clearedAssetIds.Add(asset.assetId);
             MarkDirty(asset.gameObject);
             Count(job, tool, true, $"asset={assetId}; removed={removed}");
             return OpResult.Ok($"Removed {removed} part(s) from '{asset.label}'.");
@@ -205,6 +210,8 @@ namespace SpatialGeneration.Agent
                 return Reject(job, tool, error);
             if (specs == null || specs.Count == 0)
                 return Reject(job, tool, OpResult.Fail("parts must be a non-empty array."));
+            if (MustClearFirst(job, asset))
+                return Reject(job, tool, OpResult.Fail(ClearFirstMessage));
             if (!TryClaimAsset(job, asset, out error))
                 return Reject(job, tool, error);
 
@@ -278,6 +285,8 @@ namespace SpatialGeneration.Agent
                 return Reject(job, tool, error);
             if (specs == null || specs.Count == 0)
                 return Reject(job, tool, OpResult.Fail("parts must be a non-empty array of objects with an id."));
+            if (MustClearFirst(job, asset))
+                return Reject(job, tool, OpResult.Fail(ClearFirstMessage));
             if (!TryClaimAsset(job, asset, out error))
                 return Reject(job, tool, error);
 
@@ -336,9 +345,6 @@ namespace SpatialGeneration.Agent
                 if (!string.IsNullOrEmpty(warning))
                     warnings.Add($"part {spec.id}: {warning}");
 
-                // Creating the remainder flushes pending RecordObject diffs. Capture the original
-                // immediately so one Undo restores its geometry, transform and colour together.
-                AgentObjectUndo.Record(part, "Agent: update part");
                 if (slice != null)
                 {
                     slice.IsolateInside(part);
@@ -380,6 +386,8 @@ namespace SpatialGeneration.Agent
                 return Reject(job, tool, error);
             if (partIds == null || partIds.Count == 0)
                 return Reject(job, tool, OpResult.Fail("part_ids must be a non-empty array of part ids."));
+            if (MustClearFirst(job, asset))
+                return Reject(job, tool, OpResult.Fail(ClearFirstMessage));
             if (!TryClaimAsset(job, asset, out error))
                 return Reject(job, tool, error);
 
@@ -411,7 +419,7 @@ namespace SpatialGeneration.Agent
                     }
                     slice.RetainOutside(part);
                 }
-                else AgentObjectUndo.Destroy(part.gameObject);
+                else UnityEngine.Object.DestroyImmediate(part.gameObject);
                 byId.Remove(id);
                 removed.Add(id);
             }
@@ -438,207 +446,15 @@ namespace SpatialGeneration.Agent
             return OpResult.Ok("Recorded. The task is complete; stop now.");
         }
 
-        // ------------------------------------------------------------------ rules
-
-        private static bool TryJob(out AgentJob job, out OpResult error)
-        {
-            job = AgentJobState.instance.current;
-            if (!string.IsNullOrEmpty(job?.previewToken) && RefinementPreviewStage.ForJob(job) == null)
-            {
-                error = OpResult.Fail("This preview has ended. Its draft is closed.");
-                return false;
-            }
-            if (job == null || !job.running || string.IsNullOrEmpty(job.jobId))
-            {
-                error = OpResult.Fail(
-                    "No Spatial Generation run is active. These tools only work while the Spatial Generation window runs a task.");
-                return false;
-            }
-
-            error = null;
-            return true;
-        }
-
-        /// <summary>Coarse, asset-level scope check; part-level region checks come on top.</summary>
-        private static bool TryClaimAsset(AgentJob job, AgentAsset asset, out OpResult error)
-        {
-            error = null;
-            if (job.mode == AgentJobMode.Generate)
-            {
-                bool inScope = job.condition == StudyCondition.SpatialControls
-                    ? job.assetIds.Contains(asset.assetId)
-                    : asset.createdByJob == job.jobId;
-                if (!inScope)
-                    error = OpResult.Fail("This asset is not part of the current generation run.");
-                return error == null;
-            }
-
-            if (job.HasPartScope)
-            {
-                if (!AssetInSelection(job, asset)) error = OpResult.Fail("This object is outside the selection.");
-                return error == null;
-            }
-            if (job.hasRegion)
-                return true;
-
-            if (string.IsNullOrEmpty(job.lockedAssetId))
-            {
-                job.lockedAssetId = asset.assetId;
-                return true;
-            }
-
-            if (job.lockedAssetId != asset.assetId)
-                error = OpResult.Fail(
-                    $"This edit already changes asset '{job.lockedAssetId}'. One edit may change only one asset.");
-            return error == null;
-        }
-
-        private static bool IsPartEditable(AgentJob job, AgentAsset asset, AgentPart part)
-        {
-            if (job.mode == AgentJobMode.Generate)
-            {
-                return job.condition == StudyCondition.SpatialControls
-                    ? job.assetIds.Contains(asset.assetId)
-                    : asset.createdByJob == job.jobId;
-            }
-
-            if (job.HasPartScope)
-                return AssetInSelection(job, asset) && (job.addedPartIds.Contains(part.partId) ||
-                    job.selection.wholeParts.Contains(part.partId) || job.selection.partialParts.Contains(part.partId));
-            if (job.hasRegion)
-                return OverlapWithRegion(job, part.transform) >= EditableOverlap;
-
-            return string.IsNullOrEmpty(job.lockedAssetId) || job.lockedAssetId == asset.assetId;
-        }
-
-        /// <summary>
-        /// Hard rule for region edits (geometry must stay inside the region); soft rule for
-        /// generation (a warning when a part leaves the asset volume, so the agent can correct it).
-        /// </summary>
-        private static bool CheckPlacement(
-            AgentJob job, AgentAsset asset, Vector3 center, Quaternion rotation, Vector3 size,
-            out string problem, out string warning, string partId = null)
-        {
-            problem = null;
-            warning = null;
-
-            if (job.mode == AgentJobMode.Edit && job.hasRegion)
-            {
-                if (job.HasPartScope)
-                {
-                    if (job.selection.pickedWholeParts)
-                    {
-                        if (partId != null && job.selection.wholeParts.Contains(partId)) return true;
-                        // Direct picks may grow an attachment beyond the fitted selection box.
-                        var toAttachment = Matrix4x4.TRS(center, rotation, Vector3.one).inverse *
-                                           asset.transform.worldToLocalMatrix;
-                        foreach (AgentPart anchor in PartsOf(asset))
-                        {
-                            if (!job.selection.wholeParts.Contains(anchor.partId)) continue;
-                            if (PartGeometry.Cut(anchor, toAttachment * anchor.transform.localToWorldMatrix,
-                                    size * 0.5f + Vector3.one * 0.0005f).coverage > 0) return true;
-                        }
-                    }
-                    RegionSelection limit = partId != null && job.selection.partialParts.Contains(partId)
-                        ? job.selection.Crop() : job.selection;
-                    Matrix4x4 toRegion = limit.WorldToLocal() * asset.transform.localToWorldMatrix *
-                                      Matrix4x4.TRS(center, rotation, size);
-                    Bounds allowed = new(Vector3.zero, limit.size + Vector3.one * 0.0002f);
-                    foreach (Vector3 corner in UnitCorners)
-                    {
-                        if (allowed.Contains(toRegion.MultiplyPoint3x4(corner))) continue;
-                        problem = "the new geometry would extend outside the selected region";
-                        return false;
-                    }
-                    return true;
-                }
-                if (!CornersInsideRegion(job, asset.transform.localToWorldMatrix, center, rotation, size))
-                {
-                    problem = "the part would extend outside the selected edit region";
-                    return false;
-                }
-
-                return true;
-            }
-
-            Vector3 half = asset.volumeSize * 0.5f;
-            Vector3 tolerance = asset.volumeSize * 0.1f + Vector3.one * 0.02f;
-            Matrix4x4 local = Matrix4x4.TRS(center, rotation, size);
-            foreach (Vector3 corner in UnitCorners)
-            {
-                Vector3 p = local.MultiplyPoint3x4(corner);
-                if (Mathf.Abs(p.x) > half.x + tolerance.x ||
-                    Mathf.Abs(p.z) > half.z + tolerance.z ||
-                    p.y < -tolerance.y ||
-                    p.y > asset.volumeSize.y + tolerance.y)
-                {
-                    warning = $"extends outside the asset volume (x ±{half.x:0.##}, y 0–{asset.volumeSize.y:0.##}, z ±{half.z:0.##}); move or shrink it";
-                    break;
-                }
-            }
-
-            return true;
-        }
-
-        private static bool CornersInsideRegion(AgentJob job, Matrix4x4 frame, Vector3 center, Quaternion rotation, Vector3 size)
-        {
-            Matrix4x4 toWorld = frame * Matrix4x4.TRS(center, rotation, size);
-            foreach (Vector3 corner in UnitCorners)
-            {
-                if (!InsideRegion(job, toWorld.MultiplyPoint3x4(corner), RegionTolerance(job)))
-                    return false;
-            }
-
-            return true;
-        }
-
-        /// <summary>Fraction of the part's box inside the region, from a 4×4×4 sample grid.</summary>
-        private static float OverlapWithRegion(AgentJob job, Transform part)
-        {
-            int inside = 0, total = 0;
-            for (int x = 0; x < 4; x++)
-            for (int y = 0; y < 4; y++)
-            for (int z = 0; z < 4; z++)
-            {
-                Vector3 local = new((x + 0.5f) / 4f - 0.5f, (y + 0.5f) / 4f - 0.5f, (z + 0.5f) / 4f - 0.5f);
-                if (InsideRegion(job, part.TransformPoint(local), 0f))
-                    inside++;
-                total++;
-            }
-
-            return inside / (float)total;
-        }
-
-        private static bool InsideRegion(AgentJob job, Vector3 world, float tolerance)
-        {
-            Vector3 local = Quaternion.Inverse(job.regionRotation) * (world - job.regionCenter);
-            Vector3 half = job.regionSize * 0.5f;
-            return Mathf.Abs(local.x) <= half.x + tolerance &&
-                   Mathf.Abs(local.y) <= half.y + tolerance &&
-                   Mathf.Abs(local.z) <= half.z + tolerance;
-        }
-
-        private static float RegionTolerance(AgentJob job)
-        {
-            float largest = Mathf.Max(job.regionSize.x, Mathf.Max(job.regionSize.y, job.regionSize.z));
-            return Mathf.Max(0.02f, largest * 0.05f);
-        }
-
-        private static readonly Vector3[] UnitCorners =
-        {
-            new(-0.5f, -0.5f, -0.5f), new(0.5f, -0.5f, -0.5f), new(-0.5f, 0.5f, -0.5f), new(0.5f, 0.5f, -0.5f),
-            new(-0.5f, -0.5f, 0.5f), new(0.5f, -0.5f, 0.5f), new(-0.5f, 0.5f, 0.5f), new(0.5f, 0.5f, 0.5f)
-        };
-
         // ------------------------------------------------------------------ scene helpers
 
-        public static GameObject EnsureGeneratedRoot() => GenerationRunner.EnsureGeneratedRoot();
+        public static GameObject EnsureGeneratedRoot() => GeneratedContentRoot.Ensure(undoable: false);
 
         public static List<AgentAsset> AllAssets(AgentJob job = null)
         {
             var assets = new List<AgentAsset>();
             GameObject root = string.IsNullOrEmpty(job?.previewToken)
-                ? GameObject.Find(GenerationRunner.GeneratedRootName) : RefinementPreviewStage.ForJob(job);
+                ? GameObject.Find(GeneratedContentRoot.Name) : RefinementPreviewStage.ForJob(job);
             if (root != null)
                 assets.AddRange(root.GetComponentsInChildren<AgentAsset>(false));
             return assets;
@@ -715,7 +531,6 @@ namespace SpatialGeneration.Agent
             part.lastJobId = job.jobId;
             part.Rebuild();
 
-            AgentObjectUndo.Created(go, "Agent: add part");
             return part;
         }
 
@@ -733,189 +548,5 @@ namespace SpatialGeneration.Agent
             SceneView.RepaintAll();
         }
 
-        // ------------------------------------------------------------------ data shaping
-
-        private static List<object> AssetList(AgentJob job)
-        {
-            var list = new List<object>();
-            foreach (AgentAsset asset in AllAssets(job))
-                list.Add(AssetData(asset, job));
-            return list;
-        }
-
-        private static bool AssetInSelection(AgentJob job, AgentAsset asset) =>
-            asset.assetId == job.selection.assetId ||
-            (string.IsNullOrEmpty(job.selection.assetId) && asset.createdByJob == job.jobId);
-
-        public static Dictionary<string, object> AssetData(AgentAsset asset, AgentJob job)
-        {
-            Transform t = asset.transform;
-            bool inScope = job.mode == AgentJobMode.Generate
-                ? (job.condition == StudyCondition.SpatialControls ? job.assetIds.Contains(asset.assetId) : asset.createdByJob == job.jobId)
-                : job.HasPartScope ? AssetInSelection(job, asset)
-                : job.hasRegion || string.IsNullOrEmpty(job.lockedAssetId) || job.lockedAssetId == asset.assetId;
-
-            return new Dictionary<string, object>
-            {
-                ["asset_id"] = asset.assetId,
-                ["label"] = asset.label,
-                ["prompt"] = asset.prompt,
-                ["proxy_id"] = asset.proxyId,
-                ["origin_world"] = Round(t.position),
-                ["yaw_degrees"] = Round(t.eulerAngles.y),
-                ["front_direction_world"] = Round(t.right),
-                ["volume_size"] = Round(asset.volumeSize),
-                ["part_count"] = PartsOf(asset).Count,
-                ["in_scope"] = inScope
-            };
-        }
-
-        private static Dictionary<string, object> PartData(AgentPart part, bool editable, PartialPartEdit slice = null)
-        {
-            Transform t = part.transform;
-            return new Dictionary<string, object>
-            {
-                ["id"] = part.partId,
-                ["name"] = t.name,
-                ["shape"] = part.shape.ToString().ToLowerInvariant(),
-                ["center"] = Round(slice?.Center ?? t.localPosition),
-                ["size"] = Round(slice?.Size ?? t.localScale),
-                ["rotation"] = Round(SignedEuler(t.localEulerAngles)),
-                ["color"] = "#" + ColorUtility.ToHtmlStringRGB(part.color),
-                ["segments"] = part.segments,
-                ["editable"] = editable && (slice == null || slice.HasInside),
-                ["partial"] = slice != null
-            };
-        }
-
-        public static Dictionary<string, object> RegionData(AgentJob job) => new()
-        {
-            ["center_world"] = Round(job.regionCenter),
-            ["size"] = Round(job.regionSize),
-            ["rotation_euler"] = Round(SignedEuler(job.regionRotation.eulerAngles)),
-            ["selected_parts"] = job.HasPartScope ? job.selection : null
-        };
-
-        private static Dictionary<string, object> Rejection(int index, PartSpec spec, string reason) => new()
-        {
-            ["index"] = index,
-            ["id"] = spec?.id,
-            ["name"] = spec?.name,
-            ["reason"] = reason
-        };
-
-        private static OpResult Reject(AgentJob job, string tool, OpResult error)
-        {
-            Count(job, tool, false, error.message);
-            return error;
-        }
-
-        private static void Count(AgentJob job, string tool, bool ok, string detail)
-        {
-            job.toolCalls++;
-            if (!ok)
-                job.rejectedCalls++;
-            AgentJobState.instance.Persist();
-
-            InteractionLogger.Log(new InteractionEvent
-            {
-                type = "agent_tool",
-                extra = $"job={job.jobId}; tool={tool}; ok={ok}; {detail}"
-            });
-        }
-
-        // ------------------------------------------------------------------ parsing
-
-        public static bool TryParseShape(string value, out AgentPartShape shape)
-        {
-            shape = AgentPartShape.Box;
-            if (string.IsNullOrWhiteSpace(value))
-                return true;
-
-            switch (value.Trim().ToLowerInvariant())
-            {
-                case "cube":
-                case "box":
-                    shape = AgentPartShape.Box;
-                    return true;
-                case "prism":
-                case "roof":
-                case "gable":
-                case "wedge":
-                    shape = AgentPartShape.Wedge;
-                    return true;
-                case "ball":
-                case "sphere":
-                    shape = AgentPartShape.Sphere;
-                    return true;
-                default:
-                    return Enum.TryParse(value.Trim(), true, out shape);
-            }
-        }
-
-        private static bool TryVector(float[] values, out Vector3 vector)
-        {
-            vector = Vector3.zero;
-            if (values == null || values.Length != 3)
-                return false;
-            foreach (float v in values)
-            {
-                if (float.IsNaN(v) || float.IsInfinity(v))
-                    return false;
-            }
-
-            vector = new Vector3(values[0], values[1], values[2]);
-            return true;
-        }
-
-        private static Vector3 ClampSize(Vector3 size) => new(
-            Mathf.Clamp(Mathf.Abs(size.x), MinPartSize, MaxPartSize),
-            Mathf.Clamp(Mathf.Abs(size.y), MinPartSize, MaxPartSize),
-            Mathf.Clamp(Mathf.Abs(size.z), MinPartSize, MaxPartSize));
-
-        private static Color ParseColor(string value, Color fallback)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return fallback;
-            string trimmed = value.Trim();
-            if (ColorUtility.TryParseHtmlString(trimmed, out Color color))
-                return color;
-            if (!trimmed.StartsWith("#") && ColorUtility.TryParseHtmlString("#" + trimmed, out color))
-                return color;
-            return fallback;
-        }
-
-        private static Vector3 SignedEuler(Vector3 euler) => new(Signed(euler.x), Signed(euler.y), Signed(euler.z));
-
-        private static float Signed(float angle)
-        {
-            angle %= 360f;
-            if (angle > 180f) angle -= 360f;
-            if (angle <= -180f) angle += 360f;
-            return angle;
-        }
-
-        private static float[] Round(Vector3 v) => new[] { Round(v.x), Round(v.y), Round(v.z) };
-
-        private static float Round(float v) => (float)Math.Round(v, 3);
-
-        public static string ShortId() => Guid.NewGuid().ToString("N").Substring(0, 8);
-
-        public static string Sanitize(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return "item";
-            char[] chars = value.Trim().ToCharArray();
-            for (int i = 0; i < chars.Length; i++)
-            {
-                if (!char.IsLetterOrDigit(chars[i]) && chars[i] != '_' && chars[i] != '-')
-                    chars[i] = '_';
-            }
-
-            string sanitized = new string(chars).Trim('_');
-            if (sanitized.Length > 32)
-                sanitized = sanitized.Substring(0, 32);
-            return sanitized.Length == 0 ? "item" : sanitized;
-        }
     }
 }

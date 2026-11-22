@@ -1,0 +1,10 @@
+ok   test_target_scores_perfect
+ok   test_global_shift_and_rotation_is_aligned_away
+ok   test_rotated_stall_fails_facing
+ok   test_missing_object_lowers_coverage
+ok   test_object_in_path_breaks_clearance
+ok   test_floating_and_scaled
+ok   test_condition_a_matches_by_asset_label
+ok   test_edit_confined_to_target_is_clean
+ok   test_edit_that_moves_other_objects
+ok   test_boundary_broken_when_top_crate_lifted

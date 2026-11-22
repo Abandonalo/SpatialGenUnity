@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using UnityEngine;
+using SpatialGeneration.Generation.Refinement;
 
 public class MultiViewCameraManagerTests
 {

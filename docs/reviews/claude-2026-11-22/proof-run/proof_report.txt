@@ -1,0 +1,50 @@
+settings: backend=Agent cli=ClaudeCode model=claude-opus-5-5 devMode=True
+=== CONDITION A ===
+empty prompt: msg="Describe the scene before generating." runs=0
+[A-run1] job 123114_f8f86ffd mode=Generate cond=TextOnly hasRegion=False partScope=False
+  report: success=True added=12 updated=0 removed=0 calls=23 rejected=0 exit=0 msg="Built 12 part(s) in 0 s." | study msg="Run 1: Built 12 part(s) in 0 s."
+[A-edit1] job 123114_e2f12eb9 mode=Edit cond=TextOnly hasRegion=False partScope=False
+  tool A: part-level update without clear: ok=True msg="Updated 1 part(s)."
+  tool A: second asset (expect reject): ok=False msg="This edit already changes asset '3db058d0'. One edit may change only one asset."
+  report: success=True added=0 updated=1 removed=0 calls=2 rejected=1 exit=0 msg="Idea 1 is ready." | study msg="Idea 1 is ready."
+A edit apply: msg="Refinement applied."
+A submit: phase=Finished
+=== CONDITION B ===
+phase after StartCondition: Generation
+proxies: 11, distinct ids: 10, empty ids: 0; stall_a id=37a40bb02a8f4e53a5826d3d3fb0fcd1 stall_b id=37a40bb02a8f4e53a5826d3d3fb0fcd1
+[run1] job 123114_e2122640 mode=Generate cond=SpatialControls hasRegion=False partScope=False
+  tool get_task: ok=True msg="Current Spatial Generation task."
+  tool create_asset (expect reject in B): ok=False msg="In this condition every asset is prepared from a spatial proxy; fill those instead of creating new ones."
+  out-of-volume part: ok=True warnings=1
+  tool finish: ok=True msg="Recorded. The task is complete; stop now."
+  report: success=True added=13 updated=0 removed=0 calls=15 rejected=1 exit=0 msg="Built 13 part(s) in 0 s." | study msg="Run 1: Built 13 part(s) in 0 s."
+after run1: runs=1 active=1 assets=11
+[run2] job 123115_9ce71540 mode=Generate cond=SpatialControls hasRegion=False partScope=False
+  report: success=True added=3 updated=0 removed=0 calls=3 rejected=0 exit=0 msg="Built 3 part(s) in 0 s. Still empty: signpost, parasol, gate, sack, bench, cart, crates, barrel." | study msg="Run 2: Built 3 part(s) in 0 s. Still empty: signpost, parasol, gate, sack, bench, cart, crates, barrel."
+after run2: runs=2 active=2 archived=[1]
+ShowVersion(1): active=1 archived=[2] assets=11 partsInWell=2
+accept: phase=Refinement acceptedRun=1
+edit1 submit: hasReview=True msg="Generating an idea…"
+[edit1-idea1] job 123115_50b54c31 mode=Edit cond=SpatialControls hasRegion=True partScope=True
+  tool list_parts well: ok=True msg="2 part(s) in well."
+  tool update well body: ok=True msg="Updated 1 part(s)."
+  tool update gate (expect reject): ok=False msg="This object is outside the selection."
+  live well body during preview: scaleY=3 (expect 3, untouched)
+  report: success=True added=0 updated=1 removed=0 calls=3 rejected=1 exit=0 msg="Idea 1 is ready." | study msg="Idea 1 is ready."
+[edit1-idea2] job 123115_aa0e263d mode=Edit cond=SpatialControls hasRegion=True partScope=True
+  tool recolour well body: ok=True msg="Updated 1 part(s)."
+  report: success=True added=0 updated=1 removed=0 calls=1 rejected=0 exit=0 msg="Idea 2 is ready." | study msg="Idea 2 is ready."
+edit1 ideas=2
+edit1 apply: msg="Refinement applied." live well scaleY=3.6 kept=1
+edit2 selection: whole=0 partial=1
+[edit2] job 123115_ba935a08 mode=Edit cond=SpatialControls hasRegion=True partScope=True
+  tool list_parts bench: ok=True msg="1 part(s) in bench."
+  tool add part outside region (expect reject): ok=False msg="Added 0 part(s) to 'bench'; rejected 1." rejected=the new geometry would extend outside the selected region
+  tool remove selected half: ok=True msg="Removed 1 part(s)."
+  report: success=True added=0 updated=0 removed=1 calls=3 rejected=1 exit=0 msg="Idea 1 is ready." | study msg="Idea 1 is ready."
+edit2 apply: msg="Refinement applied." bench part scale=(0.48, 0.90, 1.50) fragments=1
+[edit3] job 123115_e99a713a mode=Edit cond=SpatialControls hasRegion=True partScope=True
+  report: success=True added=0 updated=1 removed=0 calls=1 rejected=0 exit=0 msg="Idea 1 is ready." | study msg="Idea 1 is ready."
+edit3 discard: submitted=3 kept=2 undone=0 discarded=1 failed=0
+Ctrl+Z after edits: bench fragments 1 -> 0; study counters unchanged: kept=1 undone=1
+submit: phase=Finished reason=submitted

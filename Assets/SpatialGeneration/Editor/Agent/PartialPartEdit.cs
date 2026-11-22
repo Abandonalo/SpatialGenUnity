@@ -36,8 +36,7 @@ namespace SpatialGeneration.Agent
 
         public void RetainOutside(AgentPart part)
         {
-            if (_cut.outside.Count == 0) { AgentObjectUndo.Destroy(part.gameObject); return; }
-            AgentObjectUndo.Record(part, "Remove selected portion");
+            if (_cut.outside.Count == 0) { Object.DestroyImmediate(part.gameObject); return; }
             part.fragments = _cut.outside;
             part.Rebuild();
             EditorUtility.SetDirty(part);
@@ -50,12 +49,12 @@ namespace SpatialGeneration.Agent
                 GameObject remainder = Object.Instantiate(part.gameObject, part.transform.parent, false);
                 AgentPart preserved = remainder.GetComponent<AgentPart>();
                 preserved.partId = AgentSceneOps.ShortId();
+                preserved.sourcePartId = part.partId;
                 string name = part.name;
                 if (name.EndsWith("_" + part.partId)) name = name.Substring(0, name.Length - part.partId.Length - 1);
                 remainder.name = name + "_remainder_" + preserved.partId;
                 preserved.fragments = _cut.outside;
                 preserved.Rebuild();
-                AgentObjectUndo.Created(remainder, "Preserve unselected portion");
             }
             part.fragments = new List<PartCell>(_cut.inside.Count);
             Vector3 size = _bounds.size;

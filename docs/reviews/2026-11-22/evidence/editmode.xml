@@ -1,0 +1,466 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="68" result="Passed" total="68" passed="68" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:11Z" duration="3.5379253">
+  <test-suite type="TestSuite" id="1000" name="SpatialGenUnity" fullname="SpatialGenUnity" runstate="Runnable" testcasecount="68" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:11Z" duration="3.537925" total="68" passed="68" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="EditMode" />
+    </properties>
+    <test-suite type="Assembly" id="1083" name="SpatialGeneration.Tests.EditMode.dll" fullname="/private/tmp/spatialgen-review-20261122/project/Library/ScriptAssemblies/SpatialGeneration.Tests.EditMode.dll" runstate="Runnable" testcasecount="68" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:11Z" duration="3.533300" total="68" passed="68" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="5747" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="EditMode" />
+        <property name="EditorOnly" value="True" />
+      </properties>
+      <test-suite type="TestFixture" id="1003" name="IntentContractsTests" fullname="IntentContractsTests" classname="IntentContractsTests" runstate="Runnable" testcasecount="8" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.024543" total="8" passed="8" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1006" name="ConstraintSet_RoundTrip_IsStable" fullname="IntentContractsTests.ConstraintSet_RoundTrip_IsStable" methodname="ConstraintSet_RoundTrip_IsStable" classname="IntentContractsTests" runstate="Runnable" seed="1465980233" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.004641" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1004" name="Defaults_AreCorrect" fullname="IntentContractsTests.Defaults_AreCorrect" methodname="Defaults_AreCorrect" classname="IntentContractsTests" runstate="Runnable" seed="1050671472" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.003794" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1007" name="ProxyFields_SurviveRoundTrip" fullname="IntentContractsTests.ProxyFields_SurviveRoundTrip" methodname="ProxyFields_SurviveRoundTrip" classname="IntentContractsTests" runstate="Runnable" seed="1512920019" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000841" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1005" name="SceneIntent_RoundTrip_IsStable" fullname="IntentContractsTests.SceneIntent_RoundTrip_IsStable" methodname="SceneIntent_RoundTrip_IsStable" classname="IntentContractsTests" runstate="Runnable" seed="654294425" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000294" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1008" name="Translator_MapsEachRole_ToItsConstraintType" fullname="IntentContractsTests.Translator_MapsEachRole_ToItsConstraintType" methodname="Translator_MapsEachRole_ToItsConstraintType" classname="IntentContractsTests" runstate="Runnable" seed="1891946894" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000850" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1011" name="Validate_PassesForConsistentSet" fullname="IntentContractsTests.Validate_PassesForConsistentSet" methodname="Validate_PassesForConsistentSet" classname="IntentContractsTests" runstate="Runnable" seed="1876952216" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000453" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1009" name="Validate_ReportsUnknownProxyId" fullname="IntentContractsTests.Validate_ReportsUnknownProxyId" methodname="Validate_ReportsUnknownProxyId" classname="IntentContractsTests" runstate="Runnable" seed="248994019" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000267" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1010" name="Validate_ReportsWeightOutOfRange" fullname="IntentContractsTests.Validate_ReportsWeightOutOfRange" methodname="Validate_ReportsWeightOutOfRange" classname="IntentContractsTests" runstate="Runnable" seed="1563691110" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001032" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1012" name="MeshAlignmentTests" fullname="MeshAlignmentTests" classname="MeshAlignmentTests" runstate="Runnable" testcasecount="9" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.020721" total="9" passed="9" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1020" name="DeclinesWhenTheWallsAreAllParallel" fullname="MeshAlignmentTests.DeclinesWhenTheWallsAreAllParallel" methodname="DeclinesWhenTheWallsAreAllParallel" classname="MeshAlignmentTests" runstate="Runnable" seed="1481437888" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.007942" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1021" name="DoesNotThrowWithoutGeometry" fullname="MeshAlignmentTests.DoesNotThrowWithoutGeometry" methodname="DoesNotThrowWithoutGeometry" classname="MeshAlignmentTests" runstate="Runnable" seed="383458789" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001463" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1017" name="DoesNotTurnTheAssetAQuarterTurn" fullname="MeshAlignmentTests.DoesNotTurnTheAssetAQuarterTurn" methodname="DoesNotTurnTheAssetAQuarterTurn" classname="MeshAlignmentTests" runstate="Runnable" seed="1069500772" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001832" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1018" name="HandlesTiltAndYawTogether" fullname="MeshAlignmentTests.HandlesTiltAndYawTogether" methodname="HandlesTiltAndYawTogether" classname="MeshAlignmentTests" runstate="Runnable" seed="400584740" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.002512" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1019" name="LeavesAnAlreadyLevelMeshAlone" fullname="MeshAlignmentTests.LeavesAnAlreadyLevelMeshAlone" methodname="LeavesAnAlreadyLevelMeshAlone" classname="MeshAlignmentTests" runstate="Runnable" seed="1988137093" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000666" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1014" name="RemovesTiltAcrossItsWorkingRange" fullname="MeshAlignmentTests.RemovesTiltAcrossItsWorkingRange" methodname="RemovesTiltAcrossItsWorkingRange" classname="MeshAlignmentTests" runstate="Runnable" seed="1713437296" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001228" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1013" name="RemovesTiltBakedIntoTheGeometry" fullname="MeshAlignmentTests.RemovesTiltBakedIntoTheGeometry" methodname="RemovesTiltBakedIntoTheGeometry" classname="MeshAlignmentTests" runstate="Runnable" seed="1238222002" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000404" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1016" name="SquaresAThreeQuarterYawToTheAxes" fullname="MeshAlignmentTests.SquaresAThreeQuarterYawToTheAxes" methodname="SquaresAThreeQuarterYawToTheAxes" classname="MeshAlignmentTests" runstate="Runnable" seed="439068262" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000468" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1015" name="SurvivesTheNonUniformScaleThatFillsTheProxy" fullname="MeshAlignmentTests.SurvivesTheNonUniformScaleThatFillsTheProxy" methodname="SurvivesTheNonUniformScaleThatFillsTheProxy" classname="MeshAlignmentTests" runstate="Runnable" seed="1548904900" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000607" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1022" name="MeshFittingTests" fullname="MeshFittingTests" classname="MeshFittingTests" runstate="Runnable" testcasecount="6" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.004800" total="6" passed="6" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1026" name="CentresOnTheProxy" fullname="MeshFittingTests.CentresOnTheProxy" methodname="CentresOnTheProxy" classname="MeshFittingTests" runstate="Runnable" seed="1392551728" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001653" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1023" name="FillMode_OccupiesTheWholeProxy" fullname="MeshFittingTests.FillMode_OccupiesTheWholeProxy" methodname="FillMode_OccupiesTheWholeProxy" classname="MeshFittingTests" runstate="Runnable" seed="1073536417" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000200" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1028" name="HandlesNonUnitProxyDimensions" fullname="MeshFittingTests.HandlesNonUnitProxyDimensions" methodname="HandlesNonUnitProxyDimensions" classname="MeshFittingTests" runstate="Runnable" seed="638520901" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000197" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1025" name="PreserveProportions_IsTheModeThatUnderfills" fullname="MeshFittingTests.PreserveProportions_IsTheModeThatUnderfills" methodname="PreserveProportions_IsTheModeThatUnderfills" classname="MeshFittingTests" runstate="Runnable" seed="883543615" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000168" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1024" name="PreserveProportions_KeepsShapeAndStaysInsideTheProxy" fullname="MeshFittingTests.PreserveProportions_KeepsShapeAndStaysInsideTheProxy" methodname="PreserveProportions_KeepsShapeAndStaysInsideTheProxy" classname="MeshFittingTests" runstate="Runnable" seed="1702431194" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000284" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1027" name="RotatedAsset_IsNotShrunkByItsWorldAlignedBounds" fullname="MeshFittingTests.RotatedAsset_IsNotShrunkByItsWorldAlignedBounds" methodname="RotatedAsset_IsNotShrunkByItsWorldAlignedBounds" classname="MeshFittingTests" runstate="Runnable" seed="814359646" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000286" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1029" name="MeshRegionSplitterTests" fullname="MeshRegionSplitterTests" classname="MeshRegionSplitterTests" runstate="Runnable" testcasecount="13" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.032628" total="13" passed="13" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1039" name="CancelsInteriorEdgesOnAnObbFace" fullname="MeshRegionSplitterTests.CancelsInteriorEdgesOnAnObbFace" methodname="CancelsInteriorEdgesOnAnObbFace" classname="MeshRegionSplitterTests" runstate="Runnable" seed="970930726" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.016925" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1041" name="KeepsMultipleDisconnectedBoundaryLoopsSeparate" fullname="MeshRegionSplitterTests.KeepsMultipleDisconnectedBoundaryLoopsSeparate" methodname="KeepsMultipleDisconnectedBoundaryLoopsSeparate" classname="MeshRegionSplitterTests" runstate="Runnable" seed="2131544374" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000753" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1037" name="PreservesSmallTripoTrianglesAfterWorldScale" fullname="MeshRegionSplitterTests.PreservesSmallTripoTrianglesAfterWorldScale" methodname="PreservesSmallTripoTrianglesAfterWorldScale" classname="MeshRegionSplitterTests" runstate="Runnable" seed="284238115" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000806" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1031" name="PreservesVertexAttributesOfSurvivingTriangles" fullname="MeshRegionSplitterTests.PreservesVertexAttributesOfSurvivingTriangles" methodname="PreservesVertexAttributesOfSurvivingTriangles" classname="MeshRegionSplitterTests" runstate="Runnable" seed="1366993699" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001073" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1030" name="RemovesOnlyTrianglesInsideTheBox" fullname="MeshRegionSplitterTests.RemovesOnlyTrianglesInsideTheBox" methodname="RemovesOnlyTrianglesInsideTheBox" classname="MeshRegionSplitterTests" runstate="Runnable" seed="2020648461" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001405" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1042" name="ReplacementCanClipOnlyFacesThatCarrySourceSeams" fullname="MeshRegionSplitterTests.ReplacementCanClipOnlyFacesThatCarrySourceSeams" methodname="ReplacementCanClipOnlyFacesThatCarrySourceSeams" classname="MeshRegionSplitterTests" runstate="Runnable" seed="2077454475" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.005296" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1035" name="RespectsBoxRotation" fullname="MeshRegionSplitterTests.RespectsBoxRotation" methodname="RespectsBoxRotation" classname="MeshRegionSplitterTests" runstate="Runnable" seed="688305523" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000332" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1034" name="RespectsTheObjectTransform" fullname="MeshRegionSplitterTests.RespectsTheObjectTransform" methodname="RespectsTheObjectTransform" classname="MeshRegionSplitterTests" runstate="Runnable" seed="1187852262" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000358" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1038" name="ReturnsAClosedBoundaryLoopForAClippedSurface" fullname="MeshRegionSplitterTests.ReturnsAClosedBoundaryLoopForAClippedSurface" methodname="ReturnsAClosedBoundaryLoopForAClippedSurface" classname="MeshRegionSplitterTests" runstate="Runnable" seed="292181965" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000509" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1033" name="ReturnsNullWhenEverythingIsInside" fullname="MeshRegionSplitterTests.ReturnsNullWhenEverythingIsInside" methodname="ReturnsNullWhenEverythingIsInside" classname="MeshRegionSplitterTests" runstate="Runnable" seed="354023868" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000261" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1032" name="ReturnsNullWhenNothingIntersects" fullname="MeshRegionSplitterTests.ReturnsNullWhenNothingIntersects" methodname="ReturnsNullWhenNothingIntersects" classname="MeshRegionSplitterTests" runstate="Runnable" seed="1352997135" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000189" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1036" name="SplitsCrossingTrianglesAndInterpolatesAttributes" fullname="MeshRegionSplitterTests.SplitsCrossingTrianglesAndInterpolatesAttributes" methodname="SplitsCrossingTrianglesAndInterpolatesAttributes" classname="MeshRegionSplitterTests" runstate="Runnable" seed="2121332316" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000929" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1040" name="WeldsNumericallySplitCutVertices" fullname="MeshRegionSplitterTests.WeldsNumericallySplitCutVertices" methodname="WeldsNumericallySplitCutVertices" classname="MeshRegionSplitterTests" runstate="Runnable" seed="357008096" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000679" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1043" name="MeshSeamWelderTests" fullname="MeshSeamWelderTests" classname="MeshSeamWelderTests" runstate="Runnable" testcasecount="4" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.013494" total="4" passed="4" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1044" name="BuildsTransitionForUnequalClosedLoopsWithoutDegenerateTriangles" fullname="MeshSeamWelderTests.BuildsTransitionForUnequalClosedLoopsWithoutDegenerateTriangles" methodname="BuildsTransitionForUnequalClosedLoopsWithoutDegenerateTriangles" classname="MeshSeamWelderTests" runstate="Runnable" seed="975914285" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.003949" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1046" name="CapsAMinorUnmatchedSourceIslandWithoutBranchingTheSeam" fullname="MeshSeamWelderTests.CapsAMinorUnmatchedSourceIslandWithoutBranchingTheSeam" methodname="CapsAMinorUnmatchedSourceIslandWithoutBranchingTheSeam" classname="MeshSeamWelderTests" runstate="Runnable" seed="631874525" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.005071" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+          <output><![CDATA[Spatial Generation: capped 1 minor disconnected source boundary loop(s) instead of attaching multiple source contours to one replacement contour. This keeps the result manifold and preserves the small exterior islands.
+]]></output>
+        </test-case>
+        <test-case id="1045" name="RejectsAnOpenBoundaryWithoutCreatingAMesh" fullname="MeshSeamWelderTests.RejectsAnOpenBoundaryWithoutCreatingAMesh" methodname="RejectsAnOpenBoundaryWithoutCreatingAMesh" classname="MeshSeamWelderTests" runstate="Runnable" seed="1669126098" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000650" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1047" name="RejectsASecondSubstantialSourceLoopWhenReplacementHasOnlyOne" fullname="MeshSeamWelderTests.RejectsASecondSubstantialSourceLoopWhenReplacementHasOnlyOne" methodname="RejectsASecondSubstantialSourceLoopWhenReplacementHasOnlyOne" classname="MeshSeamWelderTests" runstate="Runnable" seed="1175104474" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000744" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1048" name="MultiViewCameraManagerTests" fullname="MultiViewCameraManagerTests" classname="MultiViewCameraManagerTests" runstate="Runnable" testcasecount="4" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.009058" total="4" passed="4" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1050" name="ApplyLayoutMigratesTopCameraToBackWithoutCreatingADuplicate" fullname="MultiViewCameraManagerTests.ApplyLayoutMigratesTopCameraToBackWithoutCreatingADuplicate" methodname="ApplyLayoutMigratesTopCameraToBackWithoutCreatingADuplicate" classname="MultiViewCameraManagerTests" runstate="Runnable" seed="222419824" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.002752" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1051" name="CameraPositionsAndDirectionsAreDeterministicInRigSpace" fullname="MultiViewCameraManagerTests.CameraPositionsAndDirectionsAreDeterministicInRigSpace" methodname="CameraPositionsAndDirectionsAreDeterministicInRigSpace" classname="MultiViewCameraManagerTests" runstate="Runnable" seed="637206807" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000607" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1049" name="CardinalOrderPreservesSerializedValuesAndAddsBackLast" fullname="MultiViewCameraManagerTests.CardinalOrderPreservesSerializedValuesAndAddsBackLast" methodname="CardinalOrderPreservesSerializedValuesAndAddsBackLast" classname="MultiViewCameraManagerTests" runstate="Runnable" seed="1291157550" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000455" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1052" name="ViewCropMetadataIsIndependentPerView" fullname="MultiViewCameraManagerTests.ViewCropMetadataIsIndependentPerView" methodname="ViewCropMetadataIsIndependentPerView" classname="MultiViewCameraManagerTests" runstate="Runnable" seed="334321497" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000378" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1053" name="MultiViewVertexColorProjectorTests" fullname="MultiViewVertexColorProjectorTests" classname="MultiViewVertexColorProjectorTests" runstate="Runnable" testcasecount="3" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.020458" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1054" name="ChoosesTheViewWhoseCameraFacesTheVertexNormal" fullname="MultiViewVertexColorProjectorTests.ChoosesTheViewWhoseCameraFacesTheVertexNormal" methodname="ChoosesTheViewWhoseCameraFacesTheVertexNormal" classname="MultiViewVertexColorProjectorTests" runstate="Runnable" seed="1096003065" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.012174" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1055" name="RejectsAProjectionOutsideThatViewsCrop" fullname="MultiViewVertexColorProjectorTests.RejectsAProjectionOutsideThatViewsCrop" methodname="RejectsAProjectionOutsideThatViewsCrop" classname="MultiViewVertexColorProjectorTests" runstate="Runnable" seed="1995686016" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.002094" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1056" name="UsesCaptureTimeMatricesAfterTheCameraHasGone" fullname="MultiViewVertexColorProjectorTests.UsesCaptureTimeMatricesAfterTheCameraHasGone" methodname="UsesCaptureTimeMatricesAfterTheCameraHasGone" classname="MultiViewVertexColorProjectorTests" runstate="Runnable" seed="2107463391" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001195" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1057" name="RefinementApplyTransactionTests" fullname="RefinementApplyTransactionTests" classname="RefinementApplyTransactionTests" runstate="Runnable" testcasecount="2" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.005155" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1059" name="CommitHidesOriginalOnlyAfterValidationPathCompletes" fullname="RefinementApplyTransactionTests.CommitHidesOriginalOnlyAfterValidationPathCompletes" methodname="CommitHidesOriginalOnlyAfterValidationPathCompletes" classname="RefinementApplyTransactionTests" runstate="Runnable" seed="346795360" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000603" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1058" name="RollbackLeavesOriginalHierarchyActiveAndDestroysTemporaryResult" fullname="RefinementApplyTransactionTests.RollbackLeavesOriginalHierarchyActiveAndDestroysTemporaryResult" methodname="RollbackLeavesOriginalHierarchyActiveAndDestroysTemporaryResult" classname="RefinementApplyTransactionTests" runstate="Runnable" seed="296739135" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.000214" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1060" name="RefinementPartSelectionTests" fullname="RefinementPartSelectionTests" classname="RefinementPartSelectionTests" runstate="Runnable" testcasecount="10" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:11Z" duration="3.309243" total="10" passed="10" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1062" name="DrawingPromotesMultiplePartsAndAdjustingDoesNotResnap" fullname="RefinementPartSelectionTests.DrawingPromotesMultiplePartsAndAdjustingDoesNotResnap" methodname="DrawingPromotesMultiplePartsAndAdjustingDoesNotResnap" classname="RefinementPartSelectionTests" runstate="Runnable" seed="1685171449" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.012723" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1063" name="MixedDrawRetainsOriginalCropForPartialRemoval" fullname="RefinementPartSelectionTests.MixedDrawRetainsOriginalCropForPartialRemoval" methodname="MixedDrawRetainsOriginalCropForPartialRemoval" classname="RefinementPartSelectionTests" runstate="Runnable" seed="1465716127" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.070593" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-suite type="ParameterizedMethod" id="1071" name="ObliqueCutConservesSolidVolume" fullname="RefinementPartSelectionTests.ObliqueCutConservesSolidVolume" classname="RefinementPartSelectionTests" runstate="Runnable" testcasecount="4" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.112829" total="4" passed="4" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-case id="1067" name="ObliqueCutConservesSolidVolume(Sphere)" fullname="RefinementPartSelectionTests.ObliqueCutConservesSolidVolume(Sphere)" methodname="ObliqueCutConservesSolidVolume" classname="RefinementPartSelectionTests" runstate="Runnable" seed="1474562198" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.002105" asserts="0">
+            <properties>
+              <property name="retryIteration" value="0" />
+              <property name="repeatIteration" value="0" />
+            </properties>
+          </test-case>
+          <test-case id="1068" name="ObliqueCutConservesSolidVolume(Wedge)" fullname="RefinementPartSelectionTests.ObliqueCutConservesSolidVolume(Wedge)" methodname="ObliqueCutConservesSolidVolume" classname="RefinementPartSelectionTests" runstate="Runnable" seed="778253322" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.041134" asserts="0">
+            <properties>
+              <property name="retryIteration" value="0" />
+              <property name="repeatIteration" value="0" />
+            </properties>
+          </test-case>
+          <test-case id="1069" name="ObliqueCutConservesSolidVolume(Cone)" fullname="RefinementPartSelectionTests.ObliqueCutConservesSolidVolume(Cone)" methodname="ObliqueCutConservesSolidVolume" classname="RefinementPartSelectionTests" runstate="Runnable" seed="174494791" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.060914" asserts="0">
+            <properties>
+              <property name="retryIteration" value="0" />
+              <property name="repeatIteration" value="0" />
+            </properties>
+          </test-case>
+          <test-case id="1070" name="ObliqueCutConservesSolidVolume(Box)" fullname="RefinementPartSelectionTests.ObliqueCutConservesSolidVolume(Box)" methodname="ObliqueCutConservesSolidVolume" classname="RefinementPartSelectionTests" runstate="Runnable" seed="1626092277" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.001292" asserts="0">
+            <properties>
+              <property name="retryIteration" value="0" />
+              <property name="repeatIteration" value="0" />
+            </properties>
+          </test-case>
+        </test-suite>
+        <test-case id="1065" name="PartialColorChangeAndUndoPreserveTheUnselectedRemainder" fullname="RefinementPartSelectionTests.PartialColorChangeAndUndoPreserveTheUnselectedRemainder" methodname="PartialColorChangeAndUndoPreserveTheUnselectedRemainder" classname="RefinementPartSelectionTests" runstate="Runnable" seed="2027945804" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.008902" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1061" name="PickedLegsExcludeMiddleAndCanReceiveAnAttachment" fullname="RefinementPartSelectionTests.PickedLegsExcludeMiddleAndCanReceiveAnAttachment" methodname="PickedLegsExcludeMiddleAndCanReceiveAnAttachment" classname="RefinementPartSelectionTests" runstate="Runnable" seed="1112920070" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.014123" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1064" name="PromptAndEmptyRegionAllowOnlyAdditionsOnTheChosenObject" fullname="RefinementPartSelectionTests.PromptAndEmptyRegionAllowOnlyAdditionsOnTheChosenObject" methodname="PromptAndEmptyRegionAllowOnlyAdditionsOnTheChosenObject" classname="RefinementPartSelectionTests" runstate="Runnable" seed="1980301183" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:08Z" duration="0.004673" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1066" name="SceneViewClickShiftClickAndDrawUseOneGestureSurface" fullname="RefinementPartSelectionTests.SceneViewClickShiftClickAndDrawUseOneGestureSurface" methodname="SceneViewClickShiftClickAndDrawUseOneGestureSurface" classname="RefinementPartSelectionTests" runstate="Runnable" seed="1843393369" result="Passed" start-time="2026-11-22 11:56:08Z" end-time="2026-11-22 11:56:11Z" duration="3.079281" asserts="0">
+          <properties>
+            <property name="_JOINTYPE" value="UnityCombinatorial" />
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1072" name="RefinementPreviewTests" fullname="RefinementPreviewTests" classname="RefinementPreviewTests" runstate="Runnable" testcasecount="7" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.082210" total="7" passed="7" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1074" name="ClosedOrInterruptedDraftCannotWriteToTheLiveModel" fullname="RefinementPreviewTests.ClosedOrInterruptedDraftCannotWriteToTheLiveModel" methodname="ClosedOrInterruptedDraftCannotWriteToTheLiveModel" classname="RefinementPreviewTests" runstate="Runnable" seed="54611969" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.007212" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1075" name="ConflictingChangePreventsApplyAndKeepsTheDraft" fullname="RefinementPreviewTests.ConflictingChangePreventsApplyAndKeepsTheDraft" methodname="ConflictingChangePreventsApplyAndKeepsTheDraft" classname="RefinementPreviewTests" runstate="Runnable" seed="1855708087" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.002345" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1078" name="NewObjectAndItsPartsStayInPreviewUntilApplied" fullname="RefinementPreviewTests.NewObjectAndItsPartsStayInPreviewUntilApplied" methodname="NewObjectAndItsPartsStayInPreviewUntilApplied" classname="RefinementPreviewTests" runstate="Runnable" seed="1185825872" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.004713" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1076" name="PartialRemovalIsOnlyVisibleInTheIdeaUntilApplied" fullname="RefinementPreviewTests.PartialRemovalIsOnlyVisibleInTheIdeaUntilApplied" methodname="PartialRemovalIsOnlyVisibleInTheIdeaUntilApplied" classname="RefinementPreviewTests" runstate="Runnable" seed="636065819" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.003020" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1073" name="RegenerateBrowseAndApplyEarlierIdeaAsOneUndo" fullname="RefinementPreviewTests.RegenerateBrowseAndApplyEarlierIdeaAsOneUndo" methodname="RegenerateBrowseAndApplyEarlierIdeaAsOneUndo" classname="RefinementPreviewTests" runstate="Runnable" seed="279781179" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.003080" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1077" name="RemovingPickedPartAndUpdatingSelectionUndoTogether" fullname="RefinementPreviewTests.RemovingPickedPartAndUpdatingSelectionUndoTogether" methodname="RemovingPickedPartAndUpdatingSelectionUndoTogether" classname="RefinementPreviewTests" runstate="Runnable" seed="221666161" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.002257" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1079" name="ReviewCameraRendersWholeModelWithItsRefinedColor" fullname="RefinementPreviewTests.ReviewCameraRendersWholeModelWithItsRefinedColor" methodname="ReviewCameraRendersWholeModelWithItsRefinedColor" classname="RefinementPreviewTests" runstate="Runnable" seed="1029261371" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.058120" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+      </test-suite>
+      <test-suite type="TestFixture" id="1080" name="SelectionSpaceBoundsTests" fullname="SelectionSpaceBoundsTests" classname="SelectionSpaceBoundsTests" runstate="Runnable" testcasecount="2" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.006239" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-case id="1082" name="CombinesAllRemovedSourceFragments" fullname="SelectionSpaceBoundsTests.CombinesAllRemovedSourceFragments" methodname="CombinesAllRemovedSourceFragments" classname="SelectionSpaceBoundsTests" runstate="Runnable" seed="2044192266" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.000967" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1081" name="MeasuresRemovedGeometryInsteadOfThePaddedSelectionBox" fullname="SelectionSpaceBoundsTests.MeasuresRemovedGeometryInsteadOfThePaddedSelectionBox" methodname="MeasuresRemovedGeometryInsteadOfThePaddedSelectionBox" classname="SelectionSpaceBoundsTests" runstate="Runnable" seed="1461112267" result="Passed" start-time="2026-11-22 11:56:11Z" end-time="2026-11-22 11:56:11Z" duration="0.000344" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+          <output><![CDATA[<b><color=#2EA3FF>MCP-FOR-UNITY</color></b>: [TestRunnerNoThrottle] Restored Interaction Mode after test run.
+Saving results to: /Users/alo/Library/Application Support/DefaultCompany/SpatialGenUnity/TestResults.xml
+]]></output>
+        </test-case>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

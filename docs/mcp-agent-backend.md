@@ -31,9 +31,18 @@ Spatial Generation window ──launches──▶ claude -p / codex exec  (promp
    AgentWorkflow ◀──── spatialgen_* tools ◀── MCP for Unity server ◀── Unity Editor
 ```
 
-* The agent may call only the project's `spatialgen_*` tools (Claude Code: `--allowedTools`,
-  no Bash/Edit/Write; Codex: read-only sandbox). The tools build assets from primitives
-  (box, wedge, pyramid, cylinder, cone, sphere) with flat colours.
+* The agent may call only the project's `spatialgen_*` tools, and it starts in an empty folder
+  outside the project, so it cannot read the target scenes or any project file.
+  Claude Code: `--tools` limits the built-in tools to `ToolSearch` and the MCP resource tools,
+  so no file, shell, web or sub-agent tools exist in the session; `--allowedTools` admits only the
+  `spatialgen_*` MCP tools. Codex: `--ignore-user-config`, the shell, browser, apps and plugin
+  features off, and `enabled_tools` on the MCP server. Current Codex versions keep a read-only
+  command runner, so *Check setup* warns: **use Claude Code for study sessions.** The tools build
+  assets from primitives (box, wedge, pyramid, cylinder, cone, sphere) with flat colours.
+* Agent tool calls are not Unity Undo steps. Edits run on a private preview copy, and a
+  generation run is a version the window manages (switch, regenerate).
+* Duplicating a proxy (Ctrl+D, copy/paste) gives the copy a new proxy ID. Copies made by
+  scripts are repaired before each generation run.
 * **Condition B generation:** one empty asset per Occupy proxy is prepared at the proxy's
   footprint, rotation and volume; the agent models inside it. The proxy's local **+X is the
   front** (shown as an arrow on the selected proxy). Parts outside the volume only produce a
@@ -46,6 +55,11 @@ Spatial Generation window ──launches──▶ claude -p / codex exec  (promp
   preserve the geometry outside the box.
 * **Condition A edit:** the agent picks one asset and rebuilds it as a whole
   (`clear_asset` + `add_parts`), which is the text-only baseline's whole-object regeneration.
+  This is enforced: adding to, updating or removing parts of an existing object is rejected until
+  that object has been cleared in the same edit. An object the edit creates is built directly.
+  The rebuilt object may grow or shrink: its `volume_size` is refitted to the parts it was rebuilt
+  from (carried by Apply, reverted by Ctrl+Z). Condition B volumes are the designer's proxies and
+  never change.
 
 ## Study flow in the window
 
@@ -54,8 +68,18 @@ Open **Tools > Spatial Generation**. After setup, generate and accept a version,
 Drag the preview to orbit the object and scroll to zoom.
 **Regenerate** creates another idea from the same model, prompt and selection. Use
 **Previous** and **Next** to browse. **Apply this idea** commits the displayed version
-as one Unity Undo action. **Discard previews** returns to the prompt. Participants can keep
+as one Unity Undo action. Ctrl+Z / Ctrl+Y on it are recorded (counters, `study_edit_undo` /
+`study_edit_redo`, an `edit<n>_undone` or new `edit<n>_after` snapshot). The Undo history is
+cleared at acceptance and at submission, so neither generation-phase edits nor the submitted
+scene can be undone. **Discard previews** returns to the prompt. Participants can keep
 refining until they choose **Submit scene**. Submitting discards any unapplied ideas.
+Each run ends as *complete*, *partial* (built something, but the CLI then failed or some
+objects stayed empty), *timed out*, *failed* or *cancelled*; the outcome is logged
+(`study_generation_run_end`) and marked on the version buttons (⚠). A run that built nothing does
+not count against the limit (`study_generation_run_refunded`): its empty version is removed and
+the previous one is shown again. Only a version with geometry can be accepted; accepting one with
+empty objects or an unfinished run asks for confirmation and names them. While a run is starting
+(the setup check waits for the MCP server), Accept, version switching and session reset wait.
 Set the generation run limit in **Researcher Tools > Researcher settings**. The **Utilities**
 tab contains agent cancellation, scene cleanup, and access to logs and run files.
 
@@ -64,9 +88,13 @@ tab contains agent cancellation, scene cleanup, and access to logs and run files
 * `Logs/SpatialGenerationLogs/interaction_*.jsonl|csv`: all events (`study_*`, `agent_tool`,
   proxy edits).
 * `Logs/SpatialGenerationStudy/<participant>/condition_<A|B>/*.json`: world-space snapshots
-  after each run, at acceptance, before/after each edit, after an undo, and at the end.
-* `Logs/SpatialGeneration/Agent/<run>/`: prompt, task JSON, exact command, CLI stdout/stderr
-  and a report per agent run.
+  after each run, at acceptance, before/after each edit, after an undo or redo of an applied
+  edit, and at the end. A part clipped by a partial region edit also carries `pieces` (one box
+  per remaining convex piece), `geometry_center_world` / `geometry_size_world`, and on the
+  unselected remainder `source_part_id`; the scoring scripts use these instead of the full
+  primitive.
+* `Logs/SpatialGeneration/Agent/<run>/`: prompt, task JSON, exact command, CLI stdout/stderr,
+  the working folder used, and a report per agent run.
 
 ## Known limits
 

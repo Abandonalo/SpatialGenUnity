@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
+using SpatialGeneration.Authoring;
 
 namespace SpatialGeneration.Agent
 {
@@ -177,14 +178,16 @@ namespace SpatialGeneration.Agent
 
             return "The designer described a change in words only (request). Identify the one asset it refers to, list its " +
                    "parts, then rebuild that whole asset with the change applied: spatialgen_clear_asset, then " +
-                   "spatialgen_add_parts. Keep whatever the request does not mention as close to before as you can. " +
+                   "spatialgen_add_parts. Adding to, updating or removing single parts of an existing object is rejected " +
+                   "until you have cleared it. The rebuilt object may be larger or smaller than before: its volume is refitted " +
+                   "to the parts you build. Keep whatever the request does not mention as close to before as you can. " +
                    "If the request asks for a new object, create it with spatialgen_create_asset instead. Change only one asset.";
         }
 
         private static List<TaskObject> CollectSceneObjects()
         {
             var objects = new List<TaskObject>();
-            GameObject generatedRoot = GameObject.Find(GenerationRunner.GeneratedRootName);
+            GameObject generatedRoot = GameObject.Find(GeneratedContentRoot.Name);
 
             foreach (Renderer renderer in UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None))
             {
@@ -198,7 +201,7 @@ namespace SpatialGeneration.Agent
                     continue;
                 if (renderer.GetComponentInParent<SpatialProxy>() != null)
                     continue;
-                if (renderer.GetComponentInParent<RefinementController>() != null)
+                if (renderer.GetComponentInParent<RegionSelectionManager>() != null)
                     continue;
 
                 Bounds bounds = renderer.bounds;

@@ -1,0 +1,5 @@
+Source: real Unity partial-removal snapshots; fixture asserts remaining volume = 0.6 (40% removed).
+Before clipped cells: 0
+After clipped cells: 3
+Scorer change kinds: []
+Scorer max surface deviation: 0.0

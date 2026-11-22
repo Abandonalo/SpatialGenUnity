@@ -13,6 +13,16 @@ namespace SpatialGeneration.Agent
         Finished = 3
     }
 
+    /// <summary>How one counted generation run ended, for the version picker and the log.</summary>
+    [Serializable]
+    public class RunRecord
+    {
+        public int run;
+        public RunOutcome outcome;
+        public int parts;
+        public List<string> emptyAssets = new();
+    }
+
     /// <summary>
     /// State of the condition a participant is currently working through: phase, generation
     /// runs used, accepted version, phase timestamps and the ideas under review.
@@ -36,6 +46,9 @@ namespace SpatialGeneration.Agent
         /// <summary>Run number shown as GeneratedContent; 0 before the first run.</summary>
         public int activeRun;
         public List<int> archivedRuns = new();
+        /// <summary>One entry per counted run. Runs that built nothing are not counted (see StudyController).</summary>
+        public List<RunRecord> runRecords = new();
+        public RunRecord Record(int run) => runRecords.Find(r => r.run == run);
         public int acceptedRun = -1;
 
         public string conditionStartUtc = string.Empty;
@@ -44,15 +57,22 @@ namespace SpatialGeneration.Agent
         public string finishedUtc = string.Empty;
         public string finishReason = string.Empty;
 
-        public bool awaitingDecision;
         public RefinementReview review;
         public bool HasReview => !string.IsNullOrEmpty(review?.id);
-        public int pendingUndoGroup = -1;
-        public string pendingJobId = string.Empty;
+
+        /// <summary>Edit numbers of applied refinements, oldest first; Ctrl+Z pops, Ctrl+Y pushes back.</summary>
+        public List<int> appliedEdits = new();
+        /// <summary>Applied refinements the participant reverted with Ctrl+Z, available for Ctrl+Y.</summary>
+        public List<int> undoneEdits = new();
 
         public int editsSubmitted;
+        /// <summary>Applied ideas (an Undo then Redo of the same edit counts once).</summary>
         public int editsKept;
+        /// <summary>Applied ideas reverted with Ctrl+Z.</summary>
         public int editsUndone;
+        /// <summary>Reviews closed without applying, when at least one idea was shown.</summary>
+        public int editsDiscarded;
+        /// <summary>Reviews closed without a single usable idea.</summary>
         public int editsFailed;
 
         public void Persist() => Save(true);
@@ -61,7 +81,7 @@ namespace SpatialGeneration.Agent
         {
             if (!HasReview) return;
             if (review.ideas.Count == 0) editsFailed++;
-            else editsUndone++;
+            else editsDiscarded++;
             review = null;
         }
 
@@ -84,17 +104,17 @@ namespace SpatialGeneration.Agent
             generationRuns = 0;
             activeRun = 0;
             archivedRuns.Clear();
+            runRecords.Clear();
             acceptedRun = -1;
             conditionStartUtc = string.Empty;
             acceptedUtc = string.Empty;
             refinementStartUtc = string.Empty;
             finishedUtc = string.Empty;
             finishReason = string.Empty;
-            awaitingDecision = false;
             review = null;
-            pendingUndoGroup = -1;
-            pendingJobId = string.Empty;
-            editsSubmitted = editsKept = editsUndone = editsFailed = 0;
+            appliedEdits.Clear();
+            undoneEdits.Clear();
+            editsSubmitted = editsKept = editsUndone = editsDiscarded = editsFailed = 0;
         }
 
         /// <summary>Short context string added to every study log event.</summary>

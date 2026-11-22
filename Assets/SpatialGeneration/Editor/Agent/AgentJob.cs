@@ -56,7 +56,9 @@ namespace SpatialGeneration.Agent
         /// <summary>Condition A edit: the one asset this edit may rebuild, fixed on first change.</summary>
         public string lockedAssetId;
 
-        public int undoGroup = -1;
+        /// <summary>Condition A edit: assets cleared in this job, which may now be rebuilt part by part.</summary>
+        public List<string> clearedAssetIds = new();
+
         public string artifactDir;
         public string startedUtc;
 

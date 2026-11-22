@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="7" result="Failed(Child)" total="7" passed="3" failed="4" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.1661008">
+  <test-suite type="TestSuite" id="1000" name="SpatialGenUnity" fullname="SpatialGenUnity" runstate="Runnable" testcasecount="75" result="Failed" site="Child" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.166101" total="7" passed="3" failed="4" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="EditMode" />
+    </properties>
+    <failure>
+      <message><![CDATA[One or more child tests had errors]]></message>
+    </failure>
+    <test-suite type="Assembly" id="1091" name="SpatialGeneration.Tests.EditMode.dll" fullname="/private/tmp/spatialgen-review-20261122/project/Library/ScriptAssemblies/SpatialGeneration.Tests.EditMode.dll" runstate="Runnable" testcasecount="75" result="Failed" site="Child" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.158535" total="7" passed="3" failed="4" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="6682" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="EditMode" />
+        <property name="EditorOnly" value="True" />
+      </properties>
+      <failure>
+        <message><![CDATA[One or more child tests had errors]]></message>
+      </failure>
+      <test-suite type="TestFixture" id="1080" name="ReviewWorkflowTests" fullname="ReviewWorkflowTests" classname="ReviewWorkflowTests" runstate="Runnable" testcasecount="7" result="Failed" site="Child" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.153996" total="7" passed="3" failed="4" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <failure>
+          <message><![CDATA[One or more child tests had errors]]></message>
+        </failure>
+        <test-case id="1085" name="ApplyUndoRedoRestoresAuthoringData" fullname="ReviewWorkflowTests.ApplyUndoRedoRestoresAuthoringData" methodname="ApplyUndoRedoRestoresAuthoringData" classname="ReviewWorkflowTests" runstate="Runnable" seed="610437423" result="Passed" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.055859" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1087" name="DiscardedIdeaMustWriteAnEditOutcomeSnapshot" fullname="ReviewWorkflowTests.DiscardedIdeaMustWriteAnEditOutcomeSnapshot" methodname="DiscardedIdeaMustWriteAnEditOutcomeSnapshot" classname="ReviewWorkflowTests" runstate="Runnable" seed="1135653570" result="Failed" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.016643" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+          <failure>
+            <message><![CDATA[  The edit scorer only discovers edits with a before and outcome snapshot.
+  Expected: True
+  But was:  False
+]]></message>
+            <stack-trace><![CDATA[at ReviewWorkflowTests.DiscardedIdeaMustWriteAnEditOutcomeSnapshot () [0x0008c] in /private/tmp/spatialgen-review-20261122/project/Assets/SpatialGeneration/Tests/EditMode/ReviewWorkflowTests.cs:113
+]]></stack-trace>
+          </failure>
+        </test-case>
+        <test-case id="1081" name="EmptyFailedRunMustNotBeAcceptable" fullname="ReviewWorkflowTests.EmptyFailedRunMustNotBeAcceptable" methodname="EmptyFailedRunMustNotBeAcceptable" classname="ReviewWorkflowTests" runstate="Runnable" seed="1288134388" result="Failed" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.013364" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+          <failure>
+            <message><![CDATA[  A run with no generated root must not enter refinement.
+  Expected: False
+  But was:  True
+]]></message>
+            <stack-trace><![CDATA[at ReviewWorkflowTests.EmptyFailedRunMustNotBeAcceptable () [0x0002f] in /private/tmp/spatialgen-review-20261122/project/Assets/SpatialGeneration/Tests/EditMode/ReviewWorkflowTests.cs:51
+]]></stack-trace>
+          </failure>
+        </test-case>
+        <test-case id="1083" name="FailedPreflightMustNotConsumeRunOrArchiveScene" fullname="ReviewWorkflowTests.FailedPreflightMustNotConsumeRunOrArchiveScene" methodname="FailedPreflightMustNotConsumeRunOrArchiveScene" classname="ReviewWorkflowTests" runstate="Runnable" seed="2049344769" result="Passed" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.013424" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+        </test-case>
+        <test-case id="1082" name="TextOnlyEditMustRejectLocalUpdateBeforeWholeRebuild" fullname="ReviewWorkflowTests.TextOnlyEditMustRejectLocalUpdateBeforeWholeRebuild" methodname="TextOnlyEditMustRejectLocalUpdateBeforeWholeRebuild" classname="ReviewWorkflowTests" runstate="Runnable" seed="93471321" result="Failed" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.015801" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+          <failure>
+            <message><![CDATA[  Condition A must enforce whole-object regeneration, not permit a local recolor.
+  Expected: False
+  But was:  True
+]]></message>
+            <stack-trace><![CDATA[at ReviewWorkflowTests.TextOnlyEditMustRejectLocalUpdateBeforeWholeRebuild () [0x0005f] in /private/tmp/spatialgen-review-20261122/project/Assets/SpatialGeneration/Tests/EditMode/ReviewWorkflowTests.cs:57
+]]></stack-trace>
+          </failure>
+        </test-case>
+        <test-case id="1086" name="UndoAppliedIdeaMustUpdateStudyCounters" fullname="ReviewWorkflowTests.UndoAppliedIdeaMustUpdateStudyCounters" methodname="UndoAppliedIdeaMustUpdateStudyCounters" classname="ReviewWorkflowTests" runstate="Runnable" seed="2137169695" result="Failed" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.015602" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+          <failure>
+            <message><![CDATA[  Standard Unity Undo must be reflected in the study record.
+  Expected: 1
+  But was:  0
+]]></message>
+            <stack-trace><![CDATA[at ReviewWorkflowTests.UndoAppliedIdeaMustUpdateStudyCounters () [0x00045] in /private/tmp/spatialgen-review-20261122/project/Assets/SpatialGeneration/Tests/EditMode/ReviewWorkflowTests.cs:101
+]]></stack-trace>
+          </failure>
+        </test-case>
+        <test-case id="1084" name="VersionsRoundTripRetainsSceneGeometry" fullname="ReviewWorkflowTests.VersionsRoundTripRetainsSceneGeometry" methodname="VersionsRoundTripRetainsSceneGeometry" classname="ReviewWorkflowTests" runstate="Runnable" seed="23689827" result="Passed" start-time="2026-11-22 11:57:07Z" end-time="2026-11-22 11:57:07Z" duration="0.013611" asserts="0">
+          <properties>
+            <property name="retryIteration" value="0" />
+            <property name="repeatIteration" value="0" />
+          </properties>
+          <output><![CDATA[<b><color=#2EA3FF>MCP-FOR-UNITY</color></b>: [TestRunnerNoThrottle] Restored Interaction Mode after test run.
+Saving results to: /Users/alo/Library/Application Support/DefaultCompany/SpatialGenUnity/TestResults.xml
+]]></output>
+        </test-case>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

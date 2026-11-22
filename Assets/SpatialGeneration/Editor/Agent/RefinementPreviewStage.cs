@@ -83,24 +83,4 @@ namespace SpatialGeneration.Agent
         }
     }
 
-    // Preview operations must never add to the participant's Undo history.
-    internal static class AgentObjectUndo
-    {
-        public static void Created(GameObject go, string label)
-        {
-            if (!EditorSceneManager.IsPreviewSceneObject(go)) Undo.RegisterCreatedObjectUndo(go, label);
-        }
-
-        public static void Record(AgentPart part, string label)
-        {
-            if (!EditorSceneManager.IsPreviewSceneObject(part))
-                Undo.RegisterCompleteObjectUndo(new UnityEngine.Object[] { part, part.transform, part.gameObject }, label);
-        }
-
-        public static void Destroy(GameObject go)
-        {
-            if (EditorSceneManager.IsPreviewSceneObject(go)) UnityEngine.Object.DestroyImmediate(go);
-            else Undo.DestroyObjectImmediate(go);
-        }
-    }
 }

@@ -43,6 +43,14 @@ namespace SpatialGeneration.Agent
             return new List<PartCell> { new() { triangles = triangles } };
         }
 
+        /// <summary>Axis-aligned bounds of one cell in the part's local (unit primitive) frame.</summary>
+        public static Bounds LocalBounds(PartCell cell)
+        {
+            var bounds = new Bounds(cell.triangles[0], Vector3.zero);
+            foreach (Vector3 v in cell.triangles) bounds.Encapsulate(v);
+            return bounds;
+        }
+
         public static Mesh BuildMesh(List<PartCell> cells)
         {
             var vertices = new List<Vector3>();

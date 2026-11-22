@@ -1,67 +1,76 @@
 using UnityEngine;
 
-public enum SpatialProxyRole
+namespace SpatialGeneration
 {
-    Occupy,
-    Avoid,
-    Attract
-}
-
-public enum SpatialProxyShape
-{
-    Box,
-    Sphere,
-    Cylinder
-}
-
-public class SpatialProxy : MonoBehaviour
-{
-    public SpatialProxyRole role = SpatialProxyRole.Occupy;
-    public string label = "";
-    [TextArea(2, 5)] public string assetPrompt = "";
-    public Texture2D assetImage;
-    [Range(0f, 1f)] public float strength = 1f;
-    public int priority = 0;
-    public Vector3 size = Vector3.one;
-
-    [SerializeField] private string proxyId;
-    public string ProxyId => proxyId;
-    public SpatialProxyShape Shape => InferShapeFromRole(role);
-
-    public static SpatialProxyShape InferShapeFromRole(SpatialProxyRole proxyRole)
+    public enum SpatialProxyRole
     {
-        return proxyRole switch
+        Occupy,
+        Avoid,
+        Attract
+    }
+
+    public enum SpatialProxyShape
+    {
+        Box,
+        Sphere,
+        Cylinder
+    }
+
+    public class SpatialProxy : MonoBehaviour
+    {
+        public SpatialProxyRole role = SpatialProxyRole.Occupy;
+        public string label = "";
+        [TextArea(2, 5)] public string assetPrompt = "";
+        public Texture2D assetImage;
+        [Range(0f, 1f)] public float strength = 1f;
+        public int priority = 0;
+        public Vector3 size = Vector3.one;
+
+        [SerializeField] private string proxyId;
+        public string ProxyId => proxyId;
+        public SpatialProxyShape Shape => InferShapeFromRole(role);
+
+        public static SpatialProxyShape InferShapeFromRole(SpatialProxyRole proxyRole)
         {
-            SpatialProxyRole.Occupy => SpatialProxyShape.Box,
-            SpatialProxyRole.Avoid => SpatialProxyShape.Sphere,
-            SpatialProxyRole.Attract => SpatialProxyShape.Cylinder,
-            _ => SpatialProxyShape.Box
-        };
-    }
+            return proxyRole switch
+            {
+                SpatialProxyRole.Occupy => SpatialProxyShape.Box,
+                SpatialProxyRole.Avoid => SpatialProxyShape.Sphere,
+                SpatialProxyRole.Attract => SpatialProxyShape.Cylinder,
+                _ => SpatialProxyShape.Box
+            };
+        }
 
-    private void Awake()
-    {
-        EnsureProxyId();
-        strength = Mathf.Clamp01(strength);
-    }
+        private void Awake()
+        {
+            EnsureProxyId();
+            strength = Mathf.Clamp01(strength);
+        }
 
-    private void Reset()
-    {
-        EnsureProxyId();
-        strength = Mathf.Clamp01(strength);
-    }
+        private void Reset()
+        {
+            EnsureProxyId();
+            strength = Mathf.Clamp01(strength);
+        }
 
-    private void EnsureProxyId()
-    {
-        if (string.IsNullOrEmpty(proxyId))
-            proxyId = System.Guid.NewGuid().ToString("N");
-    }
+        private void EnsureProxyId()
+        {
+            if (string.IsNullOrEmpty(proxyId))
+                RegenerateId();
+        }
 
-#if UNITY_EDITOR
-    private void OnValidate()
-    {
-        EnsureProxyId();
-        strength = Mathf.Clamp01(strength);
+        /// <summary>
+        /// Gives this proxy a fresh ID. Duplicating a proxy (Ctrl+D, copy/paste) copies the serialized
+        /// ID, so the editor calls this on the copy; generated assets and snapshots key on the ID.
+        /// </summary>
+        public void RegenerateId() => proxyId = System.Guid.NewGuid().ToString("N");
+
+    #if UNITY_EDITOR
+        private void OnValidate()
+        {
+            EnsureProxyId();
+            strength = Mathf.Clamp01(strength);
+        }
+    #endif
     }
-#endif
 }

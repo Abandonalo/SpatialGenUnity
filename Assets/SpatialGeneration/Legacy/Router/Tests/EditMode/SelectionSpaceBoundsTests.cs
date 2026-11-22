@@ -1,5 +1,7 @@
 using NUnit.Framework;
 using UnityEngine;
+using SpatialGeneration;
+using SpatialGeneration.Generation.Authoring;
 
 public class SelectionSpaceBoundsTests
 {

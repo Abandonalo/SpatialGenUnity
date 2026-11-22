@@ -1,29 +1,32 @@
 using UnityEditor;
 using UnityEngine;
 
-public static class SpatialProxyFactory
+namespace SpatialGeneration.Authoring
 {
-    public static void CreateProxy()
+    public static class SpatialProxyFactory
     {
-        GameObject go = new GameObject("Spatial Proxy");
-        go.transform.localScale = Vector3.one;
-
-        SpatialProxy proxy = go.AddComponent<SpatialProxy>();
-
-        Undo.RegisterCreatedObjectUndo(go, "Create Spatial Proxy");
-        Selection.activeGameObject = go;
-
-        InteractionLogger.Log(new InteractionEvent
+        public static void CreateProxy()
         {
-            type = "proxy_create",
-            proxy_id = proxy.ProxyId,
-            position = go.transform.position,
-            size = proxy.size,
-            role = proxy.role.ToString(),
-            shape = proxy.Shape.ToString(),
-            label = proxy.label,
-            strength = proxy.strength,
-            priority = proxy.priority
-        });
+            GameObject go = new GameObject("Spatial Proxy");
+            go.transform.localScale = Vector3.one;
+
+            SpatialProxy proxy = go.AddComponent<SpatialProxy>();
+
+            Undo.RegisterCreatedObjectUndo(go, "Create Spatial Proxy");
+            Selection.activeGameObject = go;
+
+            InteractionLogger.Log(new InteractionEvent
+            {
+                type = "proxy_create",
+                proxy_id = proxy.ProxyId,
+                position = go.transform.position,
+                size = proxy.size,
+                role = proxy.role.ToString(),
+                shape = proxy.Shape.ToString(),
+                label = proxy.label,
+                strength = proxy.strength,
+                priority = proxy.priority
+            });
+        }
     }
 }

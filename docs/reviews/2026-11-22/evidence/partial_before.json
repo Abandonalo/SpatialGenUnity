@@ -1,0 +1,94 @@
+{
+    "label": "partial_before",
+    "utc": "2026-11-22T11:57:51.4099450Z",
+    "participant": "review-fixture",
+    "condition": "A",
+    "target": "X",
+    "phase": "Setup",
+    "run": 0,
+    "assets": [
+        {
+            "asset_id": "chair",
+            "label": "chair",
+            "prompt": "",
+            "proxy_id": "",
+            "origin_world": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "rotation_world": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+            ],
+            "volume_size": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "bounds_center_world": [
+                0.0,
+                0.5,
+                0.0
+            ],
+            "bounds_size_world": [
+                1.0,
+                2.0,
+                1.0
+            ],
+            "parts": [
+                {
+                    "part_id": "seat",
+                    "name": "seat",
+                    "shape": "Box",
+                    "segments": 8,
+                    "color": "#FFFFFF",
+                    "center_world": [
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "rotation_world": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "size_world": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "clipped_geometry_local": []
+                },
+                {
+                    "part_id": "leg",
+                    "name": "leg",
+                    "shape": "Box",
+                    "segments": 8,
+                    "color": "#FFFFFF",
+                    "center_world": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "rotation_world": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "size_world": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "clipped_geometry_local": []
+                }
+            ]
+        }
+    ],
+    "proxies": []
+}

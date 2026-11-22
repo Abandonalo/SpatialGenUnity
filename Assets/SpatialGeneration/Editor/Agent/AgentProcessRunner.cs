@@ -39,12 +39,46 @@ namespace SpatialGeneration.Agent
         public const string ClaudeServerName = "UnityMCP";
         public const string CodexServerName = "spatialgenUnity";
 
-        private static readonly string[] ToolNames =
+        /// <summary>The only MCP tools an agent run may call (MCP for Unity also serves general editor tools).</summary>
+        internal static readonly string[] ToolNames =
         {
             "spatialgen_get_task", "spatialgen_list_assets", "spatialgen_list_parts", "spatialgen_create_asset",
             "spatialgen_add_parts", "spatialgen_update_parts", "spatialgen_remove_parts", "spatialgen_clear_asset",
             "spatialgen_finish", "execute_custom_tool", "set_active_instance"
         };
+
+        /// <summary>
+        /// Claude Code's whole built-in tool set for a run (<c>--tools</c>). No file, shell, web or
+        /// sub-agent tools exist in the session, so the agent cannot read the target scenes or any
+        /// other file; ToolSearch loads the MCP tools when Claude Code defers them.
+        /// </summary>
+        internal const string ClaudeBuiltInTools = "ToolSearch,ListMcpResourcesTool,ReadMcpResourceTool";
+
+        /// <summary>Denied on top of <see cref="ClaudeBuiltInTools"/>, in case a CLI version ignores --tools.</summary>
+        internal const string ClaudeDeniedTools =
+            "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent,Read,Glob,Grep,LS";
+
+        /// <summary>
+        /// Codex features that give the model tools besides MCP (shell, browser, computer use, apps,
+        /// plugins, sub-agents, images). Set through <c>-c features.*=false</c>, which a Codex version
+        /// without the feature ignores, rather than <c>--disable</c>, which rejects unknown names.
+        /// </summary>
+        internal static readonly string[] CodexDisabledFeatures =
+        {
+            "shell_tool", "unified_exec", "apps", "plugins", "browser_use", "browser_use_external",
+            "in_app_browser", "computer_use", "image_generation", "view_image", "multi_agent", "multi_agent_v2",
+            "memories"
+        };
+
+        /// <summary>
+        /// What the setup check reports about how far the agent is confined. Claude Code is verified
+        /// to run with no file tools; Codex keeps a read-only command runner in current versions.
+        /// </summary>
+        public static string IsolationNote(BackendSettings settings) => settings.agentCli == AgentCli.ClaudeCode
+            ? "Claude Code runs with no file, shell or web tools, from an empty folder outside the project."
+            : "Codex runs from an empty folder with your config, shell tool and plugins off, but current versions " +
+              "keep a read-only command runner, so the agent could still read files on this machine. " +
+              "Use Claude Code for study sessions.";
 
         private static Process _process;
         private static bool _cancelRequested;
@@ -64,7 +98,7 @@ namespace SpatialGeneration.Agent
             TryKill(_process);
         }
 
-        public static string ProjectRoot => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        public static string ProjectRoot => StudyPaths.ProjectRoot;
 
         // ------------------------------------------------------------------ setup checks
 
@@ -150,9 +184,12 @@ namespace SpatialGeneration.Agent
                 return outcome;
             }
 
+            // An empty folder outside the project: nothing to read there, and no CLAUDE.md / AGENTS.md
+            // of the project or its parents is picked up as instructions.
+            string workingDir = CreateIsolatedWorkingDirectory(artifactDir);
             string arguments = settings.agentCli == AgentCli.ClaudeCode
                 ? BuildClaudeArguments(settings, artifactDir)
-                : BuildCodexArguments(settings);
+                : BuildCodexArguments(settings, workingDir);
             outcome.commandLine = $"\"{executable}\" {arguments}";
             File.WriteAllText(Path.Combine(artifactDir, "command.txt"), outcome.commandLine);
 
@@ -160,7 +197,7 @@ namespace SpatialGeneration.Agent
             {
                 FileName = executable,
                 Arguments = arguments,
-                WorkingDirectory = ProjectRoot,
+                WorkingDirectory = workingDir,
                 UseShellExecute = false,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
@@ -226,6 +263,7 @@ namespace SpatialGeneration.Agent
                 outcome.cancelled = _cancelRequested;
                 _process?.Dispose();
                 _process = null;
+                TryRemoveEmptyDirectory(workingDir);
             }
 
             lock (stdout) outcome.stdout = stdout.ToString();
@@ -240,7 +278,7 @@ namespace SpatialGeneration.Agent
             return outcome;
         }
 
-        private static string BuildClaudeArguments(BackendSettings settings, string artifactDir)
+        internal static string BuildClaudeArguments(BackendSettings settings, string artifactDir)
         {
             string mcpConfigPath = Path.Combine(artifactDir, "mcp-config.json");
             File.WriteAllText(mcpConfigPath,
@@ -257,8 +295,9 @@ namespace SpatialGeneration.Agent
             var args = new StringBuilder();
             args.Append("-p --output-format json");
             args.Append($" --mcp-config {Quote(mcpConfigPath)} --strict-mcp-config");
+            args.Append($" --tools {Quote(ClaudeBuiltInTools)}");
             args.Append($" --allowedTools {Quote(string.Join(",", allowed))}");
-            args.Append(" --disallowedTools \"Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task\"");
+            args.Append($" --disallowedTools {Quote(ClaudeDeniedTools)}");
             args.Append($" --max-turns {Mathf.Max(5, settings.agentMaxTurns)}");
             if (!string.IsNullOrWhiteSpace(settings.agentModel))
                 args.Append($" --model {Quote(settings.agentModel.Trim())}");
@@ -269,13 +308,18 @@ namespace SpatialGeneration.Agent
             return args.ToString();
         }
 
-        private static string BuildCodexArguments(BackendSettings settings)
+        internal static string BuildCodexArguments(BackendSettings settings, string workingDir)
         {
             var args = new StringBuilder();
-            args.Append("exec --skip-git-repo-check --sandbox read-only");
-            // A dedicated server name, so an existing unityMCP entry in ~/.codex/config.toml
-            // (stdio or HTTP) is neither overridden nor merged into an invalid one.
+            // --ignore-user-config drops the MCP servers, plugins and features of ~/.codex/config.toml
+            // (sign-in still comes from CODEX_HOME); --ephemeral keeps runs out of the session history.
+            args.Append("exec --skip-git-repo-check --sandbox read-only --ephemeral --ignore-user-config");
+            args.Append($" -C {Quote(workingDir)}");
+            foreach (string feature in CodexDisabledFeatures)
+                args.Append($" -c features.{feature}=false");
             args.Append($" -c {Quote($"mcp_servers.{CodexServerName}.url=\"{settings.mcpServerUrl.Trim()}\"")}");
+            string tools = string.Join(",", Array.ConvertAll(ToolNames, t => $"\"{t}\""));
+            args.Append($" -c {Quote($"mcp_servers.{CodexServerName}.enabled_tools=[{tools}]")}");
             if (!string.IsNullOrWhiteSpace(settings.agentModel))
                 args.Append($" -m {Quote(settings.agentModel.Trim())}");
             if (!string.IsNullOrWhiteSpace(settings.agentEffort))
@@ -326,6 +370,25 @@ namespace SpatialGeneration.Agent
         }
 
         // ------------------------------------------------------------------ helpers
+
+        private static void TryRemoveEmptyDirectory(string dir)
+        {
+            try
+            {
+                if (Directory.Exists(dir) && Directory.GetFileSystemEntries(dir).Length == 0)
+                    Directory.Delete(dir);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        private static string CreateIsolatedWorkingDirectory(string artifactDir)
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "SpatialGenerationAgent", Path.GetFileName(artifactDir));
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(artifactDir, "working_directory.txt"), dir);
+            return dir;
+        }
 
         private static IEnumerable<string> SearchDirectories()
         {

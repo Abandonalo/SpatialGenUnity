@@ -1,21 +1,24 @@
 using System.Threading.Tasks;
 
-/// <summary>
-/// Offline stand-in: places the proxy's own primitive instead of calling a backend.
-/// Useful for exercising the authoring loop without a GPU.
-/// </summary>
-public sealed class MockGenerationBackend : IGenerationBackend
+namespace SpatialGeneration.Generation.Backends
 {
-    public string Name => "Mock";
-
-    public Task EnsureReadyAsync() => Task.CompletedTask;
-
-    public Task<AssetGenerationResult> GenerateAssetAsync(AssetGenerationRequest request)
+    /// <summary>
+    /// Offline stand-in: places the proxy's own primitive instead of calling a backend.
+    /// Useful for exercising the authoring loop without a GPU.
+    /// </summary>
+    public sealed class MockGenerationBackend : IGenerationBackend
     {
-        return Task.FromResult(new AssetGenerationResult
+        public string Name => "Mock";
+
+        public Task EnsureReadyAsync() => Task.CompletedTask;
+
+        public Task<AssetGenerationResult> GenerateAssetAsync(AssetGenerationRequest request)
         {
-            ProxyId = request?.ProxyId ?? string.Empty,
-            FallbackPrimitive = request?.Volume?.ToPrimitive() ?? UnityEngine.PrimitiveType.Cube
-        });
+            return Task.FromResult(new AssetGenerationResult
+            {
+                ProxyId = request?.ProxyId ?? string.Empty,
+                FallbackPrimitive = request?.Volume?.ToPrimitive() ?? UnityEngine.PrimitiveType.Cube
+            });
+        }
     }
 }

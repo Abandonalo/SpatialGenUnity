@@ -6,6 +6,7 @@ using SpatialGeneration.Agent;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
+using SpatialGeneration;
 
 public class RefinementPartSelectionTests
 {
@@ -124,8 +125,10 @@ public class RefinementPartSelectionTests
     }
 
     [Test]
-    public void PartialColorChangeAndUndoPreserveTheUnselectedRemainder()
+    public void PartialColorChangePreservesTheUnselectedRemainder()
     {
+        // Agent tool calls are not Undo steps: they run on the preview copy, and an applied idea is
+        // undone as a whole (AgentStudyWorkflowTests.ConditionB_PartialUpdateMarksTheRemainder).
         RegionSelection selection = RefinementPartSelection.Draw(Box(-.25f,.5f), _asset, true);
         StartJob(selection);
         Undo.IncrementCurrentGroup();
@@ -141,10 +144,8 @@ public class RefinementPartSelectionTests
         Assert.IsFalse(AgentSceneOps.RemoveParts(_asset.assetId,new List<string>{remainder.partId}).ok);
         Undo.FlushUndoRecordObjects();
         Undo.RevertAllDownToGroup(group);
-        Assert.AreEqual(3,AgentSceneOps.PartsOf(_asset).Count);
-        Assert.AreEqual(Color.white,_middle.color);
-        Assert.AreEqual(0,_middle.fragments.Count);
-        Assert.AreEqual(Vector3.one,_middle.transform.localScale);
+        Assert.AreEqual(4,AgentSceneOps.PartsOf(_asset).Count, "the tool call itself adds nothing to the Undo history");
+        Assert.AreEqual(Color.red,_middle.color);
     }
 
     [UnityTest]

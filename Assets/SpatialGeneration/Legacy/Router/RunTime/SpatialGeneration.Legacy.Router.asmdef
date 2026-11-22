@@ -1,0 +1,16 @@
+{
+  "name": "SpatialGeneration.Legacy.Router",
+  "rootNamespace": "SpatialGeneration.Generation",
+  "references": [
+    "SpatialGeneration.Runtime"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

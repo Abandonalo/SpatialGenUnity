@@ -28,6 +28,12 @@ namespace SpatialGeneration.Agent
         /// <summary>Job that last created or changed this part, for the interaction log.</summary>
         public string lastJobId;
 
+        /// <summary>
+        /// For the unselected remainder split off a partially edited part: the part it came from.
+        /// Scoring treats such a remainder as preserved material rather than new geometry.
+        /// </summary>
+        public string sourcePartId;
+
         private void OnEnable() => Rebuild();
 
 #if UNITY_EDITOR

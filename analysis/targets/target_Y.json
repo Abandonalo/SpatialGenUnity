@@ -1,0 +1,417 @@
+{
+  "scene": "Y",
+  "name": "Campsite",
+  "objects": [
+    {
+      "id": "campfire",
+      "names": [
+        "campfire",
+        "fire",
+        "fireplace",
+        "fire pit",
+        "firepit"
+      ],
+      "center": [
+        0.0,
+        -0.0
+      ],
+      "y0": 0.0,
+      "size": [
+        1.4,
+        0.6,
+        1.4
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    },
+    {
+      "id": "tent_a",
+      "names": [
+        "tent a",
+        "tenta",
+        "green tent",
+        "tent 1",
+        "tent1",
+        "back tent"
+      ],
+      "center": [
+        0.91,
+        3.38
+      ],
+      "y0": 0.0,
+      "size": [
+        2.6,
+        1.5,
+        2.2
+      ],
+      "mode": "front",
+      "symmetry": "none",
+      "direction": [
+        -0.26,
+        -0.9656
+      ]
+    },
+    {
+      "id": "tent_b",
+      "names": [
+        "tent b",
+        "tentb",
+        "orange tent",
+        "tent 2",
+        "tent2",
+        "front tent"
+      ],
+      "center": [
+        0.91,
+        -3.38
+      ],
+      "y0": 0.0,
+      "size": [
+        2.6,
+        1.5,
+        2.2
+      ],
+      "mode": "front",
+      "symmetry": "none",
+      "direction": [
+        -0.26,
+        0.9656
+      ]
+    },
+    {
+      "id": "logs",
+      "names": [
+        "logs",
+        "log pile",
+        "firewood",
+        "woodpile",
+        "wood pile"
+      ],
+      "center": [
+        -0.5808,
+        3.5742
+      ],
+      "y0": 0.0,
+      "size": [
+        1.15,
+        0.71,
+        0.78
+      ],
+      "mode": "axis",
+      "symmetry": "180",
+      "direction": [
+        -0.26,
+        -0.9656
+      ]
+    },
+    {
+      "id": "bucket",
+      "names": [
+        "bucket",
+        "pail"
+      ],
+      "center": [
+        -0.5808,
+        3.5742
+      ],
+      "y0": 0.71,
+      "size": [
+        0.3,
+        0.26,
+        0.3
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    },
+    {
+      "id": "table",
+      "names": [
+        "table",
+        "camp table"
+      ],
+      "center": [
+        1.4689,
+        5.4561
+      ],
+      "y0": 0.0,
+      "size": [
+        1.4,
+        0.75,
+        0.7
+      ],
+      "mode": "axis",
+      "symmetry": "180",
+      "direction": [
+        0.9656,
+        -0.26
+      ]
+    },
+    {
+      "id": "parasol",
+      "names": [
+        "parasol",
+        "umbrella",
+        "sunshade"
+      ],
+      "center": [
+        1.4689,
+        5.4561
+      ],
+      "y0": 0.0,
+      "size": [
+        1.8,
+        2.45,
+        1.8
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    },
+    {
+      "id": "cooler",
+      "names": [
+        "cooler",
+        "cool box",
+        "coolbox",
+        "ice box",
+        "icebox"
+      ],
+      "center": [
+        1.3,
+        -5.32
+      ],
+      "y0": 0.0,
+      "size": [
+        0.65,
+        0.53,
+        0.41
+      ],
+      "mode": "axis",
+      "symmetry": "180",
+      "direction": [
+        0.9838,
+        0.179
+      ]
+    },
+    {
+      "id": "log_seat",
+      "names": [
+        "log seat",
+        "logseat",
+        "seat",
+        "bench",
+        "log bench"
+      ],
+      "center": [
+        -2.5,
+        -0.0
+      ],
+      "y0": 0.0,
+      "size": [
+        1.5,
+        0.62,
+        0.42
+      ],
+      "mode": "axis",
+      "symmetry": "180",
+      "direction": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "id": "arch",
+      "names": [
+        "trail arch",
+        "arch",
+        "archway",
+        "trail gate",
+        "gate"
+      ],
+      "center": [
+        6.0,
+        -0.0
+      ],
+      "y0": 0.0,
+      "size": [
+        0.3,
+        2.9,
+        3.0
+      ],
+      "mode": "front",
+      "symmetry": "180",
+      "direction": [
+        -1.0,
+        -0.0
+      ]
+    },
+    {
+      "id": "lantern",
+      "names": [
+        "lantern",
+        "lantern post",
+        "lamp",
+        "lamp post",
+        "post"
+      ],
+      "center": [
+        6.0,
+        -2.3
+      ],
+      "y0": 0.0,
+      "size": [
+        0.5,
+        2.1,
+        0.5
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    }
+  ],
+  "path": {
+    "start": "campfire",
+    "end": "arch",
+    "width": 1.5,
+    "height": 2.0
+  },
+  "relations": [
+    {
+      "id": "R1",
+      "type": "facing",
+      "obj": "tent_a",
+      "ref": "campfire",
+      "mode": "front",
+      "tol_deg": 20
+    },
+    {
+      "id": "R2",
+      "type": "facing",
+      "obj": "tent_b",
+      "ref": "campfire",
+      "mode": "front",
+      "tol_deg": 20
+    },
+    {
+      "id": "R3",
+      "type": "distance",
+      "pairs": [
+        [
+          "tent_a",
+          "campfire"
+        ],
+        [
+          "tent_b",
+          "campfire"
+        ]
+      ],
+      "tol": 0.5
+    },
+    {
+      "id": "R4",
+      "type": "contact",
+      "a": "logs",
+      "b": "tent_a",
+      "max_gap": 0.05,
+      "max_pen": 0.05
+    },
+    {
+      "id": "R5",
+      "type": "occlusion",
+      "occluder": "cooler",
+      "occluded": "tent_b",
+      "range": [
+        0.2,
+        0.8
+      ]
+    },
+    {
+      "id": "R6",
+      "type": "clear_path",
+      "start": "campfire",
+      "end": "arch",
+      "width": 1.5,
+      "height": 2.0
+    },
+    {
+      "id": "R7",
+      "type": "alignment",
+      "obj": "arch",
+      "ref": "campfire",
+      "max_offset": 0.5,
+      "tol_deg": 20
+    },
+    {
+      "id": "R8",
+      "type": "relative_size",
+      "a": "cooler",
+      "b": "tent_b",
+      "tol_rel": 0.25
+    },
+    {
+      "id": "R9",
+      "type": "beside",
+      "obj": "lantern",
+      "ref": "arch",
+      "tol": 0.4,
+      "max_depth": 1.0,
+      "path": {
+        "start": "campfire",
+        "end": "arch",
+        "width": 1.5,
+        "height": 2.0
+      }
+    },
+    {
+      "id": "R10",
+      "type": "on_top",
+      "upper": "bucket",
+      "lower": "logs",
+      "tol": 0.05
+    },
+    {
+      "id": "R11",
+      "type": "behind_parallel",
+      "obj": "table",
+      "ref": "tent_a",
+      "tol_deg": 15,
+      "gap_tol": 0.25
+    },
+    {
+      "id": "R12",
+      "type": "distance_facing",
+      "obj": "log_seat",
+      "ref": "campfire",
+      "mode": "axis_perp",
+      "tol": 0.5,
+      "tol_deg": 20
+    },
+    {
+      "id": "R13",
+      "type": "in_line",
+      "ends": [
+        "log_seat",
+        "arch"
+      ],
+      "middle": "campfire",
+      "tol": 0.3
+    },
+    {
+      "id": "R14",
+      "type": "symmetry",
+      "a": "tent_a",
+      "b": "tent_b",
+      "axis": [
+        "campfire",
+        "arch"
+      ],
+      "tol_pos": 0.5,
+      "tol_deg": 20
+    },
+    {
+      "id": "R15",
+      "type": "intersection",
+      "pole": "parasol",
+      "through": "table",
+      "margin": 0.05
+    }
+  ]
+}

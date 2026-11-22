@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using NUnit.Framework;
 using UnityEngine;
+using SpatialGeneration.Generation.Authoring;
+using SpatialGeneration.Generation.Refinement;
 
 public class MultiViewVertexColorProjectorTests
 {

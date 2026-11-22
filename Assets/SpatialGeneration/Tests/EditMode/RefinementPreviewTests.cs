@@ -4,6 +4,7 @@ using NUnit.Framework;
 using SpatialGeneration.Agent;
 using UnityEditor;
 using UnityEngine;
+using SpatialGeneration;
 
 public sealed class RefinementPreviewTests
 {

@@ -1,0 +1,20 @@
+{
+  "name": "SpatialGeneration.Legacy.Router.Editor",
+  "rootNamespace": "SpatialGeneration.Generation",
+  "references": [
+    "SpatialGeneration.Runtime",
+    "SpatialGeneration.Editor",
+    "SpatialGeneration.Legacy.Router"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

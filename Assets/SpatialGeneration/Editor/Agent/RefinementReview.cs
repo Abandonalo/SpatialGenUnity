@@ -99,6 +99,14 @@ namespace SpatialGeneration.Agent
 
         public void ApplyParts(AgentAsset asset)
         {
+            // Asset-level data first (a condition A rebuild refits the volume), in the same Undo group.
+            if (data != JsonUtility.ToJson(asset))
+            {
+                Undo.RecordObject(asset, "Refine asset");
+                JsonUtility.FromJsonOverwrite(data, asset);
+                EditorUtility.SetDirty(asset);
+            }
+
             var existing = AgentSceneOps.PartsOf(asset).ToDictionary(p => p.partId);
             foreach (PreviewPart item in parts)
             {
@@ -131,6 +139,9 @@ namespace SpatialGeneration.Agent
     [Serializable]
     public sealed class RefinementReview
     {
+        /// <summary>Undo group name of an applied idea; the study tracks Ctrl+Z / Ctrl+Y on it.</summary>
+        public const string ApplyUndoName = "Apply refinement preview";
+
         public string id, request, style, sourceScene, sourceGlobalId;
         public int sourceInstanceId;
         public StudyCondition condition;
@@ -189,7 +200,7 @@ namespace SpatialGeneration.Agent
             int group = Undo.GetCurrentGroup();
             try
             {
-                Undo.SetCurrentGroupName("Apply refinement preview");
+                Undo.SetCurrentGroupName(ApplyUndoName);
                 foreach (PreviewAsset candidate in idea.objects)
                 {
                     if (live.TryGetValue(candidate.id, out AgentAsset current)) candidate.ApplyParts(current);

@@ -1,7 +1,9 @@
+using System;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using SpatialGeneration.Authoring;
 
 namespace SpatialGeneration.Agent
 {
@@ -34,6 +36,12 @@ namespace SpatialGeneration.Agent
 
         public static int MaxRuns => DeveloperMode ? int.MaxValue : Mathf.Max(1, Settings.maxGenerationRuns);
 
+        /// <summary>
+        /// Confirmation dialog used by the study flow. Tests replace it, because batch mode cancels
+        /// every modal dialog; the editor always uses <see cref="EditorUtility.DisplayDialog(string,string,string,string)"/>.
+        /// </summary>
+        internal static Func<string, string, string, string, bool> Confirm = EditorUtility.DisplayDialog;
+
         public static string LastMessage { get; private set; } = string.Empty;
         public static MessageType LastMessageType { get; private set; } = MessageType.None;
 
@@ -41,12 +49,12 @@ namespace SpatialGeneration.Agent
 
         public static void StartCondition()
         {
-            if (AgentWorkflow.IsBusy)
+            if (IsBusy)
                 return;
 
-            bool hasContent = GameObject.Find(GenerationRunner.GeneratedRootName) != null ||
+            bool hasContent = GameObject.Find(GeneratedContentRoot.Name) != null ||
                               GameObject.Find(GenerationVersions.ContainerName) != null;
-            if (hasContent && !EditorUtility.DisplayDialog("Start condition",
+            if (hasContent && !Confirm("Start condition",
                     "The scene already contains generated content. It will be hidden under " +
                     $"'{GenerationVersions.ContainerName}' so this condition starts from an empty scene.",
                     "Start", "Cancel"))
@@ -67,7 +75,7 @@ namespace SpatialGeneration.Agent
 
         public static void ResetSession()
         {
-            if (AgentWorkflow.IsBusy)
+            if (IsBusy)
                 return;
             Log("session_reset", string.Empty);
             S.ResetProgress();
@@ -77,58 +85,107 @@ namespace SpatialGeneration.Agent
 
         // ------------------------------------------------------------------ generation
 
+        // True from the Generate click until the agent run itself holds AgentWorkflow's busy flag:
+        // the setup check awaits the MCP server, and nothing else may change the study meanwhile.
         private static bool _starting;
 
-        public static bool CanGenerate => S.phase == StudyPhase.Generation && S.generationRuns < MaxRuns &&
-                                          !AgentWorkflow.IsBusy && !_starting;
+        /// <summary>An agent run is active or about to start. Every study action waits for it.</summary>
+        public static bool IsBusy => AgentWorkflow.IsBusy || _starting;
 
-        public static async void RunGeneration()
+        public static bool CanGenerate => S.phase == StudyPhase.Generation && S.generationRuns < MaxRuns && !IsBusy;
+
+        /// <summary>Button entry point; the run continues in the background.</summary>
+        public static void RunGeneration() => Forget(RunGenerationAsync(), "Generation");
+
+        internal static async Task RunGenerationAsync()
         {
             if (!CanGenerate)
                 return;
 
             _starting = true;
-            string problem;
+            string condition = S.conditionStartUtc;
+            int previous = S.activeRun;
+            int run;
+            Task<AgentRunReport> running;
             try
             {
-                problem = AgentWorkflow.ValidateGenerationInputs(S.condition, S.scenePrompt)
-                          ?? await AgentWorkflow.CheckSetupAsync();
+                string problem = AgentWorkflow.ValidateGenerationInputs(S.condition, S.scenePrompt)
+                                 ?? await AgentWorkflow.CheckSetupAsync();
+                if (problem != null)
+                {
+                    Note(problem, MessageType.Warning);
+                    return;
+                }
+
+                // The setup check awaited the network; make sure the study is still where it was.
+                if (S.phase != StudyPhase.Generation || S.conditionStartUtc != condition ||
+                    S.activeRun != previous || S.generationRuns >= MaxRuns || AgentWorkflow.IsBusy)
+                {
+                    Note("The study changed while the setup was being checked; no run was started.", MessageType.Warning);
+                    return;
+                }
+
+                run = S.generationRuns + 1;
+                if (previous > 0)
+                {
+                    GenerationVersions.ArchiveActive(previous);
+                    if (!S.archivedRuns.Contains(previous))
+                        S.archivedRuns.Add(previous);
+                }
+
+                S.generationRuns = run;
+                S.activeRun = run;
+                S.Persist();
+                Log("generation_run_start", $"run={run}; scene_prompt={S.scenePrompt}; style_prompt={S.stylePrompt}");
+                Note($"Generation run {run} of {MaxRuns} started.", MessageType.None);
+
+                // Takes AgentWorkflow's busy flag before its first await, so the guard hands over without a gap.
+                running = AgentWorkflow.RunGenerationAsync(S.condition, S.scenePrompt, S.stylePrompt);
             }
             finally
             {
                 _starting = false;
             }
 
-            if (problem != null)
+            AgentRunReport report = await running;
+            if (!report.hasContent)
             {
-                Note(problem, MessageType.Warning);
+                RefundRun(run, previous, report);
                 return;
             }
 
-            int run = S.generationRuns + 1;
-            if (S.activeRun > 0)
+            S.runRecords.RemoveAll(r => r.run == run);
+            S.runRecords.Add(new RunRecord
             {
-                GenerationVersions.ArchiveActive(S.activeRun);
-                if (!S.archivedRuns.Contains(S.activeRun))
-                    S.archivedRuns.Add(S.activeRun);
-            }
-
-            S.generationRuns = run;
-            S.activeRun = run;
+                run = run, outcome = report.outcome, parts = report.partsAdded,
+                emptyAssets = new System.Collections.Generic.List<string>(report.emptyAssets)
+            });
             S.Persist();
-            Log("generation_run_start", $"run={run}; scene_prompt={S.scenePrompt}; style_prompt={S.stylePrompt}");
-            Note($"Generation run {run} of {MaxRuns} started.", MessageType.None);
-
-            AgentRunReport report = await AgentWorkflow.RunGenerationAsync(S.condition, S.scenePrompt, S.stylePrompt);
-
             string snapshot = SceneSnapshot.Write($"run{run}");
-            Log("generation_run_end", $"run={run}; {ReportFields(report)}; snapshot={snapshot}");
+            Log("generation_run_end", $"run={run}; outcome={report.outcome}; {ReportFields(report)}; snapshot={snapshot}");
             Note($"Run {run}: {report.message}", report.success ? MessageType.Info : MessageType.Warning);
+        }
+
+        /// <summary>
+        /// A run that built nothing gives the participant nothing to judge, so it does not use up one of
+        /// their runs: its empty version is removed and the previous one is shown again.
+        /// </summary>
+        private static void RefundRun(int run, int previous, AgentRunReport report)
+        {
+            GenerationVersions.DiscardActive();
+            if (previous > 0 && GenerationVersions.Restore(previous))
+                S.archivedRuns.Remove(previous);
+            S.activeRun = previous > 0 && GameObject.Find(GeneratedContentRoot.Name) != null ? previous : 0;
+            S.generationRuns = run - 1;
+            S.Persist();
+            Log("generation_run_refunded", $"run={run}; outcome={report.outcome}; restored_run={S.activeRun}; {ReportFields(report)}");
+            Note($"Run {run} did not build anything ({report.message}) It does not count; generate again.",
+                MessageType.Warning);
         }
 
         public static void ShowVersion(int run)
         {
-            if (S.phase != StudyPhase.Generation || AgentWorkflow.IsBusy || run == S.activeRun)
+            if (S.phase != StudyPhase.Generation || IsBusy || run == S.activeRun)
                 return;
 
             if (!GenerationVersions.Activate(run, S.activeRun))
@@ -145,7 +202,30 @@ namespace SpatialGeneration.Agent
             Log("version_show", $"run={run}");
         }
 
-        public static bool CanAccept => S.phase == StudyPhase.Generation && S.activeRun > 0 && !AgentWorkflow.IsBusy;
+        /// <summary>Only a version with geometry can be refined.</summary>
+        public static bool CanAccept => S.phase == StudyPhase.Generation && S.activeRun > 0 && !IsBusy &&
+                                        ActiveVersionPartCount() > 0;
+
+        /// <summary>Parts in the active GeneratedContent.</summary>
+        public static int ActiveVersionPartCount()
+        {
+            GameObject root = GameObject.Find(GeneratedContentRoot.Name);
+            return root != null ? root.GetComponentsInChildren<AgentPart>(false).Length : 0;
+        }
+
+        /// <summary>
+        /// Why accepting the active version needs an explicit choice (objects without parts, or a run
+        /// that did not finish cleanly), or null. The window shows it and puts it in the confirmation.
+        /// </summary>
+        public static string ActiveVersionWarning()
+        {
+            var empty = AgentSceneOps.AllAssets().FindAll(a => AgentSceneOps.PartsOf(a).Count == 0).ConvertAll(a => a.label);
+            RunRecord record = S.Record(S.activeRun);
+            string text = empty.Count > 0 ? $"{empty.Count} object(s) have no geometry: {string.Join(", ", empty)}." : null;
+            if (record != null && record.outcome != RunOutcome.Complete)
+                text = $"Run {S.activeRun} ended as {record.outcome.ToString().ToLowerInvariant()}." + (text != null ? " " + text : string.Empty);
+            return text;
+        }
 
         public static void AcceptActiveVersion()
         {
@@ -164,15 +244,19 @@ namespace SpatialGeneration.Agent
 
             if (S.condition == StudyCondition.SpatialControls)
                 Selection.activeGameObject = EnsureRefinementRig(resetSelection: true).gameObject;
+            // Refinement starts with an empty history: Ctrl+Z then only reverts refinements (tracked by
+            // StudyUndoTracker), never generation-phase edits behind the accepted version.
+            Undo.ClearAll();
 
-            Log("version_accept", $"run={S.acceptedRun}; runs_used={S.generationRuns}; " +
+            Log("version_accept", $"run={S.acceptedRun}; outcome={S.Record(S.acceptedRun)?.outcome}; " +
+                                  $"warning={ActiveVersionWarning()}; runs_used={S.generationRuns}; " +
                                   $"generation_seconds={generationSeconds:0.0}; snapshot={snapshot}");
             Note("Refinement started.", MessageType.Info);
         }
 
         // ------------------------------------------------------------------ refinement
 
-        public static bool CanEdit => S.phase == StudyPhase.Refinement && !S.awaitingDecision && !S.HasReview && !AgentWorkflow.IsBusy;
+        public static bool CanEdit => S.phase == StudyPhase.Refinement && !S.HasReview && !IsBusy;
 
         public static void SubmitEdit()
         {
@@ -182,8 +266,8 @@ namespace SpatialGeneration.Agent
             RegionSelection region = null;
             if (S.condition == StudyCondition.SpatialControls)
             {
-                RefinementController rig = EnsureRefinementRig(resetSelection: false);
-                region = rig.selectionManager != null ? rig.selectionManager.CurrentSelection?.Clone() : null;
+                RegionSelectionManager rig = EnsureRefinementRig(resetSelection: false);
+                region = rig.CurrentSelection?.Clone();
                 if (region == null || !region.partScoped)
                 {
                     Note("Click a part or drag a region in the Scene view first.", MessageType.Warning);
@@ -200,7 +284,7 @@ namespace SpatialGeneration.Agent
 
             try
             {
-                S.review = RefinementReview.Begin(GameObject.Find(GenerationRunner.GeneratedRootName), request,
+                S.review = RefinementReview.Begin(GameObject.Find(GeneratedContentRoot.Name), request,
                     S.stylePrompt, S.condition, region);
             }
             catch (System.Exception ex) { Note(ex.Message, MessageType.Warning); return; }
@@ -214,21 +298,63 @@ namespace SpatialGeneration.Agent
         public static bool IsCurrentReview(RefinementReview review) => review != null && S.HasReview &&
             S.review.id == review.id && S.phase == StudyPhase.Refinement;
 
-        public static async void GenerateIdea()
+        /// <summary>Button entry point; the preview continues in the background.</summary>
+        public static void GenerateIdea() => Forget(GenerateIdeaAsync(), "Preview");
+
+        internal static async Task GenerateIdeaAsync()
         {
             var review = S.review;
-            if (!IsCurrentReview(review) || AgentWorkflow.IsBusy || AgentJobState.instance.HasRunningJob) return;
+            if (!IsCurrentReview(review) || IsBusy || AgentJobState.instance.HasRunningJob) return;
             Note("Generating an idea…", MessageType.None);
             AgentRunReport report = await AgentWorkflow.RunPreviewAsync(review);
             if (!IsCurrentReview(review)) return;
             Log("preview_result", $"review={review.id}; idea={review.ideas.Count + 1}; {ReportFields(report)}");
-            if (report.success)
+            if (report.hasContent)
             {
                 review.ideas.Add(report.preview);
                 review.selected = review.ideas.Count - 1;
             }
             S.Persist();
-            Note(report.message, report.success ? MessageType.None : MessageType.Warning);
+            Note(report.message, report.hasContent ? MessageType.None : MessageType.Warning);
+        }
+
+        // ------------------------------------------------------------------ undo of applied refinements
+
+        /// <summary>Ctrl+Z on an applied idea: the edit is reverted in the scene, so record it as undone.</summary>
+        internal static void OnApplyUndone()
+        {
+            if (S.phase != StudyPhase.Refinement || S.appliedEdits.Count == 0) return;
+            int edit = S.appliedEdits[S.appliedEdits.Count - 1];
+            S.appliedEdits.RemoveAt(S.appliedEdits.Count - 1);
+            S.undoneEdits.Add(edit);
+            S.editsKept--;
+            S.editsUndone++;
+            S.Persist();
+            string snapshot = SceneSnapshot.Write($"edit{edit}_undone");
+            Log("edit_undo", $"edit={edit}; snapshot={snapshot}");
+            Note($"Refinement {edit} undone.", MessageType.None);
+        }
+
+        /// <summary>Ctrl+Y on an undone idea: the edit is back in the scene.</summary>
+        internal static void OnApplyRedone()
+        {
+            if (S.phase != StudyPhase.Refinement || S.undoneEdits.Count == 0) return;
+            int edit = S.undoneEdits[S.undoneEdits.Count - 1];
+            S.undoneEdits.RemoveAt(S.undoneEdits.Count - 1);
+            S.appliedEdits.Add(edit);
+            S.editsKept++;
+            S.editsUndone--;
+            S.Persist();
+            string snapshot = SceneSnapshot.Write($"edit{edit}_after");
+            Log("edit_redo", $"edit={edit}; snapshot={snapshot}");
+            Note($"Refinement {edit} restored.", MessageType.None);
+        }
+
+        /// <summary>Any other Undo or Redo during refinement, logged so the scene history stays explainable.</summary>
+        internal static void OnOtherUndo(string name, bool redo)
+        {
+            if (S.phase != StudyPhase.Refinement) return;
+            Log(redo ? "redo_other" : "undo_other", $"name={name}");
         }
 
         public static void ShowIdea(int index)
@@ -243,15 +369,17 @@ namespace SpatialGeneration.Agent
         public static void ApplyIdea()
         {
             var review = S.review;
-            if (!IsCurrentReview(review) || AgentWorkflow.IsBusy || review.ideas.Count == 0) return;
-            GameObject source = GameObject.Find(GenerationRunner.GeneratedRootName);
-            var manager = review.condition == StudyCondition.SpatialControls ? Object.FindFirstObjectByType<RegionSelectionManager>() : null;
+            if (!IsCurrentReview(review) || IsBusy || review.ideas.Count == 0) return;
+            GameObject source = GameObject.Find(GeneratedContentRoot.Name);
+            var manager = review.condition == StudyCondition.SpatialControls ? UnityEngine.Object.FindFirstObjectByType<RegionSelectionManager>() : null;
             try { review.Apply(source, manager); }
             catch (System.Exception ex) { Note(ex.Message, MessageType.Warning); return; }
 
             var jobId = review.ideas[review.selected].jobId;
             S.review = null;
             S.editsKept++;
+            S.appliedEdits.Add(S.editsSubmitted);
+            S.undoneEdits.Clear();      // a new Undo step drops Unity's redo history too
             S.editRequest = string.Empty;
             S.Persist();
             string after = SceneSnapshot.Write($"edit{S.editsSubmitted}_after");
@@ -261,53 +389,11 @@ namespace SpatialGeneration.Agent
 
         public static void DiscardIdeas()
         {
-            if (!S.HasReview || AgentWorkflow.IsBusy) return;
+            if (!S.HasReview || IsBusy) return;
             Log("preview_discard", $"review={S.review.id}; ideas={S.review.ideas.Count}");
             S.DiscardReview();
             S.Persist();
             Note("Previews discarded.", MessageType.None);
-        }
-
-        public static void KeepPending()
-        {
-            if (!S.awaitingDecision)
-                return;
-            S.awaitingDecision = false;
-            S.editsKept++;
-            S.Persist();
-            RefreshSelection();
-            Log("edit_keep", $"job={S.pendingJobId}");
-            Note("Change kept.", MessageType.None);
-        }
-
-        private static void RefreshSelection()
-        {
-            if (S.condition == StudyCondition.SpatialControls)
-            {
-                var manager = Object.FindFirstObjectByType<RegionSelectionManager>();
-                var before = manager != null ? manager.CurrentSelection : null;
-                if (before?.partScoped == true)
-                {
-                    AgentAsset owner = AgentSceneOps.AllAssets().Find(a => a.assetId == before.assetId);
-                    manager.SetSelection(RefinementPartSelection.AfterEdit(before, owner));
-                    EditorUtility.SetDirty(manager);
-                    SceneView.RepaintAll();
-                }
-            }
-        }
-
-        public static void UndoPending()
-        {
-            if (!S.awaitingDecision)
-                return;
-            if (S.pendingUndoGroup >= 0)
-                Undo.RevertAllDownToGroup(S.pendingUndoGroup);
-            S.awaitingDecision = false;
-            S.editsUndone++;
-            S.Persist();
-            string snapshot = SceneSnapshot.Write($"edit{S.editsSubmitted}_undone");
-            Log("edit_undo", $"job={S.pendingJobId}; snapshot={snapshot}");
-            Note("Change undone.", MessageType.None);
         }
 
         public static void SubmitScene()
@@ -316,7 +402,7 @@ namespace SpatialGeneration.Agent
                 return;
             string message = S.HasReview ? "Submit the current scene and discard these refinement previews?" :
                 "Finish this condition now? You cannot change the scene afterwards.";
-            if (!EditorUtility.DisplayDialog("Submit scene", message,
+            if (!Confirm("Submit scene", message,
                     "Submit", "Keep working"))
                 return;
 
@@ -326,17 +412,16 @@ namespace SpatialGeneration.Agent
                 S.DiscardReview();
                 if (AgentWorkflow.IsBusy) AgentWorkflow.Cancel();
             }
-            // Before previews, pending edits were already in the live scene.
-            if (S.awaitingDecision) KeepPending();
-
             S.phase = StudyPhase.Finished;
             S.finishReason = "submitted";
             S.finishedUtc = StudySession.NowUtc();
             S.Persist();
 
             string snapshot = SceneSnapshot.Write("final");
+            Undo.ClearAll();            // the submitted scene can no longer be changed with Ctrl+Z
             Log("condition_finish", $"reason={S.finishReason}; refinement_seconds={StudySession.SecondsSince(S.refinementStartUtc):0.0}; " +
-                                    $"edits={S.editsSubmitted}; kept={S.editsKept}; undone={S.editsUndone}; failed={S.editsFailed}; " +
+                                    $"edits={S.editsSubmitted}; kept={S.editsKept}; undone={S.editsUndone}; discarded={S.editsDiscarded}; " +
+                                    $"failed={S.editsFailed}; " +
                                     $"snapshot={snapshot}");
             Note("Scene submitted. This condition is finished.", MessageType.Info);
 
@@ -347,41 +432,46 @@ namespace SpatialGeneration.Agent
 
         // ------------------------------------------------------------------ helpers
 
-        public static RefinementController EnsureRefinementRig(bool resetSelection)
+        /// <summary>
+        /// The scene's region-selection rig. The agent backend needs only the selection manager; a rig
+        /// left by the legacy router pipeline (with its RefinementController) is reused as it is.
+        /// </summary>
+        public static RegionSelectionManager EnsureRefinementRig(bool resetSelection)
         {
-            RefinementController controller = Object.FindFirstObjectByType<RefinementController>();
-            if (controller == null)
+            RegionSelectionManager manager = UnityEngine.Object.FindFirstObjectByType<RegionSelectionManager>();
+            if (manager == null)
             {
-                var root = new GameObject("SpatialGenerationRefinement");
+                var root = new GameObject(RefinementRigName);
                 Undo.RegisterCreatedObjectUndo(root, "Create Refinement Rig");
-                RegionSelectionManager manager = root.AddComponent<RegionSelectionManager>();
-                controller = root.AddComponent<RefinementController>();
-                controller.selectionManager = manager;
-                resetSelection = true;
-            }
-
-            if (controller.selectionManager == null)
-            {
-                // Explicit null tests: in the editor GetComponent returns a "fake null" that ?? misses.
-                RegionSelectionManager manager = controller.GetComponent<RegionSelectionManager>();
-                if (manager == null)
-                    manager = controller.gameObject.AddComponent<RegionSelectionManager>();
-                controller.selectionManager = manager;
+                manager = root.AddComponent<RegionSelectionManager>();
                 resetSelection = true;
             }
 
             if (resetSelection)
             {
-                if (Settings.backendKind == BackendKind.Agent) controller.selectionManager.SetSelection(null);
-                else controller.selectionManager.ResetToDefault();
+                if (Settings.backendKind == BackendKind.Agent) manager.SetSelection(null);
+                else manager.ResetToDefault();
             }
 
-            EditorUtility.SetDirty(controller.gameObject);
-            return controller;
+            EditorUtility.SetDirty(manager.gameObject);
+            return manager;
+        }
+
+        public const string RefinementRigName = "SpatialGenerationRefinement";
+
+        // async void would lose exceptions thrown after the first await (e.g. a snapshot that cannot be written).
+        private static async void Forget(Task task, string what)
+        {
+            try { await task; }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Spatial Generation: {what} failed.\n{ex}");
+                Note($"{what} failed: {ex.Message}", MessageType.Error);
+            }
         }
 
         private static string ReportFields(AgentRunReport r) =>
-            $"job={r.jobId}; success={r.success}; changed={r.changedScene}; seconds={r.seconds:0.0}; " +
+            $"job={r.jobId}; success={r.success}; outcome={r.outcome}; changed={r.changedScene}; seconds={r.seconds:0.0}; " +
             $"added={r.partsAdded}; updated={r.partsUpdated}; removed={r.partsRemoved}; assets_created={r.assetsCreated}; " +
             $"tool_calls={r.toolCalls}; rejected={r.rejectedCalls}; turns={r.turns}; exit={r.exitCode}; " +
             $"timed_out={r.timedOut}; cancelled={r.cancelled}; artifacts={r.artifactDir}; summary={r.summary}";

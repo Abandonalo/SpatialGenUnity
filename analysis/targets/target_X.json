@@ -1,0 +1,430 @@
+{
+  "scene": "X",
+  "name": "Market square",
+  "objects": [
+    {
+      "id": "well",
+      "names": [
+        "well",
+        "fountain"
+      ],
+      "center": [
+        0.0,
+        -0.0
+      ],
+      "y0": 0.0,
+      "size": [
+        2.0,
+        3.0,
+        2.0
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    },
+    {
+      "id": "stall_a",
+      "names": [
+        "stall a",
+        "stalla",
+        "left stall",
+        "fruit stall",
+        "red stall",
+        "stall 1",
+        "stall1"
+      ],
+      "center": [
+        -3.38,
+        0.91
+      ],
+      "y0": 0.0,
+      "size": [
+        1.5,
+        2.6,
+        2.4
+      ],
+      "mode": "front",
+      "symmetry": "none",
+      "direction": [
+        0.9656,
+        -0.26
+      ]
+    },
+    {
+      "id": "stall_b",
+      "names": [
+        "stall b",
+        "stallb",
+        "right stall",
+        "bread stall",
+        "blue stall",
+        "stall 2",
+        "stall2"
+      ],
+      "center": [
+        3.38,
+        0.91
+      ],
+      "y0": 0.0,
+      "size": [
+        1.5,
+        2.6,
+        2.4
+      ],
+      "mode": "front",
+      "symmetry": "none",
+      "direction": [
+        -0.9656,
+        -0.26
+      ]
+    },
+    {
+      "id": "crates",
+      "names": [
+        "crate",
+        "crates",
+        "box stack",
+        "boxes"
+      ],
+      "center": [
+        -3.7217,
+        -0.5514
+      ],
+      "y0": 0.0,
+      "size": [
+        1.22,
+        1.1,
+        0.6
+      ],
+      "mode": "axis",
+      "symmetry": "180",
+      "direction": [
+        0.9656,
+        -0.26
+      ],
+      "parts": [
+        {
+          "center": [
+            0.0,
+            0.3,
+            0.0
+          ],
+          "size": [
+            1.22,
+            0.6,
+            0.6
+          ]
+        },
+        {
+          "center": [
+            -0.33,
+            0.85,
+            0.0
+          ],
+          "size": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sack",
+      "names": [
+        "sack",
+        "bag",
+        "grain sack"
+      ],
+      "center": [
+        -3.4223,
+        -0.632
+      ],
+      "y0": 0.6,
+      "size": [
+        0.4,
+        0.47,
+        0.4
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    },
+    {
+      "id": "cart",
+      "names": [
+        "cart",
+        "wagon",
+        "handcart"
+      ],
+      "center": [
+        -5.0215,
+        1.352
+      ],
+      "y0": 0.0,
+      "size": [
+        2.6,
+        1.0,
+        1.1
+      ],
+      "mode": "axis",
+      "symmetry": "180",
+      "direction": [
+        0.26,
+        0.9656
+      ]
+    },
+    {
+      "id": "parasol",
+      "names": [
+        "parasol",
+        "umbrella",
+        "sunshade"
+      ],
+      "center": [
+        -5.0215,
+        1.352
+      ],
+      "y0": 0.0,
+      "size": [
+        1.5,
+        3.2,
+        1.5
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    },
+    {
+      "id": "barrel",
+      "names": [
+        "barrel",
+        "keg"
+      ],
+      "center": [
+        3.38,
+        -0.95
+      ],
+      "y0": 0.0,
+      "size": [
+        0.44,
+        0.5,
+        0.44
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    },
+    {
+      "id": "bench",
+      "names": [
+        "bench",
+        "seat"
+      ],
+      "center": [
+        0.0,
+        -2.5
+      ],
+      "y0": 0.0,
+      "size": [
+        0.48,
+        0.9,
+        1.5
+      ],
+      "mode": "front",
+      "symmetry": "none",
+      "direction": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "gate",
+      "names": [
+        "gate",
+        "gateway",
+        "entrance"
+      ],
+      "center": [
+        0.0,
+        6.0
+      ],
+      "y0": 0.0,
+      "size": [
+        0.64,
+        3.0,
+        3.1
+      ],
+      "mode": "front",
+      "symmetry": "180",
+      "direction": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "id": "signpost",
+      "names": [
+        "signpost",
+        "sign post",
+        "sign",
+        "post"
+      ],
+      "center": [
+        2.5,
+        5.45
+      ],
+      "y0": 0.0,
+      "size": [
+        0.2,
+        2.4,
+        0.2
+      ],
+      "mode": "round",
+      "symmetry": "none"
+    }
+  ],
+  "path": {
+    "start": "well",
+    "end": "gate",
+    "width": 1.5,
+    "height": 2.0
+  },
+  "relations": [
+    {
+      "id": "R1",
+      "type": "facing",
+      "obj": "stall_a",
+      "ref": "well",
+      "mode": "front",
+      "tol_deg": 20
+    },
+    {
+      "id": "R2",
+      "type": "facing",
+      "obj": "stall_b",
+      "ref": "well",
+      "mode": "front",
+      "tol_deg": 20
+    },
+    {
+      "id": "R3",
+      "type": "distance",
+      "pairs": [
+        [
+          "stall_a",
+          "well"
+        ],
+        [
+          "stall_b",
+          "well"
+        ]
+      ],
+      "tol": 0.5
+    },
+    {
+      "id": "R4",
+      "type": "contact",
+      "a": "crates",
+      "b": "stall_a",
+      "max_gap": 0.05,
+      "max_pen": 0.05
+    },
+    {
+      "id": "R5",
+      "type": "occlusion",
+      "occluder": "barrel",
+      "occluded": "stall_b",
+      "range": [
+        0.2,
+        0.8
+      ]
+    },
+    {
+      "id": "R6",
+      "type": "clear_path",
+      "start": "well",
+      "end": "gate",
+      "width": 1.5,
+      "height": 2.0
+    },
+    {
+      "id": "R7",
+      "type": "alignment",
+      "obj": "gate",
+      "ref": "well",
+      "max_offset": 0.5,
+      "tol_deg": 20
+    },
+    {
+      "id": "R8",
+      "type": "relative_size",
+      "a": "barrel",
+      "b": "stall_b",
+      "tol_rel": 0.25
+    },
+    {
+      "id": "R9",
+      "type": "beside",
+      "obj": "signpost",
+      "ref": "gate",
+      "tol": 0.4,
+      "max_depth": 1.0,
+      "path": {
+        "start": "well",
+        "end": "gate",
+        "width": 1.5,
+        "height": 2.0
+      }
+    },
+    {
+      "id": "R10",
+      "type": "on_top",
+      "upper": "sack",
+      "lower": "crates",
+      "tol": 0.05
+    },
+    {
+      "id": "R11",
+      "type": "behind_parallel",
+      "obj": "cart",
+      "ref": "stall_a",
+      "tol_deg": 15,
+      "gap_tol": 0.25
+    },
+    {
+      "id": "R12",
+      "type": "distance_facing",
+      "obj": "bench",
+      "ref": "well",
+      "mode": "front",
+      "tol": 0.5,
+      "tol_deg": 20
+    },
+    {
+      "id": "R13",
+      "type": "in_line",
+      "ends": [
+        "bench",
+        "gate"
+      ],
+      "middle": "well",
+      "tol": 0.3
+    },
+    {
+      "id": "R14",
+      "type": "symmetry",
+      "a": "stall_a",
+      "b": "stall_b",
+      "axis": [
+        "well",
+        "gate"
+      ],
+      "tol_pos": 0.5,
+      "tol_deg": 20
+    },
+    {
+      "id": "R15",
+      "type": "intersection",
+      "pole": "parasol",
+      "through": "cart",
+      "margin": 0.05
+    }
+  ]
+}

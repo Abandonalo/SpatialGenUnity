@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
 using SpatialGeneration.Generation.Refinement;
+using SpatialGeneration;
+using SpatialGeneration.Generation.Authoring;
 
 public class MeshSeamWelderTests
 {

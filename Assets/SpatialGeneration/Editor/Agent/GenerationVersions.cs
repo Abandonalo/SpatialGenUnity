@@ -1,5 +1,7 @@
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
+using SpatialGeneration.Authoring;
 
 namespace SpatialGeneration.Agent
 {
@@ -17,7 +19,7 @@ namespace SpatialGeneration.Agent
         /// <summary>Moves the active GeneratedContent out of the way under the given run number.</summary>
         public static void ArchiveActive(int run)
         {
-            GameObject root = GameObject.Find(GenerationRunner.GeneratedRootName);
+            GameObject root = GameObject.Find(GeneratedContentRoot.Name);
             if (root == null)
                 return;
 
@@ -43,7 +45,35 @@ namespace SpatialGeneration.Agent
 
             ArchiveActive(currentRun);
             archived.SetParent(null, true);
-            archived.name = GenerationRunner.GeneratedRootName;
+            archived.name = GeneratedContentRoot.Name;
+            archived.gameObject.SetActive(true);
+            MarkDirty(archived.gameObject);
+            return true;
+        }
+
+        /// <summary>Destroys the active GeneratedContent (a run that produced nothing). Not undoable.</summary>
+        public static void DiscardActive()
+        {
+            GameObject root = GameObject.Find(GeneratedContentRoot.Name);
+            if (root == null)
+                return;
+            Scene scene = root.scene;
+            Object.DestroyImmediate(root);
+            if (scene.IsValid())
+                EditorSceneManager.MarkSceneDirty(scene);
+        }
+
+        /// <summary>Makes an archived run active again when there is no active one (after <see cref="DiscardActive"/>).</summary>
+        public static bool Restore(int run)
+        {
+            if (GameObject.Find(GeneratedContentRoot.Name) != null)
+                return false;
+            GameObject container = GameObject.Find(ContainerName);
+            Transform archived = container != null ? container.transform.Find(RunName(run)) : null;
+            if (archived == null)
+                return false;
+            archived.SetParent(null, true);
+            archived.name = GeneratedContentRoot.Name;
             archived.gameObject.SetActive(true);
             MarkDirty(archived.gameObject);
             return true;

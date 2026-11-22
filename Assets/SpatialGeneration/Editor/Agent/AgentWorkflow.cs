@@ -5,18 +5,41 @@ using System.Linq;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
+using SpatialGeneration.Authoring;
 
 namespace SpatialGeneration.Agent
 {
+    /// <summary>How an agent run ended. Process success and produced content are judged separately.</summary>
+    public enum RunOutcome
+    {
+        /// <summary>Content produced, the CLI exited cleanly, and (generation) no asset was left empty.</summary>
+        Complete = 0,
+
+        /// <summary>Content produced, but the CLI failed afterwards or some assets were left empty.</summary>
+        Partial = 1,
+
+        /// <summary>The run hit the time limit.</summary>
+        TimedOut = 2,
+
+        /// <summary>No content: the CLI did not start, never reached the tools, or built nothing.</summary>
+        Failed = 3,
+
+        /// <summary>Stopped by the researcher.</summary>
+        Cancelled = 4
+    }
+
     [Serializable]
     public class AgentRunReport
     {
+        /// <summary>True only for <see cref="RunOutcome.Complete"/>.</summary>
         public bool success;
+        public RunOutcome outcome = RunOutcome.Failed;
+        /// <summary>Content the participant can look at: built parts (generation) or a previewable idea.</summary>
+        public bool hasContent;
         public bool changedScene;
         public string message = string.Empty;
         public string jobId = string.Empty;
         public string mode = string.Empty;
-        public int undoGroup = -1;
         public double seconds;
         public int partsAdded;
         public int partsUpdated;
@@ -85,7 +108,7 @@ namespace SpatialGeneration.Agent
                 AgentJob job = NewJob(AgentJobMode.Generate, condition,
                     condition == StudyCondition.TextOnly ? scenePrompt.Trim() : string.Empty, stylePrompt);
 
-                GameObject root = GenerationRunner.EnsureGeneratedRoot();
+                GameObject root = AgentSceneOps.EnsureGeneratedRoot();
                 if (proxies != null)
                 {
                     foreach (SpatialProxy proxy in proxies)
@@ -94,16 +117,16 @@ namespace SpatialGeneration.Agent
 
                 await RunJobAsync(job, report);
 
-                if (proxies != null)
+                // Condition B: proxy assets left empty. Condition A: assets the agent created but never built.
+                foreach (AgentAsset asset in AgentSceneOps.AllAssets())
                 {
-                    foreach (AgentAsset asset in AgentSceneOps.AllAssets())
-                    {
-                        if (job.assetIds.Contains(asset.assetId) && AgentSceneOps.PartsOf(asset).Count == 0)
-                            report.emptyAssets.Add(asset.label);
-                    }
+                    bool ours = proxies != null ? job.assetIds.Contains(asset.assetId) : asset.createdByJob == job.jobId;
+                    if (ours && AgentSceneOps.PartsOf(asset).Count == 0)
+                        report.emptyAssets.Add(asset.label);
                 }
 
-                report.success = report.partsAdded > 0 && !report.cancelled;
+                report.hasContent = report.partsAdded > 0;
+                Classify(report);
                 report.message = DescribeGeneration(report);
                 return Finish(report);
             }
@@ -139,7 +162,7 @@ namespace SpatialGeneration.Agent
                     job.regionSize = region.size;
                     job.regionRotation = region.rotation;
                 }
-                GameObject source = GameObject.Find(GenerationRunner.GeneratedRootName);
+                GameObject source = GameObject.Find(GeneratedContentRoot.Name);
                 using (var stage = new RefinementPreviewStage(review, source, job.previewToken))
                 {
                     await RunJobAsync(job, report);
@@ -150,12 +173,18 @@ namespace SpatialGeneration.Agent
                     }
                     else if (report.partsAdded + report.partsUpdated + report.partsRemoved + report.assetsCreated > 0)
                     {
+                        // Condition A: a rebuilt object's volume now describes the rebuilt object.
+                        AgentJob done = AgentJobState.instance.current;
+                        if (done != null && done.jobId == job.jobId)
+                            foreach (string change in AgentSceneOps.RefitRebuiltVolumes(done))
+                                Debug.Log($"Spatial Generation: volume refitted after the edit, {change}.");
                         var idea = review.CaptureIdea(stage.Root, job.jobId, report.summary);
                         if (idea.objects.Count > 0) report.preview = idea;
                     }
                 }
-                report.success = report.preview != null;
-                if (report.success) report.message = $"Idea {job.ideaNumber} is ready.";
+                report.hasContent = report.preview != null;
+                Classify(report);
+                if (report.hasContent) report.message = $"Idea {job.ideaNumber} is ready.";
                 else if (string.IsNullOrEmpty(report.message)) report.message = "The agent returned no change. Try another preview.";
                 return Finish(report);
             }
@@ -305,14 +334,16 @@ namespace SpatialGeneration.Agent
             metadata.proxyRotation = t.rotation;
             metadata.proxySize = worldSize;
 
-            Undo.RegisterCreatedObjectUndo(go, "Prepare proxy asset");
             return asset;
         }
 
         public static List<SpatialProxy> CollectOccupyProxies()
         {
             var proxies = new List<SpatialProxy>();
-            foreach (SpatialProxy proxy in UnityEngine.Object.FindObjectsByType<SpatialProxy>(FindObjectsSortMode.None))
+            SpatialProxy[] all = UnityEngine.Object.FindObjectsByType<SpatialProxy>(FindObjectsSortMode.None);
+            // Safety net for copies the editor hook did not see (e.g. created by a script).
+            SpatialProxyIds.RepairDuplicates(all);
+            foreach (SpatialProxy proxy in all)
             {
                 if (proxy != null && proxy.isActiveAndEnabled && proxy.role == SpatialProxyRole.Occupy)
                     proxies.Add(proxy);
@@ -387,18 +418,41 @@ namespace SpatialGeneration.Agent
             return report;
         }
 
+        /// <summary>
+        /// The one place that decides a run's outcome: content first (nothing to look at is Failed,
+        /// TimedOut or Cancelled), then how the process ended and whether assets were left empty.
+        /// </summary>
+        internal static void Classify(AgentRunReport r)
+        {
+            bool processFailed = r.backendError || r.exitCode != 0;
+            if (!r.hasContent)
+                r.outcome = r.cancelled ? RunOutcome.Cancelled : r.timedOut ? RunOutcome.TimedOut : RunOutcome.Failed;
+            else if (r.cancelled)
+                r.outcome = RunOutcome.Cancelled;
+            else if (r.timedOut)
+                r.outcome = RunOutcome.TimedOut;
+            else if (processFailed || r.emptyAssets.Count > 0)
+                r.outcome = RunOutcome.Partial;
+            else
+                r.outcome = RunOutcome.Complete;
+            r.success = r.outcome == RunOutcome.Complete;
+        }
+
         private static string DescribeGeneration(AgentRunReport r)
         {
-            if (!string.IsNullOrEmpty(r.message) && r.partsAdded == 0)
-                return r.message;
-            if (r.cancelled)
-                return "Generation was stopped.";
-            if (r.timedOut)
-                return $"The agent ran out of time after {r.seconds:0} s; {r.partsAdded} part(s) were built.";
-            if (r.partsAdded == 0)
+            if (!r.hasContent)
+            {
+                if (!string.IsNullOrEmpty(r.message)) return r.message;
+                if (r.cancelled) return "Generation was stopped before anything was built.";
+                if (r.timedOut) return $"The agent ran out of time after {r.seconds:0} s without building anything.";
                 return "The agent finished without building anything.";
+            }
 
             string text = $"Built {r.partsAdded} part(s) in {r.seconds:0} s.";
+            if (r.cancelled) text = $"Stopped after {r.partsAdded} part(s).";
+            else if (r.timedOut) text = $"The agent ran out of time after {r.seconds:0} s; {r.partsAdded} part(s) were built.";
+            else if (r.backendError || r.exitCode != 0)
+                text += " The agent then stopped with an error" + (string.IsNullOrEmpty(r.message) ? "." : $": {r.message}");
             if (r.emptyAssets.Count > 0)
                 text += $" Still empty: {string.Join(", ", r.emptyAssets)}.";
             return text;
@@ -408,7 +462,7 @@ namespace SpatialGeneration.Agent
 
         private static string CreateArtifactDirectory(AgentJob job)
         {
-            string dir = Path.Combine(AgentProcessRunner.ProjectRoot, "Logs", "SpatialGeneration", "Agent",
+            string dir = Path.Combine(StudyPaths.AgentRuns,
                 $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{(job.mode == AgentJobMode.Generate ? "generate" : "edit")}_{job.jobId}");
             Directory.CreateDirectory(dir);
             return dir;

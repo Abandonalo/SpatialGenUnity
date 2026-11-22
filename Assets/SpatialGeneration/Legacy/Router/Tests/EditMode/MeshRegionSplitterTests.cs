@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using UnityEngine;
 using SpatialGeneration.Generation.Refinement;
+using SpatialGeneration;
 
 /// <summary>
 /// Guards the property the whole local-refinement story rests on: geometry outside the
