@@ -27,6 +27,8 @@ public sealed class AgentStudyWorkflowTests
 {
     private string _temp, _goFile, _sessionJson, _jobJson, _settingsJson;
     private Func<string, string, string, string, bool> _confirm;
+    private const string DeveloperModeKey = "SpatialGeneration.DeveloperMode";
+    private bool _developerMode;
     private HttpListener _http;
     /// <summary>Delay of the stub MCP endpoint, to hold a run in its setup check.</summary>
     private static volatile int _mcpDelayMs;
@@ -45,6 +47,7 @@ public sealed class AgentStudyWorkflowTests
         _jobJson = EditorJsonUtility.ToJson(AgentJobState.instance);
         _settingsJson = EditorJsonUtility.ToJson(BackendRegistry.Settings);
         _confirm = StudyController.Confirm;
+        _developerMode = EditorPrefs.GetBool(DeveloperModeKey, false);   // machine-wide; restored in TearDown
         StudyController.Confirm = (_, _, _, _) => true;
 
         _temp = Path.GetFullPath(FileUtil.GetUniqueTempPathInProject());
@@ -105,6 +108,7 @@ public sealed class AgentStudyWorkflowTests
         _http?.Stop();
         _http = null;
         StudyController.Confirm = _confirm;
+        EditorPrefs.SetBool(DeveloperModeKey, _developerMode);
         if (_settingsJson != null) EditorJsonUtility.FromJsonOverwrite(_settingsJson, BackendRegistry.Settings);
         if (_sessionJson != null) { EditorJsonUtility.FromJsonOverwrite(_sessionJson, StudySession.instance); StudySession.instance.Persist(); }
         if (_jobJson != null) { EditorJsonUtility.FromJsonOverwrite(_jobJson, AgentJobState.instance); AgentJobState.instance.Persist(); }
@@ -800,6 +804,112 @@ public sealed class AgentStudyWorkflowTests
             Assert.AreEqual(1f, volume.z, 1e-4f);
         }
         finally { UnityEngine.Object.DestroyImmediate(root); }
+    }
+
+    // ------------------------------------------------------------------ going back a step
+
+    private string InteractionLog() => string.Concat(
+        Directory.GetFiles(StudyPaths.InteractionLogs, "*.jsonl").Select(File.ReadAllText));
+
+    [UnityTest]
+    public IEnumerator BackFromRefinementReturnsToGenerationAndIsLogged()
+    {
+        StudyController.DeveloperMode = false;
+        yield return GenerateAndAcceptB();
+        StudySession s = StudySession.instance;
+        AgentPart body = AgentSceneOps.PartsOf(Asset("well"))[0];
+        SelectWholePart("well");
+        s.editRequest = "make the well taller";
+        StudyController.SubmitEdit();
+        yield return Agent(job => AgentSceneOps.UpdateParts(Asset("well", job).assetId, new List<PartSpec>
+            { new() { id = body.partId, size = new[] { 2f, 3.6f, 2f }, center = new[] { 0f, 1.8f, 0f } } }));
+        StudyController.ApplyIdea();
+        SelectWholePart("bench");
+        s.editRequest = "make the bench red";
+        StudyController.SubmitEdit();
+        yield return Agent(job => AgentSceneOps.UpdateParts(Asset("bench", job).assetId, new List<PartSpec>
+            { new() { id = AgentSceneOps.PartsOf(Asset("bench", job))[0].partId, color = "#CC2222" } }));
+        Assert.IsTrue(s.HasReview);
+
+        Assert.AreEqual(StudyPhase.Generation, StudyController.PreviousStep);
+        StudyController.StepBack();
+
+        Assert.AreEqual(StudyPhase.Generation, s.phase);
+        Assert.AreEqual(-1, s.acceptedRun);
+        Assert.IsFalse(s.HasReview, "open previews are discarded");
+        Assert.AreEqual(1, s.editsDiscarded);
+        Assert.AreEqual(3.6f, body.transform.localScale.y, 1e-4f, "applied refinements stay in the version");
+        Assert.IsTrue(StudyController.CanGenerate && StudyController.CanAccept);
+        StringAssert.Contains("study_step_back", InteractionLog());
+        StringAssert.Contains("from=Refinement; to=Generation", InteractionLog());
+        Assert.AreEqual(1, Snapshots("_back_to_generation").Length);
+
+        // Accepting again starts refinement anew; the analysis takes the newest accepted snapshot.
+        StudyController.AcceptActiveVersion();
+        Assert.AreEqual(StudyPhase.Refinement, s.phase);
+        Assert.AreEqual(2, Snapshots("_accepted_run1").Length);
+    }
+
+    [UnityTest]
+    public IEnumerator BackInDeveloperModeIsNotLogged()
+    {
+        StudyController.DeveloperMode = true;
+        yield return GenerateAndAcceptB();
+        StudyController.StepBack();
+
+        Assert.AreEqual(StudyPhase.Generation, StudySession.instance.phase);
+        StringAssert.DoesNotContain("study_step_back", InteractionLog());
+        Assert.AreEqual(0, Snapshots("_back_to_generation").Length);
+    }
+
+    [UnityTest]
+    public IEnumerator SubmittedSceneCanBeReopenedAndSubmittedAgain()
+    {
+        StudyController.DeveloperMode = false;
+        yield return GenerateAndAcceptB();
+        StudyController.SubmitScene();
+        Assert.AreEqual(StudyPhase.Refinement, StudyController.PreviousStep);
+        StudyController.StepBack();
+
+        StudySession s = StudySession.instance;
+        Assert.AreEqual(StudyPhase.Refinement, s.phase);
+        Assert.AreEqual(string.Empty, s.finishReason);
+        Assert.IsTrue(StudyController.CanEdit);
+        StringAssert.Contains("from=Finished; to=Refinement", InteractionLog());
+
+        StudyController.SubmitScene();
+        Assert.AreEqual(StudyPhase.Finished, s.phase);
+        Assert.AreEqual(2, Snapshots("_final").Length, "the newer final supersedes the reopened one");
+    }
+
+    [UnityTest]
+    public IEnumerator GenerationReturnsToSetupOnlyBeforeARunIsUsed()
+    {
+        StudySession.instance.condition = StudyCondition.SpatialControls;
+        StudyController.StartCondition();
+        Assert.AreEqual(StudyPhase.Setup, StudyController.PreviousStep);
+        StudyController.StepBack();
+        Assert.AreEqual(StudyPhase.Setup, StudySession.instance.phase);
+
+        StudyController.StartCondition();
+        Proxy("well", Vector3.zero, 0, new Vector3(2, 3, 2));
+        StudyController.RunGeneration();
+        yield return null;
+        Assert.IsFalse(StudyController.CanStepBack, "Back waits for a running agent");
+        yield return Agent(job => AgentSceneOps.AddParts(Asset("well", job).assetId, Body(new Vector3(2, 3, 2))));
+
+        Assert.IsNull(StudyController.PreviousStep, "a used run cannot be undone by returning to setup");
+        Assert.IsFalse(StudyController.CanStepBack);
+        StringAssert.Contains("Researcher Tools", StudyController.StepBackBlockedReason);
+    }
+
+    [UnityTest]
+    public IEnumerator DecliningTheConfirmationStaysOnTheStep()
+    {
+        yield return GenerateAndAcceptB();
+        StudyController.Confirm = (_, _, _, _) => false;
+        StudyController.StepBack();
+        Assert.AreEqual(StudyPhase.Refinement, StudySession.instance.phase);
     }
 
     // ------------------------------------------------------------------ agent isolation (C3)

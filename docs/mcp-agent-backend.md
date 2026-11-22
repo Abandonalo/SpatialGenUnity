@@ -80,6 +80,12 @@ not count against the limit (`study_generation_run_refunded`): its empty version
 the previous one is shown again. Only a version with geometry can be accepted; accepting one with
 empty objects or an unfinished run asks for confirmation and names them. While a run is starting
 (the setup check waits for the MCP server), Accept, version switching and session reset wait.
+**← Back to …** (right of the step row) returns to the previous step after a confirmation:
+refinement → generation un-accepts the version (applied refinements stay in it, open previews are
+discarded), finished → refinement reopens the submitted scene, and generation → setup is possible
+only before a run is used. Outside developer mode each step back is logged (`study_step_back`,
+with from/to, runs and edits) and snapshotted (`back_to_<step>`). Accepting or submitting again
+writes newer `accepted_run*` / `final` snapshots, which the scoring scripts use.
 Set the generation run limit in **Researcher Tools > Researcher settings**. The **Utilities**
 tab contains agent cancellation, scene cleanup, and access to logs and run files.
 

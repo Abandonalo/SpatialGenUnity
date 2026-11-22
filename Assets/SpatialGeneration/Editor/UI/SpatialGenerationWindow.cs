@@ -153,6 +153,26 @@ namespace SpatialGeneration.UI
                 }
 
                 GUILayout.FlexibleSpace();
+                DrawBackButton();
+            }
+        }
+
+        /// <summary>"← Back to …" for the previous step; disabled with the reason as tooltip.</summary>
+        private static void DrawBackButton()
+        {
+            StudyPhase? previousStep = StudyController.PreviousStep;
+            if (Session.phase == StudyPhase.Setup)
+                return;
+
+            string label = previousStep != null ? $"← Back to {StudyController.PhaseName(previousStep.Value)}" : "← Back";
+            var content = new GUIContent(label, StudyController.StepBackBlockedReason ?? "Return to the previous step.");
+            using (new EditorGUI.DisabledScope(!StudyController.CanStepBack))
+            {
+                if (GUILayout.Button(content, EditorStyles.miniButton))
+                {
+                    StudyController.StepBack();
+                    GUIUtility.ExitGUI();
+                }
             }
         }
 

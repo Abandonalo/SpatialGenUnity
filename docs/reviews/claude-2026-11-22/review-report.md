@@ -330,3 +330,23 @@ because the study uses Claude Code.
 - **Live, real agent.** "Barrel 0.6 m → 1 m tall": clear and rebuild with no volume warnings.
   Volume 0.50 × 0.60 × 0.50 → 0.49 × 1.00 × 0.49 after Apply (the built extent), back to
   0.50 × 0.60 × 0.50 on Ctrl+Z; the `final` snapshot records 1.0 m.
+
+## 12. "Back to the previous step" in the Spatial Generation window
+
+- **What it does.** `StudyController.StepBack` / `PreviousStep` / `CanStepBack`, plus a
+  "← Back to …" button at the right of the step row.
+  - Refinement → generation: un-accepts the version. Applied refinements stay; open previews are
+    discarded and counted as discarded; the Undo history is cleared.
+  - Finished → refinement: reopens the submitted scene.
+  - Generation → setup: only before any run is used. Afterwards the button is disabled, and its
+    tooltip points to the researcher reset.
+- **Safety.** Each step back needs a confirmation and is blocked while a run is active.
+- **Logging.** Outside developer mode: a `study_step_back` event and a `back_to_<step>` snapshot.
+  In developer mode neither is written.
+- **Analysis.** No change needed: it already uses the latest `accepted_run*` and `final`
+  snapshots, and edit numbers continue across a step back.
+- **Tests.** Five new tests: back from refinement (logged, previews discarded, accept again), not
+  logged in developer mode, reopen and resubmit, setup only before a run, and declining the
+  confirmation. Batch: **99 passed, 0 failed** (2 GPU skips); the developer-mode preference was
+  restored. Live editor (MCP back on): **99/99 passed, 0 skipped**; afterwards there were no
+  console errors, and the session, developer mode, log root and scene were as before.

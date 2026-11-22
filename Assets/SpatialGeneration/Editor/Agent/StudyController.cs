@@ -430,6 +430,99 @@ namespace SpatialGeneration.Agent
                 EditorSceneManager.MarkSceneDirty(scene);
         }
 
+        // ------------------------------------------------------------------ going back a step
+
+        /// <summary>
+        /// The step "Back" returns to, or null. Setup has none. Generation can return to setup only
+        /// before a run is used: starting the condition again would reset counted runs.
+        /// </summary>
+        public static StudyPhase? PreviousStep => S.phase switch
+        {
+            StudyPhase.Generation => S.generationRuns == 0 ? StudyPhase.Setup : (StudyPhase?)null,
+            StudyPhase.Refinement => StudyPhase.Generation,
+            StudyPhase.Finished => StudyPhase.Refinement,
+            _ => (StudyPhase?)null
+        };
+
+        public static bool CanStepBack => PreviousStep != null && !IsBusy;
+
+        /// <summary>Why Back is unavailable, for the button's tooltip; null when it is available.</summary>
+        public static string StepBackBlockedReason =>
+            IsBusy ? "Wait until the agent has finished." :
+            S.phase == StudyPhase.Generation && S.generationRuns > 0
+                ? "Generation runs have been used, so the condition cannot return to setup. " +
+                  "A researcher can reset it in Researcher Tools."
+                : PreviousStep == null ? "This is the first step." : null;
+
+        /// <summary>
+        /// Returns to the previous step after a confirmation. Refinement → generation un-accepts the
+        /// version (applied refinements stay in it; open previews are discarded); finished →
+        /// refinement reopens the submitted scene; generation → setup is only possible before any run.
+        /// The analysis always reads the latest accepted and final snapshots, so accepting or
+        /// submitting again supersedes the earlier ones. Logged and snapshotted outside developer mode.
+        /// </summary>
+        public static void StepBack()
+        {
+            if (!CanStepBack)
+                return;
+
+            StudyPhase from = S.phase, to = PreviousStep.Value;
+            string question = to switch
+            {
+                StudyPhase.Setup => "Return to setup? No generation run has been used yet.",
+                StudyPhase.Generation => $"Return to generation? Run {S.activeRun} keeps the refinements applied so far; " +
+                                         "you can generate again, pick another version, or accept it again." +
+                                         (S.HasReview ? " The open previews are discarded." : string.Empty),
+                _ => "Reopen the submitted scene for refinement? Submit it again when you are done."
+            };
+            if (!Confirm("Go back a step", question, "Go back", "Stay"))
+                return;
+
+            switch (to)
+            {
+                case StudyPhase.Setup:
+                    S.conditionStartUtc = string.Empty;
+                    break;
+                case StudyPhase.Generation:
+                    if (S.HasReview)
+                    {
+                        Log("preview_discard", $"review={S.review.id}; ideas={S.review.ideas.Count}; reason=step_back");
+                        S.DiscardReview();
+                    }
+                    S.acceptedRun = -1;
+                    S.acceptedUtc = string.Empty;
+                    S.refinementStartUtc = string.Empty;
+                    S.editRequest = string.Empty;
+                    S.appliedEdits.Clear();
+                    S.undoneEdits.Clear();
+                    // Ctrl+Z must not reach refinements from the abandoned acceptance.
+                    Undo.ClearAll();
+                    break;
+                case StudyPhase.Refinement:
+                    S.finishReason = string.Empty;
+                    S.finishedUtc = string.Empty;
+                    break;
+            }
+
+            S.phase = to;
+            S.Persist();
+            if (!DeveloperMode)
+            {
+                string snapshot = SceneSnapshot.Write($"back_to_{to.ToString().ToLowerInvariant()}");
+                Log("step_back", $"from={from}; to={to}; runs={S.generationRuns}; active_run={S.activeRun}; " +
+                                 $"edits={S.editsSubmitted}; kept={S.editsKept}; snapshot={snapshot}");
+            }
+            Note($"Back to {PhaseName(to)}.", MessageType.Info);
+        }
+
+        public static string PhaseName(StudyPhase phase) => phase switch
+        {
+            StudyPhase.Setup => "setup",
+            StudyPhase.Generation => "generation",
+            StudyPhase.Refinement => "refinement",
+            _ => "finished"
+        };
+
         // ------------------------------------------------------------------ helpers
 
         /// <summary>
